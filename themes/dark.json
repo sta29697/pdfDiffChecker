@@ -1,0 +1,248 @@
+{
+    "Window": {
+        "bg": "#1d1d29"
+    },
+    "SubWindow": {
+        "bg": "#1d1d29"
+    },
+    "Frame": {
+        "bg": "#1d1d29",
+        "highlightbackground": "#27283a",
+        "fg": "#43c0cd",
+        "disabledforeground": "#db57c4",
+        "selectforeground": "#3e77d2",
+        "insertbackground": "#c03755"
+    },
+    "Label": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#db57c4"
+    },
+    "Notebook": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "tab_bg": "#27283a",
+        "tab_fg": "#43c0cd"
+    },
+    "primary_combobox": {
+        "bg": "#27283a",
+        "selectbackground": "#27283a",
+        "selectforeground": "#db57c4",
+        "fg": "#db57c4",
+        "highlightcolor": "#c03755"
+    },
+    "primary_progressbar": {
+        "bg": "#43c0cd",
+        "troughcolor": "#27283a",
+        "bordercolor": "#c03755"
+    },
+    "base_file_path_label": {
+        "fg": "#3e77d2",
+        "bg": "#27283a"
+    },
+    "comparison_file_path_label": {
+        "fg": "#c03755",
+        "bg": "#27283a"
+    },
+    "output_folder_path_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "create_fb_threshold_set_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "dpi_set_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "dpi_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "dpi_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "width_size_set_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "height_size_set_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "base_file_path_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "comparison_file_path_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "output_folder_path_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "fb_threshold_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "create_fb_threshold_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "create_path_entry": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
+    },
+    "base_image_color_change_button": {
+        "fg": "#0000FF",
+        "bg": "#0000FF",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_image_color_change_button": {
+        "fg": "#FF0000",
+        "bg": "#FF0000",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "base_file_analyze_button": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_file_analyze_button": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "base_image_display_toggle_button": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_image_display_toggle_button": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "total_pages_label": {
+        "fg": "#3e77d2",
+        "bg": "#27283a"
+    },
+    "change_previous_page_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "change_new_page_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "insert_blank_page_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "color_theme_change_button": {
+        "bg": "#27283a",
+        "fg": "#43c0cd",
+        "activebackground": "#43c0cd",
+        "activeforeground": "#27283a",
+        "relief": "flat"
+    },
+    "process_button": {
+        "bg": "#27283a",
+        "fg": "#43c0cd",
+        "activebackground": "#43c0cd",
+        "activeforeground": "#27283a",
+        "relief": "flat"
+    },
+    "pdf_save_button": {
+        "bg": "#27283a",
+        "fg": "#43c0cd",
+        "activebackground": "#43c0cd",
+        "activeforeground": "#27283a",
+        "relief": "flat"
+    },
+    "create_image_color_select_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_layer_select_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_path_select_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_path_select_label": {
+        "bg": "#27283a",
+        "fg": "#43c0cd"
+    },
+    "create_sub_graph_window_button": {
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "convert_image_button": {
+        "bg": "#1d1d29",
+        "fg": "#43c0cd",
+        "disabledforeground": "#27283a",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "canvas": {
+        "background": "#1a1a1a",
+        "highlightbackground": "#333333",
+        "highlightcolor": "#333333"
+    }
+}

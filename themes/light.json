@@ -1,0 +1,243 @@
+{
+    "Window": {
+        "bg": "#f0f0f0"
+    },
+    "SubWindow": {
+        "bg": "#f0f0f0"
+    },
+    "Frame": {
+        "bg": "#ffffff",
+        "highlightbackground": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#000000",
+        "selectforeground": "#3e77d2",
+        "insertbackground": "#000000"
+    },
+    "Notebook": {
+        "bg": "#f0f0f0",
+        "fg": "#000000",
+        "tab_bg": "#e0e0e0",
+        "tab_fg": "#000000"
+    },
+    "primary_combobox": {
+        "bg": "#ffffff",
+        "selectbackground": "#ffffff",
+        "selectforeground": "#000000",
+        "fg": "#000000",
+        "highlightcolor": "#0000ff"
+    },
+    "primary_progressbar": {
+        "bg": "#000000",
+        "troughcolor": "#ffffff",
+        "bordercolor": "#c03755"
+    },
+    "base_file_path_label": {
+        "fg": "#3e77d2",
+        "bg": "#ffffff"
+    },
+    "comparison_file_path_label": {
+        "fg": "#c03755",
+        "bg": "#ffffff"
+    },
+    "output_folder_path_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "create_fb_threshold_set_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "dpi_set_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "dpi_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "dpi_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "width_size_set_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "height_size_set_label": {
+        "fg": "#000000",
+        "bg": "#ffffff"
+    },
+    "base_file_path_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "comparison_file_path_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "output_folder_path_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "fb_threshold_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "create_fb_threshold_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "create_path_entry": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
+    "base_image_color_change_button": {
+        "fg": "#0000FF",
+        "bg": "#0000FF",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_image_color_change_button": {
+        "fg": "#FF0000",
+        "bg": "#FF0000",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "base_file_analyze_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_file_analyze_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "base_image_display_toggle_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "comparison_image_display_toggle_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "total_pages_label": {
+        "fg": "#3e77d2",
+        "bg": "#ffffff"
+    },
+    "change_previous_page_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "change_new_page_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "insert_blank_page_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_image_color_select_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_layer_select_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_path_select_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "create_path_select_label": {
+        "bg": "#ffffff",
+        "fg": "#000000"
+    },
+    "create_sub_graph_window_button": {
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "convert_image_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#22a9e9",
+        "activeforeground": "#574ed6",
+        "activebackground": "#0fd2d6"
+    },
+    "color_theme_change_button": {
+        "bg": "#f0f0f0",
+        "fg": "#333333",
+        "activebackground": "#333333",
+        "activeforeground": "#f0f0f0",
+        "relief": "flat"
+    },
+    "process_button": {
+        "bg": "#f0f0f0",
+        "fg": "#333333",
+        "activebackground": "#333333",
+        "activeforeground": "#f0f0f0",
+        "relief": "flat"
+    },
+    "pdf_save_button": {
+        "bg": "#f0f0f0",
+        "fg": "#333333",
+        "activebackground": "#333333",
+        "activeforeground": "#f0f0f0",
+        "relief": "flat"
+    },
+    "canvas": {
+        "background": "#ffffff",
+        "highlightbackground": "#e0e0e0",
+        "highlightcolor": "#e0e0e0"
+    }
+}
