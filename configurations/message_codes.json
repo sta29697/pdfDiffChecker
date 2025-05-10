@@ -1,1 +1,1898 @@
-# (省略: ファイル内容は既存のままアップロード)
+{
+    "error_codes": {
+        "E001": {
+            "en": "Error: {0}",
+            "ja": "エラー: {0}"
+        },
+        "E002": {
+            "en": "Invalid file extension. Allowed extensions: {0}",
+            "ja": "無効なファイル拡張子です。許可されている拡張子: {0}"
+        },
+        "E003": {
+            "en": "The dropped file does not exist: {0}",
+            "ja": "ドロップされたファイルが存在しません: {0}"
+        },
+        "E004": {
+            "en": "Invalid theme name: {0}",
+            "ja": "無効なテーマ名です: {0}"
+        },
+        "E005": {
+            "en": "Theme file not found: {0}",
+            "ja": "テーマファイルが見つかりません: {0}"
+        },
+        "E006": {
+            "en": "Failed to load theme: {0}",
+            "ja": "テーマの読み込みに失敗しました: {0}"
+        },
+        "E007": {
+            "en": "Failed to register widget: {0}",
+            "ja": "ウィジェットの登録に失敗しました: {0}"
+        },
+        "E008": {
+            "en": "Failed to setup drag and drop: {0}",
+            "ja": "ドラッグアンドドロップの設定に失敗しました: {0}"
+        },
+        "E009": {
+            "en": "Failed to process PDF file: {0}",
+            "ja": "PDFファイルの処理に失敗しました: {0}"
+        },
+        "E010": {
+            "en": "Failed to process image file: {0}",
+            "ja": "画像ファイルの処理に失敗しました: {0}"
+        },
+        "E011": {
+            "en": "Failed to load user settings: {0}",
+            "ja": "ユーザー設定の読み込みに失敗しました: {0}"
+        },
+        "E012": {
+            "en": "Invalid settings file format: {0}",
+            "ja": "無効な設定ファイル形式です: {0}"
+        },
+        "E013": {
+            "en": "Failed to initialize CreateSubGraphWindowButton: {0}",
+            "ja": "CreateSubGraphWindowButtonの初期化に失敗しました: {0}"
+        },
+        "E014": {
+            "en": "Failed to handle button click: {0}",
+            "ja": "ボタンクリックの処理に失敗しました: {0}"
+        },
+        "E015": {
+            "en": "Failed to update graph data: {0}",
+            "ja": "グラフデータの更新に失敗しました: {0}"
+        },
+        "E016": {
+            "en": "Failed to update graph color: {0}",
+            "ja": "グラフ色の更新に失敗しました: {0}"
+        },
+        "E017": {
+            "en": "Failed to update window title: {0}",
+            "ja": "ウィンドウタイトルの更新に失敗しました: {0}"
+        },
+        "E018": {
+            "en": "Failed to save subwindow settings: {0}",
+            "ja": "サブウィンドウの設定の保存に失敗しました: {0}"
+        },
+        "E019": {
+            "en": "Failed to create main window: {0}",
+            "ja": "メインウィンドウの作成に失敗しました: {0}"
+        },
+        "E020": {
+            "en": "Failed to apply theme to widget: {0}",
+            "ja": "ウィジェットへのテーマ適用に失敗しました: {0}"
+        },
+        "E021": {
+            "en": "Failed to add file drop target: {0}",
+            "ja": "ファイルドロップターゲットの追加に失敗しました: {0}"
+        },
+        "E022": {
+            "en": "Temporary directory not set before saving images",
+            "ja": "画像を保存する前に一時ディレクトリが設定されていません"
+        },
+        "E101": {
+            "en": "No pages found in PDF file",
+            "ja": "PDFファイルにはページが見つかりません"
+        },
+        "E102": {
+            "en": "PyPDFium2 is required for PDF conversion but not available",
+            "ja": "PDF変換にはPyPDFium2が必要ですが、利用できません"
+        },
+        "E103": {
+            "en": "Subclasses should implement this method",
+            "ja": "サブクラスにはこのメソッドを実装する必要があります"
+        },
+        "E104": {
+            "en": "Exception during PDF to PNG conversion: {0}",
+            "ja": "PDFからPNGへの変換中には例外が発生しました: {0}"
+        },
+        "E105": {
+            "en": "Conversion interrupted by user",
+            "ja": "ユーザーにより変換が中断されました"
+        },
+        "E126": {
+            "en": "PyPDFium2 is not available. Cannot convert PDF.",
+            "ja": "PyPDFium2が利用できません。PDFを変換できません。"
+        }
+    },
+    "log_codes": {
+        "L001": {
+            "en": "Application mainloop started",
+            "ja": "アプリケーションのメインループを開始しました"
+        },
+        "L002": {
+            "en": "Application mainloop exited",
+            "ja": "アプリケーションのメインループが終了しました"
+        },
+        "L003": {
+            "en": "Language set to: {0}",
+            "ja": "言語が設定されました: {0}"
+        },
+        "L004": {
+            "en": "Invalid language code: {0}",
+            "ja": "無効な言語コード: {0}"
+        },
+        "L005": {
+            "en": "Settings loaded from: {0}",
+            "ja": "設定を読み込みました: {0}"
+        },
+        "L006": {
+            "en": "Settings saved to: {0}",
+            "ja": "設定を保存しました: {0}"
+        },
+        "L007": {
+            "en": "Theme loaded from: {0}",
+            "ja": "テーマを読み込みました: {0}"
+        },
+        "L008": {
+            "en": "Theme saved to: {0}",
+            "ja": "テーマを保存しました: {0}"
+        },
+        "L009": {
+            "en": "Temporary directory created: {0}",
+            "ja": "一時ディレクトリを作成しました: {0}"
+        },
+        "L010": {
+            "en": "Temporary directory cleaned",
+            "ja": "一時ディレクトリをクリーンアップしました"
+        },
+        "L011": {
+            "en": "Failed to resolve resource path: {0}",
+            "ja": "リソースパスの解決に失敗しました: {0}"
+        },
+        "L012": {
+            "en": "Temporary directory created: {0}",
+            "ja": "一時ディレクトリを作成しました: {0}"
+        },
+        "L013": {
+            "en": "Failed to create temporary directory: {0}",
+            "ja": "一時ディレクトリの作成に失敗しました: {0}"
+        },
+        "L014": {
+            "en": "Created directory: {0}",
+            "ja": "ディレクトリを作成しました: {0}"
+        },
+        "L015": {
+            "en": "Temporary directory configured: {0}",
+            "ja": "一時ディレクトリを設定しました: {0}"
+        },
+        "L016": {
+            "en": "Temporary directory setup completed",
+            "ja": "一時ディレクトリの設定が完了しました"
+        },
+        "L017": {
+            "en": "Failed to create directories: {0}",
+            "ja": "ディレクトリの作成に失敗しました: {0}"
+        },
+        "L018": {
+            "en": "Failed to clean temporary directory: {0}",
+            "ja": "一時ディレクトリのクリーンアップに失敗しました: {0}"
+        },
+        "L019": {
+            "en": "Balloon message displayed: {0}",
+            "ja": "バルーンメッセージを表示しました: {0}"
+        },
+        "L020": {
+            "en": "Failed to show balloon message: {0}",
+            "ja": "バルーンメッセージの表示に失敗しました: {0}"
+        },
+        "L021": {
+            "en": "Message box displayed: {0} - {1}",
+            "ja": "メッセージボックスを表示しました: {0} - {1}"
+        },
+        "L022": {
+            "en": "Failed to show message box: {0}",
+            "ja": "メッセージボックスの表示に失敗しました: {0}"
+        },
+        "L023": {
+            "en": "Loaded {0} settings from file",
+            "ja": "{0}の設定をファイルから読み込みました"
+        },
+        "L024": {
+            "en": "Invalid settings file format for {0}: {1}. Using default settings",
+            "ja": "{0} の設定ファイル形式が無効です: {1}。デフォルト設定を使用します"
+        },
+        "L025": {
+            "en": "Using default user settings from DEFAULT_USER_SET",
+            "ja": "DEFAULT_USER_SETからデフォルトのユーザー設定を使用します"
+        },
+        "L026": {
+            "en": "Using default user settings due to error",
+            "ja": "エラーのため、デフォルトのユーザー設定を使用します"
+        },
+        "L027": {
+            "en": "Setting key not found: {0} - {1}",
+            "ja": "設定キーが見つかりません: {0} - {1}"
+        },
+        "L028": {
+            "en": "Key {0} not found in default settings, using provided default",
+            "ja": "キー{0}がデフォルト設定に見つからないため、提供されたデフォルト値を使用します"
+        },
+        "L029": {
+            "en": "Setting {0} is not a list, converting to list",
+            "ja": "設定{0}はリストではないため、リストに変換します"
+        },
+        "L030": {
+            "en": "Default setting {0} is not a list, converting to list",
+            "ja": "デフォルト設定{0}はリストではないため、リストに変換します"
+        },
+        "L031": {
+            "en": "Updated setting in memory {0} = {1} in section {2}",
+            "ja": "メモリ内の設定を更新しました {0} = {1} （セクション: {2}）"
+        },
+        "L032": {
+            "en": "Saved user settings to file",
+            "ja": "ユーザー設定をファイルに保存しました"
+        },
+        "L033": {
+            "en": "[WIDGET] Widget registered: {0}",
+            "ja": "[ウィジェット] ウィジェットを登録しました: {0}"
+        },
+        "L034": {
+            "en": "[THEME] Theme status: {0}",
+            "ja": "[テーマ] テーマ状況: {0}"
+        },
+        "L035": {
+            "en": "[WIDGET] Failed to get widget children: {0}",
+            "ja": "[ウィジェット] ウィジェットの子要素の取得でエラーが発生しました: {0}"
+        },
+        "L036": {
+            "en": "[WIDGET] Widget unregistered: {0}",
+            "ja": "[ウィジェット] ウィジェットの登録を解除しました: {0}"
+        },
+        "L037": {
+            "en": "[WIDGET] Failed to remove widgets: {0}",
+            "ja": "[ウィジェット] ウィジェットの削除でエラーが発生しました: {0}"
+        },
+        "L038": {
+            "en": "[THEME] Default color theme loaded",
+            "ja": "[テーマ] デフォルトのカラーテーマを読み込みました"
+        },
+        "L039": {
+            "en": "[THEME] Color theme applied: {0}",
+            "ja": "[テーマ] カラーテーマ適用完了: {0}"
+        },
+        "L040": {
+            "en": "[THEME] Invalid theme name: {0}",
+            "ja": "[テーマ] 無効なテーマ名です: {0}"
+        },
+        "L041": {
+            "en": "[THEME] Failed to initialize color theme: {0}",
+            "ja": "[テーマ] カラーテーマの初期化でエラーが発生しました: {0}"
+        },
+        "L042": {
+            "en": "[THEME] Color theme loaded: {0}",
+            "ja": "[テーマ] カラーテーマを読み込みました: {0}"
+        },
+        "L043": {
+            "en": "[THEME] Theme file not found: {0}",
+            "ja": "[テーマ] テーマファイルが見つかりません: {0}"
+        },
+        "L044": {
+            "en": "[THEME] Failed to load color theme: {0}",
+            "ja": "[テーマ] カラーテーマの読み込みでエラーが発生しました: {0}"
+        },
+        "L045": {
+            "en": "[THEME] Color theme saved: {0}",
+            "ja": "[テーマ] カラーテーマを保存しました: {0}"
+        },
+        "L046": {
+            "en": "[THEME] Failed to save color theme: {0}",
+            "ja": "[テーマ] カラーテーマの保存でエラーが発生しました: {0}"
+        },
+        "L047": {
+            "en": "[THEME] Color theme updated: {0}",
+            "ja": "[テーマ] カラーテーマを更新しました: {0}"
+        },
+        "L048": {
+            "en": "[THEME] Failed to update color theme: {0}",
+            "ja": "[テーマ] カラーテーマの更新でエラーが発生しました: {0}"
+        },
+        "L049": {
+            "en": "[THEME] Color theme applied to widget: {0}",
+            "ja": "[テーマ] ウィジェットにカラーテーマを適用しました: {0}"
+        },
+        "L050": {
+            "en": "[THEME] Failed to apply color theme to widget: {0}",
+            "ja": "[テーマ] ウィジェットへのカラーテーマの適用でエラーが発生しました: {0}"
+        },
+        "L051": {
+            "en": "[THEME] Color theme changed: {0} -> {1}",
+            "ja": "[テーマ] カラーテーマを変更しました: {0} -> {1}"
+        },
+        "L052": {
+            "en": "[THEME] Failed to change color theme: {0}",
+            "ja": "[テーマ] カラーテーマの変更でエラーが発生しました: {0}"
+        },
+        "L053": {
+            "en": "[UI] Progress update: {0}/{1} - {2}",
+            "ja": "[UI] 進捗状況: {0}/{1} - {2}"
+        },
+        "L054": {
+            "en": "[FILE] Saved page {0} as grayscale PNG -> {1}",
+            "ja": "[ファイル] ページ {0} をグレースケールPNGとして保存しました -> {1}"
+        },
+        "L055": {
+            "en": "[PDF] Failed to calculate histogram: {0}",
+            "ja": "[PDF] ヒストグラムの計算でエラーが発生しました: {0}"
+        },
+        "L056": {
+            "en": "[FILE] Error processing file: {0}",
+            "ja": "[ファイル] ファイル処理中にエラーが発生しました: {0}"
+        },
+        "L057": {
+            "en": "[SYS] pdfium.dll not found: {0}",
+            "ja": "[SYS] pdfium.dllが見つかりません: {0}"
+        },
+        "L058": {
+            "en": "[SYS] Buffer size increased to {0} bytes",
+            "ja": "[SYS] バッファサイズを {0} バイトに増加しました"
+        },
+        "L059": {
+            "en": "[PDF] Converting PDF to grayscale PNG pages...",
+            "ja": "[PDF] PDFをグレースケールPNGページに変換しています..."
+        },
+        "L060": {
+            "en": "[PDF] Metadata extracted:\n{0}",
+            "ja": "[PDF] メタデータを抽出しました:\n{0}"
+        },
+        "L061": {
+            "en": "[PDF] PDF has {0} pages",
+            "ja": "[PDF] PDFは {0} ページあります"
+        },
+        "L062": {
+            "en": "[PDF] Error converting PDF to PNG: {0}",
+            "ja": "[PDF] PDFからPNGへの変換中にエラーが発生しました: {0}"
+        },
+        "L063": {
+            "en": "[FILE] Failed to convert TIFF to grayscale PNG: {0}",
+            "ja": "[ファイル] TIFFからグレースケールPNGへの変換でエラーが発生しました: {0}"
+        },
+        "L064": {
+            "en": "[FILE] Binarized image saved: {0}",
+            "ja": "[ファイル] 二値化画像を保存しました: {0}"
+        },
+        "L065": {
+            "en": "[FILE] Failed to binarize image: {0}",
+            "ja": "[ファイル] 画像の二値化でエラーが発生しました: {0}"
+        },
+        "L066": {
+            "en": "[WIDGET] Entry frame configured: {0}",
+            "ja": "[ウィジェット] エントリーフレームを設定しました: {0}"
+        },
+        "L067": {
+            "en": "[WIDGET] Failed to setup widgets: {0}",
+            "ja": "[ウィジェット] ウィジェットの設定でエラーが発生しました: {0}"
+        },
+        "L068": {
+            "en": "[UI] Subwindow {0} is closing: {1}",
+            "ja": "[UI] サブウィンドウ {0} が閉じられます: {1}"
+        },
+        "L069": {
+            "en": "[UI] Subwindow {0} is opening: {1}",
+            "ja": "[UI] サブウィンドウ {0} が開かれます: {1}"
+        },
+        "L070": {
+            "en": "[UI] Failed to save subwindow settings: {0}",
+            "ja": "[UI] サブウィンドウの設定の保存でエラーが発生しました: {0}"
+        },
+        "L071": {
+            "en": "[FILE] Base file selected: {0}",
+            "ja": "[ファイル] 基準ファイルが選択されました: {0}"
+        },
+        "L072": {
+            "en": "[FILE] Comparison file selected: {0}",
+            "ja": "[ファイル] 比較ファイルが選択されました: {0}"
+        },
+        "L073": {
+            "en": "[FILE] Output folder selected: {0}",
+            "ja": "[ファイル] 出力フォルダが選択されました: {0}"
+        },
+        "L074": {
+            "en": "[UI] Process button clicked",
+            "ja": "[UI] 処理ボタンがクリックされました"
+        },
+        "L075": {
+            "en": "[PDF] Base file analysis started",
+            "ja": "[PDF] 基準ファイルの解析を開始しました"
+        },
+        "L076": {
+            "en": "[PDF] Comparison file analysis started",
+            "ja": "[PDF] 比較ファイルの解析を開始しました"
+        },
+        "L077": {
+            "en": "[FILE] Failed to select base file: {0}",
+            "ja": "[ファイル] 基準ファイルの選択でエラーが発生しました: {0}"
+        },
+        "L078": {
+            "en": "[FILE] Failed to select comparison file: {0}",
+            "ja": "[ファイル] 比較ファイルの選択でエラーが発生しました: {0}"
+        },
+        "L079": {
+            "en": "[FILE] Failed to select output folder: {0}",
+            "ja": "[ファイル] 出力フォルダの選択でエラーが発生しました: {0}"
+        },
+        "L080": {
+            "en": "[PDF] Failed to process files: {0}",
+            "ja": "[PDF] ファイルの処理でエラーが発生しました: {0}"
+        },
+        "L081": {
+            "en": "[PDF] Failed to analyze base file: {0}",
+            "ja": "[PDF] 基準ファイルの解析でエラーが発生しました: {0}"
+        },
+        "L082": {
+            "en": "[PDF] Failed to analyze comparison file: {0}",
+            "ja": "[PDF] 比較ファイルの解析でエラーが発生しました: {0}"
+        },
+        "L083": {
+            "en": "[UI] Mouse events bound successfully",
+            "ja": "[UI] マウスイベントのバインドに成功しました"
+        },
+        "L084": {
+            "en": "[PDF] Inserted blank page into base: {0}",
+            "ja": "[PDF] 基準ファイルに空白ページを挿入しました: {0}"
+        },
+        "L085": {
+            "en": "[PDF] Inserted blank page into comp: {0}",
+            "ja": "[PDF] 比較ファイルに空白ページを挿入しました: {0}"
+        },
+        "L086": {
+            "en": "[PDF] Invalid page number.",
+            "ja": "[PDF] 無効なページ番号です。"
+        },
+        "L087": {
+            "en": "[THEME] Theme color applied to ImageVisibilityToggleFrame (file: {0}, color_key: {1})",
+            "ja": "[テーマ] テーマカラーをImageVisibilityToggleFrameに適用しました (ファイル: {0}, color_key: {1})"
+        },
+        "L088": {
+            "en": "[WIDGET] Configured ImageVisibilityToggleFrame with settings",
+            "ja": "[ウィジェット] 設定を使用してImageVisibilityToggleFrameを設定しました"
+        },
+        "L089": {
+            "en": "[THEME] Failed to get theme color: {0}",
+            "ja": "[テーマ] テーマカラーの取得でエラーが発生しました: {0}"
+        },
+        "L090": {
+            "en": "[THEME] Failed to apply theme color: {0}",
+            "ja": "[テーマ] テーマカラーの適用でエラーが発生しました: {0}"
+        },
+        "L091": {
+            "en": "[WIDGET] Failed to configure ImageVisibilityToggleFrame with theme settings: {0}",
+            "ja": "[ウィジェット] テーマ設定を使用してImageVisibilityToggleFrameの設定でエラーが発生しました: {0}"
+        },
+        "L092": {
+            "en": "[FILE] Failed to load image: {0}",
+            "ja": "[ファイル] 画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L093": {
+            "en": "[FILE] Image path is None",
+            "ja": "[ファイル] 画像パスがNoneです"
+        },
+        "L094": {
+            "en": "[UI] Error in _load_button_image: {0}",
+            "ja": "[UI] _load_button_imageでエラーが発生しました: {0}"
+        },
+        "L095": {
+            "en": "[FILE] Failed to load fallback image: {0}",
+            "ja": "[ファイル] フォールバック画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L096": {
+            "en": "[THEME] New theme was None, setting default to 'dark'",
+            "ja": "[テーマ] 新しいテーマがNoneでしたので、デフォルトを'dark'に設定しました"
+        },
+        "L097": {
+            "en": "[THEME] Color theme changed to: {0}",
+            "ja": "[テーマ] カラーテーマを変更しました: {0}"
+        },
+        "L098": {
+            "en": "[WIDGET] Failed to update button theme: {0}",
+            "ja": "[ウィジェット] ボタンテーマの更新でエラーが発生しました: {0}"
+        },
+        "L099": {
+            "en": "[THEME] Theme name was None, using default 'dark'",
+            "ja": "[テーマ] テーマ名がNoneでしたので、デフォルトを'dark'に設定しました"
+        },
+        "L101": {
+            "en": "[WIDGET] Configured toggle button with settings: {0}",
+            "ja": "[ウィジェット] 設定を使用してトグルボタンを設定しました: {0}"
+        },
+        "L102": {
+            "en": "[WIDGET] Failed to configure toggle button: {0}",
+            "ja": "[ウィジェット] トグルボタンの設定でエラーが発生しました: {0}"
+        },
+        "L103": {
+            "en": "[UI] Displayed error balloon for image loading failure",
+            "ja": "[UI] 画像読み込み失敗のエラーバルーンを表示しました"
+        },
+        "L104": {
+            "en": "[UI] Failed to show error balloon: {0}",
+            "ja": "[UI] エラーバルーンの表示でエラーが発生しました: {0}"
+        },
+        "L105": {
+            "en": "[FILE] Fallback image not found at {0}",
+            "ja": "[ファイル] フォールバック画像が見つかりません: {0}"
+        },
+        "L106": {
+            "en": "[CONFIG] Failed to load user settings: {0}",
+            "ja": "[CONFIG] ユーザー設定の読み込みでエラーが発生しました: {0}"
+        },
+        "L107": {
+            "en": "[THEME] Failed to load theme: {0}",
+            "ja": "[テーマ] テーマの読み込みでエラーが発生しました: {0}"
+        },
+        "L108": {
+            "en": "[PDF] Foreground/Background threshold updated to: {0}",
+            "ja": "[PDF] 前景/背景のしきい値を更新しました: {0}"
+        },
+        "L109": {
+            "en": "[PDF] File path information updated: {0}",
+            "ja": "[PDF] ファイルパス情報を更新しました: {0}"
+        },
+        "L110": {
+            "en": "[WIDGET] Applied theme to entry with key '{0}': fg={1}, bg={2}, hlfg={3}, hlbg={4}",
+            "ja": "[ウィジェット] キー'{0}'のエントリにテーマを適用しました: fg={1}, bg={2}, hlfg={3}, hlbg={4}"
+        },
+        "L111": {
+            "en": "[WIDGET] Failed to configure entry: {0}",
+            "ja": "[ウィジェット] エントリの設定でエラーが発生しました: {0}"
+        },
+        "L112": {
+            "en": "[WIDGET] Failed to apply theme to entry: {0}",
+            "ja": "[ウィジェット] エントリへのテーマの適用でエラーが発生しました: {0}"
+        },
+        "L113": {
+            "en": "[UI] Failed to load button image: {0}",
+            "ja": "[UI] ボタン画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L114": {
+            "en": "[UI] Failed to load on image: {0}",
+            "ja": "[UI] オン画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L115": {
+            "en": "[UI] On image path is None",
+            "ja": "[UI] オン画像パスがNoneです"
+        },
+        "L116": {
+            "en": "[UI] Failed to load off image: {0}",
+            "ja": "[UI] オフ画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L117": {
+            "en": "[UI] Off image path is None",
+            "ja": "[UI] オフ画像パスがNoneです"
+        },
+        "L118": {
+            "en": "[UI] Failed to load button images: {0}",
+            "ja": "[UI] ボタン画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L119": {
+            "en": "[THEME] Error changing color theme: {0}",
+            "ja": "[テーマ] カラーテーマの変更でエラーが発生しました: {0}"
+        },
+        "L120": {
+            "en": "[THEME] Invalid theme color: {0}, using default 'dark'",
+            "ja": "[テーマ] 無効なテーマカラー: {0}, デフォルトを'dark'に設定します"
+        },
+        "L121": {
+            "en": "[WIDGET] Button theme updated to: {0}",
+            "ja": "[ウィジェット] ボタンテーマを変更しました: {0}"
+        },
+        "L122": {
+            "en": "[UI] Failed to update button image: image is None",
+            "ja": "[UI] ボタン画像の更新でエラーが発生しました: 画像がNoneです"
+        },
+        "L123": {
+            "en": "[UI] Failed to handle export click: {0}",
+            "ja": "[UI] エクスポートクリックの処理でエラーが発生しました: {0}"
+        },
+        "L124": {
+            "en": "[FILE] Failed to save PDF: {0}",
+            "ja": "[ファイル] PDFの保存でエラーが発生しました: {0}"
+        },
+        "L125": {
+            "en": "[FILE] Failed to get output directory: {0}",
+            "ja": "[ファイル] 出力ディレクトリの取得でエラーが発生しました: {0}"
+        },
+        "L126": {
+            "en": "[WIDGET] Failed to apply theme to PDFCompareCanvas: {0}",
+            "ja": "[ウィジェット] PDFCompareCanvasへのテーマの適用でエラーが発生しました: {0}"
+        },
+        "L127": {
+            "en": "[WIDGET] Failed to configure PDFCompareCanvas: {0}",
+            "ja": "[ウィジェット] PDFCompareCanvasの設定でエラーが発生しました: {0}"
+        },
+        "L128": {
+            "en": "[FILE] Failed to open base image: {0}",
+            "ja": "[ファイル] 基準画像のオープンでエラーが発生しました: {0}"
+        },
+        "L129": {
+            "en": "[FILE] Failed to open comp image: {0}",
+            "ja": "[ファイル] 比較画像のオープンでエラーが発生しました: {0}"
+        },
+        "L130": {
+            "en": "[FILE] Failed to process base image: {0}",
+            "ja": "[ファイル] 基準画像の処理でエラーが発生しました: {0}"
+        },
+        "L131": {
+            "en": "[FILE] Failed to process comp image: {0}",
+            "ja": "[ファイル] 比較画像の処理でエラーが発生しました: {0}"
+        },
+        "L132": {
+            "en": "[THEME] Current theme color name is None",
+            "ja": "[テーマ] 現在のテーマカラー名がNoneです"
+        },
+        "L133": {
+            "en": "[UI] Color theme change button created",
+            "ja": "[UI] カラーテーマ変更ボタンを作成しました"
+        },
+        "L134": {
+            "en": "[FILE] Image path is None",
+            "ja": "[ファイル] 画像パスがNoneです"
+        },
+        "L135": {
+            "en": "[UI] Failed to update button image: image is None",
+            "ja": "[UI] ボタン画像の更新でエラーが発生しました: 画像がNoneです"
+        },
+        "L136": {
+            "en": "[UI] Displayed error balloon for image loading failure",
+            "ja": "[UI] 画像読み込み失敗のエラーバルーンを表示しました"
+        },
+        "L137": {
+            "en": "[FILE] Fallback image not found at {0}",
+            "ja": "[ファイル] フォールバック画像が見つかりません: {0}"
+        },
+        "L138": {
+            "en": "[UI] Mouse events bound successfully",
+            "ja": "[UI] マウスイベントのバインドに成功しました"
+        },
+        "L139": {
+            "en": "[PDF] Inserted blank page into base: {0}",
+            "ja": "[PDF] 基準ファイルに空白ページを挿入しました: {0}"
+        },
+        "L140": {
+            "en": "[PDF] Inserted blank page into comp: {0}",
+            "ja": "[PDF] 比較ファイルに空白ページを挿入しました: {0}"
+        },
+        "L141": {
+            "en": "[PDF] Invalid page number.",
+            "ja": "[PDF] 無効なページ番号です。"
+        },
+        "L142": {
+            "en": "[THEME] Theme color applied to ImageVisibilityToggleFrame (file: {0}, color_key: {1})",
+            "ja": "[テーマ] テーマカラーをImageVisibilityToggleFrameに適用しました (ファイル: {0}, color_key: {1})"
+        },
+        "L143": {
+            "en": "[THEME] Applied color theme to {0}",
+            "ja": "[テーマ] {0}にカラーテーマを適用しました"
+        },
+        "L144": {
+            "en": "[THEME] Applied color theme to child {0}",
+            "ja": "[テーマ] 子{0}にカラーテーマを適用しました"
+        },
+        "L145": {
+            "en": "[THEME] Error in apply_color_theme: {0}",
+            "ja": "[テーマ] apply_color_themeでエラーが発生しました: {0}"
+        },
+        "L146": {
+            "en": "[WIDGET] Description text widget initialized",
+            "ja": "[ウィジェット] 説明テキストウィジェットを初期化しました"
+        },
+        "L147": {
+            "en": "[UI] Window events bound successfully",
+            "ja": "[UI] ウィンドウイベントのバインドに成功しました"
+        },
+        "L148": {
+            "en": "[UI] Failed to bind window events: {0}",
+            "ja": "[UI] ウィンドウイベントのバインドでエラーが発生しました: {0}"
+        },
+        "L149": {
+            "en": "[THEME] Applied theme to self: {0}",
+            "ja": "[テーマ] 自身{0}にテーマを適用しました"
+        },
+        "L150": {
+            "en": "[THEME] Applied theme to child: {0}",
+            "ja": "[テーマ] 子{0}にテーマを適用しました"
+        },
+        "L151": {
+            "en": "[THEME] Failed to apply color theme: {0}",
+            "ja": "[テーマ] カラーテーマの適用でエラーが発生しました: {0}"
+        },
+        "L152": {
+            "en": "[UI] Balloon message window created",
+            "ja": "[UI] バルーンメッセージウィンドウを作成しました"
+        },
+        "L153": {
+            "en": "[UI] Balloon message window closed",
+            "ja": "[UI] バルーンメッセージウィンドウを閉じました"
+        },
+        "L154": {
+            "en": "[THEME] Theme unchanged ({0}), skipping settings update",
+            "ja": "[テーマ] 同じテーマ（{0}）に切り替える指示が来ましたので未処理としました"
+        },
+        "L155": {
+            "en": "[UI] Custom message box created",
+            "ja": "[UI] カスタムメッセージボックスを作成しました"
+        },
+        "L156": {
+            "en": "[UI] Custom message box closed",
+            "ja": "[UI] カスタムメッセージボックスを閉じました"
+        },
+        "L157": {
+            "en": "[UI] Failed to apply theme to custom message box: {0}",
+            "ja": "[UI] カスタムメッセージボックスへのテーマ適用でエラーが発生しました: {0}"
+        },
+        "L158": {
+            "en": "[UI] Failed to set Windows titlebar color: {0}",
+            "ja": "[UI] Windowsタイトルバーの色設定でエラーが発生しました: {0}"
+        },
+        "L159": {
+            "en": "[UI] Failed to load button image: {0}",
+            "ja": "[UI] ボタン画像の読み込みでエラーが発生しました: {0}"
+        },
+        "L161": {
+            "en": "[WIDGET] Empty theme configuration for entry with color_key: {0}",
+            "ja": "[ウィジェット] エントリー（color_key: {0}）のテーマ設定が空です"
+        },
+        "L162": {
+            "en": "[WIDGET] Empty theme settings for widget: {0}",
+            "ja": "[ウィジェット] ウィジェットのテーマ設定が空です: {0}"
+        },
+        "L163": {
+            "en": "[UI] Tab layout completed, window resize logging enabled: {0}",
+            "ja": "[UI] タブレイアウト完了、ウィンドウサイズ変更ログを開始: {0}"
+        },
+        "L164": {
+            "en": "[WIDGET] Empty theme data for path entry widget: {0}",
+            "ja": "[ウィジェット] パスエントリーウィジェットのテーマデータが空です: {0}"
+        },
+        "L165": {
+            "en": "[WIDGET] Empty theme data for visibility toggle widget: {0}",
+            "ja": "[ウィジェット] 表示切替ウィジェットのテーマデータが空です: {0}"
+        },
+        "L166": {
+            "en": "[WIDGET] Empty theme configuration for visibility toggle with color_key: {0}",
+            "ja": "[ウィジェット] 表示切替ウィジェット（color_key: {0}）のテーマ設定が空です"
+        },
+        "L167": {
+            "en": "[WIDGET] Empty theme settings for visibility toggle frame",
+            "ja": "[ウィジェット] 表示切替フレームのテーマ設定が空です"
+        },
+        "L168": {
+            "en": "[UI] Failed to apply theme to balloon message window: {0}",
+            "ja": "[UI] バルーンメッセージウィンドウへのテーマ適用でエラーが発生しました: {0}"
+        },
+        "L169": {
+            "en": "[THEME] Missing theme key during window creation: {0}",
+            "ja": "[THEME] ウィンドウ作成中にテーマキーが見つかりませんでした: {0}"
+        },
+        "L170": {
+            "en": "[UI] Failed to set window icon: {0}",
+            "ja": "[UI] ウィンドウアイコンの設定でエラーが発生しました: {0}"
+        },
+        "L171": {
+            "en": "[SYS] Logging system initialized",
+            "ja": "[SYS] ログシステムが初期化されました"
+        },
+        "L172": {
+            "en": "[SYS] Failed to initialize logging: {0}",
+            "ja": "[SYS] ログシステムの初期化でエラーが発生しました: {0}"
+        },
+        "L173": {
+            "en": "[WIDGET] Theme color applied to page control frame",
+            "ja": "[ウィジェット] ページコントロールフレームにテーマ色を適用しました"
+        },
+        "L174": {
+            "en": "[WIDGET] Failed to apply theme color: {0}",
+            "ja": "[ウィジェット] テーマ色の適用でエラーが発生しました: {0}"
+        },
+        "L175": {
+            "en": "[WIDGET] Failed to configure widget with theme settings: {0}",
+            "ja": "[ウィジェット] テーマ設定によるウィジェットの設定でエラーが発生しました: {0}"
+        },
+        "L176": {
+            "en": "[WIDGET] ConvertImageButton initialized with key={0}",
+            "ja": "[ウィジェット] ConvertImageButtonがkey={0}で初期化されました"
+        },
+        "L177": {
+            "en": "[WIDGET] No output directory specified",
+            "ja": "[ウィジェット] 出力ディレクトリが指定されていません"
+        },
+        "L178": {
+            "en": "[SYS] Application initialization started",
+            "ja": "[SYS] アプリケーションの初期化を開始しました"
+        },
+        "L179": {
+            "en": "[SYS] Setup logging complete",
+            "ja": "[SYS] ログ設定が完了しました"
+        },
+        "L180": {
+            "en": "[SYS] Calling create_directories",
+            "ja": "[SYS] create_directoriesを呼び出しています"
+        },
+        "L181": {
+            "en": "[SYS] create_directories returned {0}, exists={1}",
+            "ja": "[SYS] create_directoriesが{0}を返しました、存在={1}"
+        },
+        "L182": {
+            "en": "[SYS] Base temporary directory: {0}",
+            "ja": "[SYS] 一時ディレクトリのベース: {0}"
+        },
+        "L183": {
+            "en": "[SYS] Initializing UserSettingManager",
+            "ja": "[SYS] UserSettingManagerを初期化しています"
+        },
+        "L184": {
+            "en": "[SYS] User settings status={0}, file exists={1}",
+            "ja": "[SYS] ユーザー設定の状態={0}、ファイル存在={1}"
+        },
+        "L185": {
+            "en": "[SYS] Initializing ColorThemeManager",
+            "ja": "[SYS] ColorThemeManagerを初期化しています"
+        },
+        "L186": {
+            "en": "[THEME] Theme system initialized with theme: {0}",
+            "ja": "[テーマ] テーマシステムが初期化されました: {0}"
+        },
+        "L187": {
+            "en": "[THEME] Color themes initialized and ready for use",
+            "ja": "[テーマ] カラーテーマが初期化され、使用準備が整いました"
+        },
+        "L188": {
+            "en": "[FILE] No output directory specified",
+            "ja": "[FILE] 出力ディレクトリが指定されていません"
+        },
+        "L189": {
+            "en": "[FILE] Saving PDF to: {0}",
+            "ja": "[FILE] PDFを保存しています: {0}"
+        },
+        "L190": {
+            "en": "[SYS] create_directories: base_dir={0}",
+            "ja": "[SYS] ディレクトリ作成: ベースディレクトリ={0}"
+        },
+        "L191": {
+            "en": "[SYS] Directory check: {0}, exists={1}",
+            "ja": "[SYS] ディレクトリ確認: {0}, 存在確認={1}"
+        },
+        "L192": {
+            "en": "[SYS] Directory already exists, skipped: {0}",
+            "ja": "[SYS] ディレクトリは既に存在するためスキップしました: {0}"
+        },
+        "L193": {
+            "en": "[SYS] Using temporary directory: {0}, exists={1}",
+            "ja": "[SYS] 一時ディレクトリを使用します: {0}, 存在確認={1}"
+        },
+        "L194": {
+            "en": "[UI] Failed to show message box: {0}",
+            "ja": "[UI] メッセージボックスの表示でエラーが発生しました: {0}"
+        },
+        "L195": {
+            "en": "[UI] Failed to update page label: {0}",
+            "ja": "[UI] ページラベルの更新でエラーが発生しました: {0}"
+        },
+        "L196": {
+            "en": "[UI] Displaying base page {0}",
+            "ja": "[UI] ベースページの表示: {0}"
+        },
+        "L197": {
+            "en": "[UI] Displaying comparison page {0}",
+            "ja": "[UI] 比較ページの表示: {0}"
+        },
+        "L198": {
+            "en": "[UI] Failed to show current page: {0}",
+            "ja": "[UI] 現在ページの表示でエラーが発生しました: {0}"
+        },
+        "L199": {
+            "en": "[THEME] Failed to apply theme to ttk.Notebook widget: {0}",
+            "ja": "[THEME] ttk.Notebookウィジェットへのテーマ適用でエラーが発生しました: {0}"
+        },
+        "L200": {
+            "en": "[THEME] Configured {0} with settings: {1}",
+            "ja": "[THEME] {0}を設定で構成しました: {1}"
+        },
+        "L201": {
+            "en": "[THEME] Failed to configure {0}: {1}",
+            "ja": "[THEME] {0}の構成でエラーが発生しました: {1}"
+        },
+        "L202": {
+            "en": "[WIDGET] BaseLabelClass initialized with text: {0}",
+            "ja": "[WIDGET] BaseLabelClassがテキストで初期化されました: {0}"
+        },
+        "L203": {
+            "en": "[FILE] Error handling dropped file: {0}",
+            "ja": "[FILE] ドロップされたファイルの処理でエラーが発生しました: {0}"
+        },
+        "L204": {
+            "en": "[UI] Error showing drop feedback: {0}",
+            "ja": "[UI] ドロップフィードバックの表示でエラーが発生しました: {0}"
+        },
+        "L205": {
+            "en": "[FILE] Input extension is invalid: {0}",
+            "ja": "[FILE] 入力拡張子が無効です: {0}"
+        },
+        "L206": {
+            "en": "[UI] Error setting up drag and drop: {0}",
+            "ja": "[UI] ドラッグアンドドロップの設定でエラーが発生しました: {0}"
+        },
+        "L207": {
+            "en": "[FILE] Error handling dropped image: {0}",
+            "ja": "[FILE] ドロップされた画像の処理でエラーが発生しました: {0}"
+        },
+        "L208": {
+            "en": "[FILE] Image conversion failed: {0}",
+            "ja": "[FILE] 画像変換でエラーが発生しました: {0}"
+        },
+        "L209": {
+            "en": "[UI] Updated page label: current_page={0}, max_pages={1}",
+            "ja": "[UI] ページラベルを更新しました: 現在ページ={0}, 全ページ数={1}"
+        },
+        "L210": {
+            "en": "[UI] No pages to display",
+            "ja": "[UI] 表示するページがありません"
+        },
+        "L211": {
+            "en": "[THEME] Theme applied to ttk.Notebook widget: {0}",
+            "ja": "[THEME] ttk.Notebookウィジェットにテーマが適用されました: {0}"
+        },
+        "L212": {
+            "en": "[WIDGET] Registered widget: {0}",
+            "ja": "[ウィジェット] ウィジェットを登録しました: {0}"
+        },
+        "L220": {
+            "en": "[SYS] Logging system initialized",
+            "ja": "[SYS] ログシステムが初期化されました"
+        },
+        "L221": {
+            "en": "[SYS] Failed to initialize logging: {0}",
+            "ja": "[SYS] ログの初期化に失敗しました: {0}"
+        },
+        "L222": {
+            "en": "[SYS] Application error: {0}",
+            "ja": "[SYS] アプリケーションエラーが発生しました: {0}"
+        },
+        "L223": {
+            "en": "[SYS] Failed to create main window: {0}",
+            "ja": "[SYS] メインウィンドウの作成に失敗しました: {0}"
+        },
+        "L224": {
+            "en": "[SYS] Failed to clean up resources: {0}",
+            "ja": "[SYS] リソースのクリーンアップに失敗しました: {0}"
+        },
+        "L225": {
+            "en": "[SYS] Temporary files cleaned up",
+            "ja": "[SYS] 一時ファイルがクリーンアップされました"
+        },
+        "L226": {
+            "en": "[SYS] User settings saved",
+            "ja": "[SYS] ユーザー設定が保存されました"
+        },
+        "L227": {
+            "en": "[UI] Tab layout completed: {0}",
+            "ja": "[UI] タブレイアウト完了: {0}"
+        },
+        "L228": {
+            "en": "[UI] Language changed to: {0}",
+            "ja": "[UI] 言語が変更されました: {0}"
+        },
+        "L230": {
+            "en": "[UI] {0} setup complete",
+            "ja": "[UI] {0}の設定が完了しました"
+        },
+        "L231": {
+            "en": "[THEME] Applied theme '{0}' to {1} widgets",
+            "ja": "[テーマ] {1}個のウィジェットに'{0}'テーマを適用しました"
+        },
+        "L232": {
+            "en": "[SYS] Application shutdown initiated",
+            "ja": "[SYS] アプリケーションのシャットダウンを開始しました"
+        },
+        "L233": {
+            "en": "[SYS] User settings backup failed: {0}",
+            "ja": "[SYS] ユーザー設定のバックアップに失敗しました: {0}"
+        },
+        "L234": {
+            "en": "[UI] Drag and drop initialized successfully",
+            "ja": "[UI] ドラッグアンドドロップが正常に初期化されました"
+        },
+        "L240": {
+            "en": "[THEME] Color theme changed: {0} -> {1}",
+            "ja": "[テーマ] カラーテーマを変更しました: {0} -> {1}"
+        },
+        "L241": {
+            "en": "[SYS] Failed to setup user settings: {0}",
+            "ja": "[SYS] ユーザー設定のセットアップに失敗しました: {0}"
+        },
+        "L242": {
+            "en": "[SYS] MessageManager language set to {0}",
+            "ja": "[SYS] MessageManagerの言語が{0}に設定されました"
+        },
+        "L243": {
+            "en": "[UI] CreateComparisonFileApp initialization started",
+            "ja": "[UI] CreateComparisonFileAppの初期化を開始しました"
+        },
+        "L244": {
+            "en": "[UI] CreateComparisonFileApp initialization completed",
+            "ja": "[UI] CreateComparisonFileAppの初期化が完了しました"
+        },
+        "L245": {
+            "en": "[UI] CreateComparisonFileApp frame setup started",
+            "ja": "[UI] CreateComparisonFileAppのフレーム設定を開始しました"
+        },
+        "L246": {
+            "en": "[UI] CreateComparisonFileApp frame setup completed",
+            "ja": "[UI] CreateComparisonFileAppのフレーム設定が完了しました"
+        },
+        "L247": {
+            "en": "[UI] CreateComparisonFileApp widget setup started",
+            "ja": "[UI] CreateComparisonFileAppのウィジェット設定を開始しました"
+        },
+        "L248": {
+            "en": "[SYS] Applying language setting based on user settings: language={0}",
+            "ja": "[SYS] ユーザー設定に基づく言語設定を適用: 言語={0}"
+        },
+        "L249": {
+            "en": "[SYS] Async theme application completed: {0}",
+            "ja": "[SYS] 非同期テーマ適用が完了しました: {0}"
+        },
+        "L250": {
+            "en": "[APP] Entering event-driven initialization mode",
+            "ja": "[APP] イベント駆動型初期化モードに入りました"
+        },
+        "L252": {
+            "en": "[SYS] API response handler received message type: {0}",
+            "ja": "[SYS] APIレスポンスハンドラがメッセージタイプを受信しました: {0}"
+        },
+        "L253": {
+            "en": "[UI] Loading image from path: {0}",
+            "ja": "[UI] パス {0} から画像をロードしています"
+        },
+        "L254": {
+            "en": "[UI] Button image dimensions: {0}",
+            "ja": "[UI] ボタン画像のサイズ: {0}"
+        },
+        "L255": {
+            "en": "[UI] Parent background color: {0}",
+            "ja": "[UI] 親フレームの背景色: {0}"
+        },
+        "L256": {
+            "en": "[UI] Updated button parent background color: {0}",
+            "ja": "[UI] ボタン親要素の背景色を更新しました: {0}"
+        },
+        "L257": {
+            "en": "[UI] Button dimensions set to: {0}",
+            "ja": "[UI] ボタンの寸法を設定: {0}"
+        },
+        "L258": {
+            "en": "[UI] Status bar was updated with message: {0}",
+            "ja": "[UI] ステータスバーがメッセージで更新されました: {0}"
+        },
+        "L259": {
+            "en": "[EVENT] Event handler received {0} completion event",
+            "ja": "[EVENT] {0}完了イベントを受信しました"
+        },
+        "L260": {
+            "en": "[THEME] Error loading theme: {0}",
+            "ja": "[テーマ] テーマの読み込みでエラーが発生しました: {0}"
+        },
+        "L261": {
+            "en": "[EVENT] Subscribed to event: {0}",
+            "ja": "[イベント] イベントをサブスクライブしました: {0}"
+        },
+        "L262": {
+            "en": "[EVENT] Unsubscribed from event: {0}",
+            "ja": "[イベント] イベントのサブスクライブを解除しました: {0}"
+        },
+        "L263": {
+            "en": "[EVENT] Publishing event: {0}",
+            "ja": "[イベント] イベントを発行しています: {0}"
+        },
+        "L264": {
+            "en": "[THEME] Example of uninitialized widget: {0}",
+            "ja": "[テーマ] 未初期化ウィジェットの例: {0}"
+        },
+        "L265": {
+            "en": "[WIDGET] Failed to create widget: {0}",
+            "ja": "[ウィジェット] ウィジェット作成に失敗しました: {0}"
+        },
+        "L266": {
+            "en": "[WIDGET] Failed to apply theme to {0} entry in {1}: {2}",
+            "ja": "[ウィジェット] {1}の{0}エントリーにテーマを適用できませんでした: {2}"
+        },
+        "L267": {
+            "en": "[UI] Window close request received",
+            "ja": "[UI] ウィンドウ終了リクエストを受信しました"
+        },
+        "L268": {
+            "en": "[UI] Window close cleanup error: {0}",
+            "ja": "[UI] ウィンドウ終了時のクリーンアップエラー: {0}"
+        },
+        "L269": {
+            "en": "[UI] Window minimize operation performed",
+            "ja": "[UI] ウィンドウ最小化操作が実行されました"
+        },
+        "L270": {
+            "en": "[UI] Window maximize operation performed",
+            "ja": "[UI] ウィンドウ最大化操作が実行されました"
+        },
+        "L271": {
+            "en": "[UI] Window restore operation performed",
+            "ja": "[UI] ウィンドウ復元操作が実行されました"
+        },
+        "L272": {
+            "en": "[UI] Window protocol setup completed",
+            "ja": "[UI] ウィンドウプロトコルのセットアップが完了しました"
+        },
+        "L273": {
+            "en": "[UI] Window focus gained",
+            "ja": "[UI] ウィンドウにフォーカスが移動しました"
+        },
+        "L274": {
+            "en": "[UI] Window focus lost",
+            "ja": "[UI] ウィンドウのフォーカスが失われました"
+        },
+        "L275": {
+            "en": "[UI] Language changed to {0}",
+            "ja": "[UI] 言語を {0} に変更しました"
+        },
+        "L276": {
+            "en": "[PDF] Loaded PDF with {0} pages: {1}",
+            "ja": "[PDF] {0}ページのPDFを読み込みました: {1}"
+        },
+        "L277": {
+            "en": "[PDF] Error loading PDF: {0}",
+            "ja": "[PDF] PDFの読み込み中にエラーが発生しました: {0}"
+        },
+        "L278": {
+            "en": "[PDF] Using temp directory: {0}",
+            "ja": "[PDF] 一時ディレクトリを使用しています: {0}"
+        },
+        "L279": {
+            "en": "[PDF] PNG file not found: {0}",
+            "ja": "[PDF] PNGファイルが見つかりません: {0}"
+        },
+        "L280": {
+            "en": "[BUTTON] Replaced '{0}' with '{1}'",
+            "ja": "[BUTTON] '{0}'を'{1}'に置き換えました"
+        },
+        "L281": {
+            "en": "[BUTTON] Button initialized with text: {0}",
+            "ja": "[BUTTON] ボタンがテキストで初期化されました: {0}"
+        },
+        "L282": {
+            "en": "[PDF] No PDF document loaded",
+            "ja": "[PDF] PDFドキュメントが読み込まれていません"
+        },
+        "L283": {
+            "en": "[PDF] Invalid page index: {0}, valid range: 0-{1}",
+            "ja": "[PDF] 無効なページインデックス: {0}, 有効範囲: 0-{1}"
+        },
+        "L284": {
+            "en": "[PDF] Displayed page {0} of {1}",
+            "ja": "[PDF] ページ {0}/{1} を表示しました"
+        },
+        "L285": {
+            "en": "[PDF] Error displaying page: {0}",
+            "ja": "[PDF] ページ表示エラー: {0}"
+        },
+        "L286": {
+            "en": "[PDF] Previous page requested",
+            "ja": "[PDF] 前のページがリクエストされました"
+        },
+        "L287": {
+            "en": "[PDF] Mouse event handler update failed: {0}",
+            "ja": "[PDF] マウスイベントハンドラの更新に失敗しました: {0}"
+        },
+        "L288": {
+            "en": "[PDF] Next page requested",
+            "ja": "[PDF] 次のページがリクエストされました"
+        },
+        "L289": {
+            "en": "[PDF] No PDF document loaded",
+            "ja": "[PDF] PDFドキュメントが読み込まれていません"
+        },
+        "L290": {
+            "en": "[PDF] Moved to page {0} of {1}",
+            "ja": "[PDF] ページ {0}/{1} に移動しました"
+        },
+        "L291": {
+            "en": "[PDF] Already at first page",
+            "ja": "[PDF] 既に最初のページです"
+        },
+        "L292": {
+            "en": "[PDF] Already at last page",
+            "ja": "[PDF] 既に最後のページです"
+        },
+        "L293": {
+            "en": "[PDF] Page entry event received",
+            "ja": "[PDF] ページ入力イベントを受信しました"
+        },
+        "L294": {
+            "en": "[PDF] PDF is not loaded",
+            "ja": "[PDF] PDFが読み込まれていません"
+        },
+        "L295": {
+            "en": "[PDF] Page control frame is not available",
+            "ja": "[PDF] ページコントロールフレームが利用できません"
+        },
+        "L296": {
+            "en": "[PDF] Moved to page {0}/{1}",
+            "ja": "[PDF] ページ {0}/{1} に移動しました"
+        },
+        "L297": {
+            "en": "[PDF] Invalid page number: {0}, valid range: 1-{1}",
+            "ja": "[PDF] 無効なページ番号です: {0}, 有効範囲: 1-{1}"
+        },
+        "L298": {
+            "en": "[PDF] Created page control frame",
+            "ja": "[PDF] ページコントロールフレームを作成しました"
+        },
+        "L299": {
+            "en": "[PDF] Processed mouse wheel event",
+            "ja": "[PDF] マウスホイールイベントを処理しました"
+        },
+        "L300": {
+            "en": "[PDF] Mouse wheel event processing error: {0}",
+            "ja": "[PDF] マウスホイールイベント処理エラー: {0}"
+        },
+        "L301": {
+            "en": "[PDF] Set up mouse event handler for PDF with {0} pages",
+            "ja": "[PDF] {0}ページのPDF用マウスイベントハンドラを設定しました"
+        },
+        "L302": {
+            "en": "[PDF] Bound mouse/keyboard events to canvas",
+            "ja": "[PDF] マウス/キーボードイベントをキャンバスにバインドしました"
+        },
+        "L303": {
+            "en": "[PDF] Error setting up mouse events: {0}",
+            "ja": "[PDF] マウスイベント設定中にエラーが発生しました: {0}"
+        },
+        "L304": {
+            "en": "[FILE] File processing completed",
+            "ja": "[FILE] ファイル処理が完了しました"
+        },
+        "L305": {
+            "en": "[FILE] Files will be saved at: {0}",
+            "ja": "[FILE] ファイルは次の場所に保存されます: {0}"
+        },
+        "L306": {
+            "en": "[FILE] Image saved: page {0} to {1}",
+            "ja": "[FILE] 画像を保存しました: ページ {0} を {1} に保存"
+        },
+        "L307": {
+            "en": "[PDF] Extracted metadata: {0}",
+            "ja": "[PDF] メタデータを抽出しました: {0}"
+        },
+        "L308": {
+            "en": "[PDF] Error extracting PDF metadata with PyPDF: {0}",
+            "ja": "[PDF] PyPDFでのPDFメタデータ抽出エラー: {0}"
+        },
+        "L309": {
+            "en": "[PDF] PyPDF not available for metadata extraction, falling back to PyPDFium2",
+            "ja": "[PDF] メタデータ抽出のためのPyPDFが利用できません、PyPDFium2にフォールバックします"
+        },
+        "L310": {
+            "en": "[PDF] Converting page {0}/{1}...",
+            "ja": "[PDF] ページ {0}/{1} を変換中..."
+        },
+        "L311": {
+            "en": "[PDF] Successfully completed conversion from PDF to PNG",
+            "ja": "[PDF] PDFからPNGへの変換が正常に完了しました"
+        },
+        "L312": {
+            "en": "[PDF] PyPDF not available for metadata extraction - consider installing with: pip install pypdf",
+            "ja": "[PDF] メタデータ抽出のためのPyPDFが利用できません - インストールを検討してください: pip install pypdf"
+        },
+        "L313": {
+            "en": "[FILE] Image saved: {0}",
+            "ja": "[FILE] 画像を保存しました: {0}"
+        },
+        "L314": {
+            "en": "Progress: {0}%, {1}/{2}, message: {3}",
+            "ja": "進捗状況: {0}%, {1}/{2}, メッセージ: {3}"
+        },
+        "L315": {
+            "en": "[PDF] Initialized PDF converter for file: {0}",
+            "ja": "[PDF] ファイルのPDFコンバータを初期化しました: {0}"
+        },
+        "L316": {
+            "en": "[PDF] Extracting metadata with PyPDF from: {0}",
+            "ja": "[PDF] PyPDFを使用してメタデータを抽出中: {0}"
+        },
+        "L317": {
+            "en": "[PDF] Falling back to PyPDFium2 for metadata extraction",
+            "ja": "[PDF] メタデータ抽出のPyPDFium2にフォールバックします"
+        },
+        "L318": {
+            "en": "[PDF] PDF has {0} pages according to PyPDFium2",
+            "ja": "[PDF] PyPDFium2によると、PDFは{0}ページあります"
+        },
+        "L319": {
+            "en": "[PDF] Extracted PDF metadata: {0}",
+            "ja": "[PDF] 抽出したPDFメタデータ: {0}"
+        },
+        "L320": {
+            "en": "[PDF] Full metadata in file_info: {0}",
+            "ja": "[PDF] file_infoの完全なメタデータ: {0}"
+        },
+        "L321": {
+            "en": "[PDF] Successfully extracted basic metadata using PyPDFium2",
+            "ja": "[PDF] PyPDFium2を使用して基本メタデータの抽出に成功しました"
+        },
+        "L322": {
+            "en": "[PDF] Neither PyPDF nor PyPDFium2 are available - PDF processing will fail",
+            "ja": "[PDF] PyPDFもPyPDFium2も利用できません - PDF処理は失敗します"
+        },
+        "L323": {
+            "en": "[PDF] Error getting page count with PyPDFium2: {0}",
+            "ja": "[PDF] PyPDFium2でページ数を取得中にエラーが発生しました: {0}"
+        },
+        "L324": {
+            "en": "[PDF] No pages found in PDF file",
+            "ja": "[PDF] PDFファイルにページが見つかりません"
+        },
+        "L325": {
+            "en": "[PDF] Processing PDF with {0} pages at {1} DPI (scale={2})",
+            "ja": "[PDF] {0}ページのPDFを{1} DPIで処理中 (スケール={2})"
+        },
+        "L326": {
+            "en": "[PDF] PyPDFium2 is not available. Cannot convert PDF.",
+            "ja": "[PDF] PyPDFium2が利用できません。PDFを変換できません。"
+        },
+        "L327": {
+            "en": "[PDF] PyPDFium2 is required for PDF conversion but not available",
+            "ja": "[PDF] PDF変換にはPyPDFium2が必要ですが、利用できません"
+        },
+        "L328": {
+            "en": "[PDF] Successfully rendered page {0}/{1}",
+            "ja": "[PDF] ページ {0}/{1} のレンダリングに成功しました"
+        },
+        "L329": {
+            "en": "[PDF] Using older pypdfium2 API with colour parameter",
+            "ja": "[PDF] colour パラメータを使用した古いバージョンの pypdfium2 API を使用しています"
+        },
+        "L330": {
+            "en": "[PDF] Using newer pypdfium2 API without colour parameter",
+            "ja": "[PDF] colour パラメータを使用しない新しいバージョンの pypdfium2 API を使用しています"
+        },
+        "L331": {
+            "en": "[PDF] Converting to PIL image - API differs between pypdfium2 versions",
+            "ja": "[PDF] PIL画像に変換中 - pypdfium2のバージョンによってAPIが異なります"
+        },
+        "L332": {
+            "en": "[PDF] Converting page {0} to {1}",
+            "ja": "[PDF] ページ {0} を {1} に変換中"
+        },
+        "L333": {
+            "en": "[PDF] Falling back to PyPDFium2 for metadata extraction",
+            "ja": "[PDF] メタデータ抽出のためPyPDFium2にフォールバックします"
+        },
+        "L334": {
+            "en": "[PDF] Attempting to extract metadata with PyPDF",
+            "ja": "[PDF] PyPDFでメタデータの抽出を試みます"
+        },
+        "L335": {
+            "en": "[PDF] Updating file metadata",
+            "ja": "[PDF] ファイルメタデータを更新しています"
+        },
+        "L336": {
+            "en": "[PDF] Setting page count to {0}",
+            "ja": "[PDF] ページ数を {0} に設定しています"
+        },
+        "L337": {
+            "en": "[PDF] Basic metadata from PyPDFium2",
+            "ja": "[PDF] PyPDFium2からの基本メタデータ"
+        },
+        "L338": {
+            "en": "[PDF] Processing PDF file path: {0}",
+            "ja": "[PDF] PDFファイルパスを処理中: {0}"
+        },
+        "L339": {
+            "en": "[PDF] Calculating scale factor for DPI: {0}",
+            "ja": "[PDF] DPIのスケールファクターを計算中: {0}"
+        },
+        "L340": {
+            "en": "[PDF] Using custom DPI value from user override: {0}",
+            "ja": "[PDF] ユーザー指定のDPI値を使用: {0}"
+        },
+        "L341": {
+            "en": "[PDF] Error converting PDF bitmap to PIL: {0}",
+            "ja": "[PDF] PDFビットマップからPILへの変換エラー: {0}"
+        },
+        "L342": {
+            "en": "[PDF] Error converting page {0}: {1}",
+            "ja": "[PDF] ページ{0}の変換エラー: {1}"
+        },
+        "L343": {
+            "en": "[UI] Reset page entry to current page",
+            "ja": "[UI] ページ入力を現在のページにリセット"
+        },
+        "L344": {
+            "en": "[MOUSE] Mouse event handler initialized",
+            "ja": "[マウス] マウスイベントハンドラが初期化されました"
+        },
+        "L345": {
+            "en": "[EVENT] EventBus instance created with ID: {0}",
+            "ja": "[イベント] EventBusインスタンスが作成されました。ID: {0}"
+        },
+        "L346": {
+            "en": "[FILE] Looking for PNG file at path: {0}",
+            "ja": "[ファイル] PNGファイルを探しています: {0}"
+        }
+    },
+    "message_codes": {
+        "M000": {
+            "en": "[SYS] Application initialization failed: {0}",
+            "ja": "[SYS] アプリケーションの初期化に失敗しました: {0}"
+        },
+        "M001": {
+            "en": "[SYS] Operation successful",
+            "ja": "[SYS] 操作が成功しました"
+        },
+        "M002": {
+            "en": "[FILE] File loaded: {0}",
+            "ja": "[ファイル] ファイルを読み込みました: {0}"
+        },
+        "M003": {
+            "en": "[SYS] Please wait while processing...",
+            "ja": "[SYS] 処理中です。お待ちください..."
+        },
+        "M004": {
+            "en": "[FILE] Failed to select comparison file: {0}",
+            "ja": "[ファイル] 比較ファイルの選択でエラーが発生しました: {0}"
+        },
+        "M005": {
+            "en": "Failed to select output folder: {0}",
+            "ja": "出力フォルダの選択に失敗しました: {0}"
+        },
+        "M006": {
+            "en": "Failed to process files: {0}",
+            "ja": "ファイルの処理に失敗しました: {0}"
+        },
+        "M007": {
+            "en": "Failed to analyze base file: {0}",
+            "ja": "基準ファイルの解析に失敗しました: {0}"
+        },
+        "M008": {
+            "en": "Failed to analyze comparison file: {0}",
+            "ja": "比較ファイルの解析に失敗しました: {0}"
+        },
+        "M009": {
+            "en": "Failed to bind mouse events: {0}",
+            "ja": "マウスイベントのバインドに失敗しました: {0}"
+        },
+        "M010": {
+            "en": "Failed to insert blank page: {0}",
+            "ja": "空白ページの挿入に失敗しました: {0}"
+        },
+        "M011": {
+            "en": "Failed to get theme color: {0}",
+            "ja": "テーマカラーの取得に失敗しました: {0}"
+        },
+        "M012": {
+            "en": "Failed to apply theme color: {0}",
+            "ja": "テーマカラーの適用に失敗しました: {0}"
+        },
+        "M013": {
+            "en": "Failed to configure ImageVisibilityToggleFrame with theme settings: {0}",
+            "ja": "テーマ設定を使用してImageVisibilityToggleFrameを設定するのに失敗しました: {0}"
+        },
+        "M014": {
+            "en": "Failed to load image: {0}",
+            "ja": "画像の読み込みに失敗しました: {0}"
+        },
+        "M015": {
+            "en": "Error in _load_button_image: {0}",
+            "ja": "_load_button_imageでエラーが発生しました: {0}"
+        },
+        "M016": {
+            "en": "Failed to load fallback image: {0}",
+            "ja": "フォールバック画像の読み込みに失敗しました: {0}"
+        },
+        "M017": {
+            "en": "Failed to update button theme: {0}",
+            "ja": "ボタンテーマの更新に失敗しました: {0}"
+        },
+        "M018": {
+            "en": "Failed to configure toggle button: {0}",
+            "ja": "トグルボタンの設定に失敗しました: {0}"
+        },
+        "M019": {
+            "en": "Failed to show error balloon: {0}",
+            "ja": "エラーバルーンの表示に失敗しました: {0}"
+        },
+        "M021": {
+            "en": "Failed to load theme: {0}",
+            "ja": "テーマの読み込みに失敗しました: {0}"
+        },
+        "M022": {
+            "en": "Failed to configure entry: {0}",
+            "ja": "エントリの設定に失敗しました: {0}"
+        },
+        "M023": {
+            "en": "Failed to apply theme to entry: {0}",
+            "ja": "エントリへのテーマの適用に失敗しました: {0}"
+        },
+        "M024": {
+            "en": "Failed to load button image: {0}",
+            "ja": "ボタン画像の読み込みに失敗しました: {0}"
+        },
+        "M025": {
+            "en": "Failed to load on image: {0}",
+            "ja": "オン画像の読み込みに失敗しました: {0}"
+        },
+        "M026": {
+            "en": "Failed to load off image: {0}",
+            "ja": "オフ画像の読み込みに失敗しました: {0}"
+        },
+        "M027": {
+            "en": "Failed to load button images: {0}",
+            "ja": "ボタン画像の読み込みに失敗しました: {0}"
+        },
+        "M028": {
+            "en": "Error changing color theme: {0}",
+            "ja": "カラーテーマの変更に失敗しました: {0}"
+        },
+        "M029": {
+            "en": "Failed to update button image: image is None",
+            "ja": "ボタン画像の更新に失敗しました: 画像がNoneです"
+        },
+        "M030": {
+            "en": "Failed to handle export click: {0}",
+            "ja": "エクスポートクリックの処理に失敗しました: {0}"
+        },
+        "M031": {
+            "en": "Failed to save PDF: {0}",
+            "ja": "PDFの保存に失敗しました: {0}"
+        },
+        "M032": {
+            "en": "Failed to get output directory: {0}",
+            "ja": "出力ディレクトリの取得に失敗しました: {0}"
+        },
+        "M033": {
+            "en": "Failed to apply theme to PDFCompareCanvas: {0}",
+            "ja": "PDFCompareCanvasへのテーマの適用に失敗しました: {0}"
+        },
+        "M034": {
+            "en": "Failed to configure PDFCompareCanvas: {0}",
+            "ja": "PDFCompareCanvasの設定に失敗しました: {0}"
+        },
+        "M035": {
+            "en": "Failed to open base image: {0}",
+            "ja": "基準画像のオープンに失敗しました: {0}"
+        },
+        "M036": {
+            "en": "Failed to open comp image: {0}",
+            "ja": "比較画像のオープンに失敗しました: {0}"
+        },
+        "M037": {
+            "en": "Failed to process base image: {0}",
+            "ja": "基準画像の処理に失敗しました: {0}"
+        },
+        "M038": {
+            "en": "Failed to process comp image: {0}",
+            "ja": "比較画像の処理に失敗しました: {0}"
+        },
+        "M039": {
+            "en": "Changing language requires application restart.",
+            "ja": "言語設定変更にはアプリの再起動が必要になります。"
+        },
+        "M040": {
+            "en": "Restart application to apply language changes.",
+            "ja": "設定変更を反映させるためにはアプリの再起動が必要です。"
+        },
+        "M041": {
+            "en": "Theme configuration not found for button: {0}",
+            "ja": "ボタンのテーマ設定が見つかりません: {0}"
+        },
+        "M042": {
+            "en": "Rotation mode - drag to rotate",
+            "ja": "回転モード - ドラッグして回転"
+        },
+        "M043": {
+            "en": "Rotation complete",
+            "ja": "回転完了"
+        },
+        "M044": {
+            "en": "Rotated right 90°",
+            "ja": "右に90°回転しました"
+        },
+        "M045": {
+            "en": "Rotated left 90°",
+            "ja": "左に90°回転しました"
+        },
+        "M046": {
+            "en": "Flipped vertically",
+            "ja": "垂直に反転しました"
+        },
+        "M047": {
+            "en": "Flipped horizontally",
+            "ja": "水平に反転しました"
+        },
+        "M048": {
+            "en": "Reset to original",
+            "ja": "元の状態にリセット"
+        },
+        "M049": {
+            "en": "Keyboard Shortcuts:\nCtrl+R: Rotate right 90°\nCtrl+L: Rotate left 90°\nCtrl+V: Flip vertical\nCtrl+H: Flip horizontal\nCtrl+B: Reset all transformations\nCtrl+?: Show/hide this help",
+            "ja": "キーボードショートカット:\nCtrl+R: 右に90°回転\nCtrl+L: 左に90°回転\nCtrl+V: 垂直反転\nCtrl+H: 水平反転\nCtrl+B: すべての変換をリセット\nCtrl+?: このヘルプを表示/非表示"
+        },
+        "M050": {
+            "en": "File name: {0}, Error: {1}",
+            "ja": "ファイル名: {0}, エラー: {1}"
+        },
+        "M051": {
+            "en": "Page: {0}, Error: {1}",
+            "ja": "ページ: {0}, エラー: {1}"
+        },
+        "M052": {
+            "en": "Path: {0}, Error: {1}",
+            "ja": "パス: {0}, エラー: {1}"
+        },
+        "M053": {
+            "en": "Shortcut help displayed",
+            "ja": "ショートカットヘルプを表示しました"
+        },
+        "M054": {
+            "en": "Shortcut help hidden",
+            "ja": "ショートカットヘルプを非表示にしました"
+        }
+    },
+    "ui_codes": {
+        "U001": {
+            "en": "Please enter the path to the base file",
+            "ja": "元ファイルへのパスを入力してください"
+        },
+        "U002": {
+            "en": "Please enter the path to the comparison file",
+            "ja": "比較ファイルへのパスを入力してください"
+        },
+        "U003": {
+            "en": "Select file",
+            "ja": "ファイルを選択"
+        },
+        "U004": {
+            "en": "Main",
+            "ja": "メイン"
+        },
+        "U005": {
+            "en": "PDF Operation",
+            "ja": "PDF操作"
+        },
+        "U006": {
+            "en": "File Extension and Size",
+            "ja": "ファイル拡張子とサイズ"
+        },
+        "U007": {
+            "en": "Description",
+            "ja": "説明"
+        },
+        "U008": {
+            "en": "Licenses",
+            "ja": "ライセンス情報"
+        },
+        "U009": {
+            "en": "PDF Difference Checker",
+            "ja": "PDF差分チェッカー"
+        },
+        "U010": {
+            "en": "Please select a base image file.",
+            "ja": "ベース画像ファイルを選択してください。"
+        },
+        "U011": {
+            "en": "Please select an output folder.",
+            "ja": "出力フォルダを選択してください。"
+        },
+        "U012": {
+            "en": "Width (px):",
+            "ja": "幅 (ピクセル):"
+        },
+        "U013": {
+            "en": "Height (px):",
+            "ja": "高さ (ピクセル):"
+        },
+        "U014": {
+            "en": "Convert",
+            "ja": "変換"
+        },
+        "U015": {
+            "en": "Image Operation",
+            "ja": "画像操作"
+        },
+        "U016": {
+            "en": "Analyze Base File",
+            "ja": "ベースファイル解析"
+        },
+        "U017": {
+            "en": "Analyze Comparison File",
+            "ja": "比較ファイル解析"
+        },
+        "U018": {
+            "en": "Base File Path:",
+            "ja": "ベースファイルパス:"
+        },
+        "U019": {
+            "en": "Select",
+            "ja": "選択"
+        },
+        "U020": {
+            "en": "Comparison File Path:",
+            "ja": "比較ファイルパス:"
+        },
+        "U021": {
+            "en": "Output Folder Path:",
+            "ja": "出力フォルダパス:"
+        },
+        "U022": {
+            "en": "DPI Setting:",
+            "ja": "DPI設定:"
+        },
+        "U023": {
+            "en": "Process",
+            "ja": "処理実行"
+        },
+        "U024": {
+            "en": "Progress",
+            "ja": "進捗"
+        },
+        "U025": {
+            "en": "Change Theme",
+            "ja": "テーマ変更"
+        },
+        "U026": {
+            "en": "Graph",
+            "ja": "グラフ"
+        },
+        "U027": {
+            "en": "Close",
+            "ja": "閉じる"
+        },
+        "U028": {
+            "en": "Subwindow has been closed",
+            "ja": "サブウィンドウが閉じられました"
+        },
+        "U029": {
+            "en": "Information",
+            "ja": "情報"
+        },
+        "U030": {
+            "en": "Path not specified",
+            "ja": "パスが指定されていません"
+        },
+        "U031": {
+            "en": "Default button label",
+            "ja": "ボタン"
+        },
+        "U032": {
+            "en": "Select folder",
+            "ja": "フォルダを選択"
+        },
+        "U033": {
+            "en": "Warning",
+            "ja": "警告"
+        },
+        "U034": {
+            "en": "Invalid path",
+            "ja": "無効なパス"
+        },
+        "U035": {
+            "en": "Progress",
+            "ja": "進捗"
+        },
+        "U036": {
+            "en": "Please wait...",
+            "ja": "お待ちください..."
+        },
+        "U037": {
+            "en": "Complete",
+            "ja": "完了"
+        },
+        "U038": {
+            "en": "Insert blank page",
+            "ja": "空白ページ挿入"
+        },
+        "U039": {
+            "en": "{0} ON",
+            "ja": "{0}表示"
+        },
+        "U040": {
+            "en": "{0} OFF",
+            "ja": "{0}非表示"
+        },
+        "U041": {
+            "en": "Save PDF",
+            "ja": "PDF保存"
+        },
+        "U042": {
+            "en": "File name",
+            "ja": "ファイル名"
+        },
+        "U043": {
+            "en": "Please enter a file name",
+            "ja": "ファイル名を入力してください"
+        },
+        "U044": {
+            "en": "Save",
+            "ja": "保存"
+        },
+        "U045": {
+            "en": "Cancel",
+            "ja": "キャンセル"
+        },
+        "U046": {
+            "en": "PDF has been saved successfully.",
+            "ja": "PDFが正常に保存されました。"
+        },
+        "U047": {
+            "en": "Failed to save PDF: {0}",
+            "ja": "PDFの保存に失敗しました: {0}"
+        },
+        "U048": {
+            "en": "Tab 1",
+            "ja": "タブ1"
+        },
+        "U049": {
+            "en": "Tab 2",
+            "ja": "タブ2"
+        },
+        "U050": {
+            "en": "Please enter a path",
+            "ja": "パスを入力してください"
+        },
+        "U051": {
+            "en": "Path does not exist",
+            "ja": "パスが存在しません"
+        },
+        "U052": {
+            "en": "Invalid path format",
+            "ja": "無効なパス形式"
+        },
+        "U053": {
+            "en": "Enter or select a file",
+            "ja": "ファイルを入力または選択してください"
+        },
+        "U054": {
+            "en": "Enter or select a folder",
+            "ja": "フォルダを入力または選択してください"
+        },
+        "U055": {
+            "en": "No PDF File Found",
+            "ja": "PDFファイルが見つかりません"
+        },
+        "U056": {
+            "en": "Information",
+            "ja": "情報"
+        },
+        "U057": {
+            "en": "No PDF document is loaded.",
+            "ja": "PDFが読み込まれていません。"
+        },
+        "U058": {
+            "en": "This is the first page.",
+            "ja": "最初のページです。"
+        },
+        "U059": {
+            "en": "This is the last page.",
+            "ja": "最後のページです。"
+        },
+        "U060": {
+            "en": "Shortcut Keys",
+            "ja": "ショートカットキー"
+        }
+    }
+}

@@ -1,1 +1,44 @@
-# (省略: ファイル内容は既存のままアップロード)
+{
+    "meta_data": {
+        "user_settings_status": "user_settings"
+    },
+    "user_settings": {
+        "theme_color": "dark",
+        "language": "japanese",
+        "input_file_path": "直接入力、参照選択",
+        "comparison_file_path": "直接入力、参照選択",
+        "output_folder_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker\\temp",
+        "window_position_x": 500,
+        "window_position_y": 10,
+        "window_width": 800,
+        "window_height": 600,
+        "window_geometry": "800x600+500+10",
+        "separat_color_threshold": 700,
+        "setted_dpi": 96,
+        "setted_alpha": 127,
+        "dpi_list": [
+            72,
+            96,
+            144,
+            150,
+            300,
+            600,
+            720,
+            1200,
+            2400,
+            3600,
+            4000
+        ],
+        "base_file_graph_subwindow_pos_x": 300,
+        "base_file_graph_subwindow_pos_y": 300,
+        "base_file_graph_subwindow_width": 500,
+        "base_file_graph_subwindow_height": 10,
+        "base_file_graph_subwindow_geometry": "500x10+300+300",
+        "comparison_file_graph_subwindow_pos_x": 300,
+        "comparison_file_graph_subwindow_pos_y": 300,
+        "comparison_file_graph_subwindow_width": 500,
+        "comparison_file_graph_subwindow_height": 10,
+        "comparison_file_graph_subwindow_geometry": "500x10+300+300",
+        "base_file_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker\\sample01.pdf"
+    }
+}

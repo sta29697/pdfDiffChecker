@@ -17,3 +17,6 @@ licences_tree.txt
 licences.txt
 pdf_to_images_with_metadata.dll
 pdf_to_images_with_metadata.c
+/configurations/tool_settings.py
+MyREADME.md
+tasks.md
