@@ -4,8 +4,8 @@ import tkinter as tk
 from logging import getLogger
 from typing import Dict, Any, Callable, List, Optional, Tuple, cast
 
-from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
 from controllers.color_theme_manager import ColorThemeManager
+from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
 from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
@@ -111,6 +111,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.page_var = tk.IntVar(value=1)  # Current page (1-based)
         self.current_file_page_amount = tk.IntVar(value=0)  # Total pages
 
+        # Create a horizontal layout for page controls
         # Page navigation buttons
         self.prev_page_btn = BasePageChangeButton(
             fr=self,
@@ -133,14 +134,14 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             justify='center', # Center the text for better appearance
             relief='flat'     # Flat appearance like a label when not focused
         )
-        self.current_page_label.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        self.current_page_label.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         
         # Bind events for interactive behavior
         self.on_page_entry_callback = on_page_entry
-        if on_page_entry:
-            # Enhance binding to handle both Return and KP_Enter (numpad enter)
-            self.current_page_label.bind("<Return>", self._handle_page_entry)
-            self.current_page_label.bind("<KP_Enter>", self._handle_page_entry)
+        # Always bind the events, even if callback is None (we'll handle this in _handle_page_entry)
+        # Enhance binding to handle both Return and KP_Enter (numpad enter)
+        self.current_page_label.bind("<Return>", self._handle_page_entry)
+        self.current_page_label.bind("<KP_Enter>", self._handle_page_entry)
             
         # Add focus events to change appearance
         self.current_page_label.bind("<FocusIn>", self._on_entry_focus_in)
@@ -152,7 +153,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             color_key="page_control",
             text="/ 0",
         )
-        self.total_pages_label.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+        self.total_pages_label.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
 
         # Next page button
         self.next_page_btn = BasePageChangeButton(
@@ -161,9 +162,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             text=">",
             command=on_next_page if on_next_page else lambda: None,
         )
-        self.next_page_btn.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
-
-        # Page entry is now integrated with current_page_label above
+        self.next_page_btn.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
 
         # Insert blank page button
         self.insert_blank_btn = InsertBlankPageButton(
@@ -171,9 +170,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             color_key="page_control",
             command=on_insert_blank if on_insert_blank else lambda: None,
         )
-        self.insert_blank_btn.grid(row=4, column=0, padx=5, pady=5, sticky="ew")
+        self.insert_blank_btn.grid(row=0, column=4, padx=5, pady=5, sticky="ew")
 
-        # Export button ("完成")
+        # Export button ("Complete")
         self.export_btn: tk.Button = tk.Button(
             self,
             text=message_manager.get_ui_message("U037"), # Complete
@@ -184,12 +183,19 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             activebackground=self.__acbg,
             command=on_export if on_export else lambda: None,
         )
-        self.export_btn.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
+        self.export_btn.grid(row=0, column=5, padx=5, pady=5, sticky="ew")
+        
+        # Configure columns to have equal weight
+        for i in range(6):
+            self.grid_columnconfigure(i, weight=1)
 
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
-        # Log PageControlFrame initialization
-        logger.debug(message_manager.get_log_message("L097"))
+        # Log PageControlFrame initialization with current theme name
+        # Get the current theme name from the already imported ColorThemeManager
+        theme_manager = ColorThemeManager()
+        # Pass the result of get_current_theme_name() directly to the log message to avoid type errors
+        logger.debug(message_manager.get_log_message("L097", theme_manager.get_current_theme_name()))
 
     def update_page_label(self, current_index: int, max_pages: int) -> None:
         """Set the display text for current page and total pages.
@@ -241,17 +247,27 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             event: Key event
         """
         try:
-            # Log the event for debugging
-            logger.info(f"Page entry event detected: {self.page_var.get()}")
+            # Get the entered page number
+            entered_page = self.page_var.get()
             
-            # Call the callback if it exists
-            if self.on_page_entry_callback:
-                self.on_page_entry_callback(event)
-                
+            # Log the event for debugging with the correct message code for page entry events
+            logger.info(message_manager.get_log_message("L354", str(entered_page)))
+            
+            # Validate the page number is within range
+            max_pages = self.current_file_page_amount.get()
+            if entered_page < 1 or entered_page > max_pages:
+                logger.warning(message_manager.get_log_message("L307", str(entered_page), str(max_pages)))
+                # Reset to current page
+                self.update_page_label(entered_page - 1, max_pages)
+            else:
+                # Call the callback if it exists
+                if self.on_page_entry_callback:
+                    self.on_page_entry_callback(event)
+                    
             # Always blur the entry after Enter to improve UX
             self.current_page_label.master.focus_set()
         except Exception as e:
-            logger.error(f"Error handling page entry: {str(e)}")
+            logger.error(message_manager.get_log_message("L309", str(e)))
             # Display more detailed error information in debug log
             logger.debug(f"Page entry event handler error details: {type(e).__name__}: {str(e)}")
             # Try to recover by clearing focus

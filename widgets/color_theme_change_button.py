@@ -74,11 +74,17 @@ class ColorThemeChangeButton(tk.Frame):
         # Load initial button image
         self._load_button_image()
 
-        # Configure fully transparent background - use system default background
+        # Configure background based on current theme
         parent_bg = self.__fr.cget("background")
         if parent_bg == "SystemButtonFace" or parent_bg == "":
-            # Use a safer default if system color is returned
-            parent_bg = "#f0f0f0"  # Light gray that works well with both themes
+            # Use a theme-appropriate background color
+            if self.__current_theme_color_name == "dark":
+                parent_bg = "#333333"  # Dark gray for dark theme
+            else:
+                parent_bg = "#f0f0f0"  # Light gray for light theme
+            
+            # Log the theme-based background color selection
+            logger.debug(message_manager.get_log_message("L256", f"Theme: {self.__current_theme_color_name}, Selected bg: {parent_bg}"))
         
         self.configure(bg=parent_bg)
         logger.debug(message_manager.get_log_message("L255", parent_bg))
@@ -123,8 +129,9 @@ class ColorThemeChangeButton(tk.Frame):
                 height=target_height
             )
             
+            # Log button dimensions with separate parameters for width, height, and frame height
             logger.debug(message_manager.get_log_message("L257", 
-                f"Adjusted size: {int(img_width * scale_factor)}x{target_height}, Frame height: {frame_height}"))
+                int(img_width * scale_factor), target_height, frame_height))
         
         # Pack button with center alignment for vertical centering
         # Use more constrained packing to avoid excessive size
@@ -183,7 +190,7 @@ class ColorThemeChangeButton(tk.Frame):
                             img_height = self._toggle_image.height()
                             
                             # Log the image and button dimensions
-                            logger.debug(message_manager.get_log_message("L257", 
+                            logger.debug(message_manager.get_log_message("L374", 
                                 f"Image: {img_width}x{img_height}"))
                             
                             # Configure button dimensions
@@ -273,9 +280,22 @@ class ColorThemeChangeButton(tk.Frame):
                 )
             )
             
-            # Get parent background color for consistent styling
+            # Get parent background color or use theme-appropriate color
             parent_bg = self.__fr.cget("background")
-            logger.debug(message_manager.get_log_message("L256", parent_bg))
+            
+            # If system default color, use theme-appropriate color
+            if parent_bg == "SystemButtonFace" or parent_bg == "":
+                # Use a theme-appropriate background color
+                if theme_color == "dark":
+                    parent_bg = "#333333"  # Dark gray for dark theme
+                else:
+                    parent_bg = "#f0f0f0"  # Light gray for light theme
+                    
+                # Log the theme-based background color selection
+                logger.debug(message_manager.get_log_message("L256", f"Theme: {theme_color}, Selected bg: {parent_bg}"))
+            else:
+                # Log the parent background color
+                logger.debug(message_manager.get_log_message("L256", parent_bg))
             
             # Update button background to match parent frame
             if hasattr(self, 'color_theme_change_btn'):
@@ -294,8 +314,7 @@ class ColorThemeChangeButton(tk.Frame):
                 # Log message for failed button image update
                 logger.error(message_manager.get_log_message("L134"))
             
-            # Button theme updated to: {theme}
-            logger.info(message_manager.get_log_message("L121", theme_color))
+            # Button theme update completed - no need to log here as the parent method already logs theme change
         except Exception as e:
             # Failed to update button theme: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))

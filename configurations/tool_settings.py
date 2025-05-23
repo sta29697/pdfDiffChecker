@@ -56,6 +56,47 @@ is_base_path_set: bool = False
 is_compare_path_set: bool = False
 is_output_path_set: bool = False
 
+# Log throttle settings - controls frequency of log messages
+# Each setting defines the minimum interval in seconds between log messages of the same type
+LOG_THROTTLE_SETTINGS: Dict[str, Dict[str, Any]] = {
+    "theme_load": {
+        "interval": 60.0,
+        "message_code": "L401"  # Theme loading log throttle interval
+    },
+    "theme_apply": {
+        "interval": 60.0,
+        "message_code": "L402"  # Theme application log throttle interval
+    },
+    "window_icon": {
+        "interval": 300.0,
+        "message_code": "L403"  # Window icon setting log throttle interval
+    },
+    "temp_dir": {
+        "interval": 30.0,
+        "message_code": "L404"  # Temporary directory log throttle interval
+    },
+    "png_load": {
+        "interval": 10.0,
+        "message_code": "L405"  # PNG file loading log throttle interval
+    },
+    "transform_update": {
+        "interval": 3.0,
+        "message_code": "L406"  # Transform update log throttle interval
+    },
+    "zoom_factor": {
+        "interval": 1.0,
+        "message_code": "L407"  # Zoom factor log throttle interval
+    },
+    "image_position": {
+        "interval": 5.0,
+        "message_code": "L408"  # Image position log throttle interval
+    },
+    "window_resize": {
+        "interval": 0.2,
+        "message_code": "L409"  # Window resize log throttle interval
+    }
+}
+
 # Default user settings
 DEFAULT_USER_SET: Dict[str, Dict[str, Any]] = {
     "meta_data": {"user_settings_status": "default"},

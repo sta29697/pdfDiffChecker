@@ -45,15 +45,8 @@ class ConvertImageButton(BaseButton):
         Args:
             theme_data (dict[str, Any]): Theme color data from ColorThemeManager. Accepts ThemeColors type or dict.
         """
-        theme_settings = theme_data.get(self.__color_key, {})
-        self._config_widget({
-            "fg": theme_settings.get("fg", "#43c0cd"),
-            "bg": theme_settings.get("bg", "#1d1d29"),
-            "activeforeground": theme_settings.get("activeforeground", "#574ed6"),
-            "activebackground": theme_settings.get("activebackground", "#0fd2d6"),
-            "disabledforeground": theme_settings.get("disabledforeground", "#27283a"),
-            "disabledbackground": theme_settings.get("disabledbackground", "#22a9e9"),
-        })
+        # Call the parent class's apply_theme_color method
+        super().apply_theme_color(theme_data)
 
     def _config_widget(self, theme_settings: dict[str, Any]) -> None:
         """Applies theme settings to the button widget.

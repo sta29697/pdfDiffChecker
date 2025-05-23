@@ -1,21 +1,31 @@
 from __future__ import annotations
 
+import os
 from logging import getLogger
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
+# mypy: ignore-errors
 from typing import Any, Dict, Optional, Tuple, Union, cast
-from utils.log_throttle import LogThrottle
-import os
-from pathlib import Path
 
 # PIL imports
 from PIL import Image, ImageTk
-from PIL.Image import Resampling
-from PIL.ImageFile import ImageFile
 
-from configurations.message_manager import get_message_manager
+# Utility imports
+from utils.log_throttle import LogThrottle, window_resize_throttle
+from utils.utils import get_temp_dir
+from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+
+# Controller imports
 from controllers.mouse_event_handler import MouseEventHandler
 from controllers.drag_and_drop_file import DragAndDropHandler
+from controllers.file2png_by_page import Pdf2PngByPages
+from controllers.pdf_mouse_handler import PDFMouseHandler
+
+# Configuration imports
+from configurations.message_manager import get_message_manager
+
+# Widget imports
 from widgets.base_tab_widgets import BaseTabWidgets
 from widgets.color_theme_change_button import ColorThemeChangeButton
 from widgets.language_select_combobox import LanguageSelectCombo
@@ -23,9 +33,8 @@ from widgets.base_path_entry import BasePathEntry
 from widgets.base_path_select_button import BasePathSelectButton
 from widgets.base_label_class import BaseLabelClass
 from widgets.page_control_frame import PageControlFrame
-from utils.utils import get_temp_dir
-from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
-from controllers.file2png_by_page import Pdf2PngByPages
+
+# Model imports
 from models.class_dictionary import FilePathInfo
 from themes.coloring_theme_interface import ColoringThemeIF
 
@@ -71,20 +80,22 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         self.frame_main2 = tk.Frame(self)
         self.frame_main2.grid(row=2, column=0, sticky="nsew", ipady=2)  # nsew to fill all directions
-        self.frame_main2.grid_columnconfigure(0, weight=1)
-        self.frame_main2.grid_rowconfigure(0, weight=1)  # Make canvas row expandable
+        # Configure grid for vertical layout: controls on top, canvas below
+        self.frame_main2.grid_columnconfigure(0, weight=1)  # Full width
+        self.frame_main2.grid_rowconfigure(0, weight=0)  # Controls row doesn't expand
+        self.frame_main2.grid_rowconfigure(1, weight=1)  # Canvas row expands
 
-        # Create canvas
+        # Create canvas with theme-compatible background
+        # Background will be set by apply_theme_color method
         self.canvas = tk.Canvas(
             self.frame_main2,
-            bg="#1a1a1a",  # Dark background for canvas
             relief=tk.SUNKEN,
             borderwidth=1
         )
-        self.canvas.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         # Make canvas expand with frame_main2
-        self.frame_main2.grid_rowconfigure(0, weight=1)
-        self.frame_main2.grid_columnconfigure(0, weight=1)
+        self.frame_main2.grid_rowconfigure(1, weight=1)  # Canvas row expands
+        self.frame_main2.grid_columnconfigure(0, weight=1)  # Full width
         self.base_widgets.add_widget(self.canvas)
         
         # Initialize variables for PDF display
@@ -99,6 +110,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # UI components
         self.mouse_handler: Optional[MouseEventHandler] = None
+        self.pdf_mouse_handler = PDFMouseHandler(self)  # New PDF mouse handler
         self.page_control_frame: Optional[PageControlFrame] = None
 
         # Setup UI
@@ -203,11 +215,40 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             filetypes=[("PDF files", "*.pdf")],
         )
         if file_path:
+            # Log file selection first
+            logger.debug(message_manager.get_log_message("L071", file_path))
+            
+            # Update UI elements with the selected file path
             self._base_file_path_entry.path_var.set(file_path)
             self.base_path.set(file_path)
-            # Try to display PDF when file is selected
+            
+            # Load and display PDF (this will handle all necessary operations)
             self._load_and_display_pdf(file_path)
-            logger.debug(message_manager.get_log_message("L070", file_path))
+            
+            # Set window icon to application icon to fix taskbar icon issue
+            try:
+                # Get the root window (Tk instance)
+                root = self.winfo_toplevel()
+                # Set icon if it's a Tk window
+                if isinstance(root, tk.Tk):
+                    icon_path = "images/LOGO_032.ico"
+                    if os.path.exists(icon_path):
+                        # Create a class-level icon log throttle if it doesn't exist
+                        if not hasattr(PDFOperationApp, '_icon_log_throttle'):
+                            PDFOperationApp._icon_log_throttle = LogThrottle(min_interval=300.0)  # 5 minutes
+                        
+                        # Only set icon if not already set (check window attributes)
+                        if not hasattr(root, '_icon_set') or not root._icon_set:
+                            root.iconbitmap(icon_path)
+                            root._icon_set = True  # Mark icon as set
+                            
+                            # Log that the window icon has been set, but throttle to avoid excessive logs
+                            # Use L350 which is for window icon setting and requires only one parameter
+                            if PDFOperationApp._icon_log_throttle.should_log("window_icon"):
+                                logger.debug(message_manager.get_log_message("L350", icon_path))
+            except Exception as e:
+                # Log failure to set window icon
+                logger.warning(message_manager.get_log_message("L351", str(e)))
 
     def _on_output_folder_select(self) -> None:
         """Handle output folder selection event using common dialog."""
@@ -274,7 +315,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._create_page_control_frame(self.page_count)
             
             # Initialize mouse handler with the transform data
-            self._setup_mouse_events(self.page_count)
+            self.pdf_mouse_handler.initialize_mouse_handler()
+            
+            # Set up mouse events for canvas operations
+            self._setup_mouse_events()
             
             # Display the first page
             self._display_page(self.current_page_index)
@@ -282,6 +326,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Update page control frame explicitly
             if self.page_control_frame:
                 self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
+                # Ensure page count is properly displayed
+                logger.debug(message_manager.get_log_message("L350", str(self.current_page_index + 1), str(self.page_count)))
             
             # Log success
             logger.info(message_manager.get_log_message("L276", 
@@ -300,6 +346,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             page_index (int): Index of the page to display (0-based)
         """
         try:
+            # Initialize transformation variables
+            # These variables will be used in future implementations for image transformations
+            rotation = 0.0  # noqa: F841
+            translate_x = 0.0  # noqa: F841
+            translate_y = 0.0  # noqa: F841
+            scale = 1.0  # noqa: F841
+            
             # Check if page information is available
             if not hasattr(self, 'file_path_info') or not self.file_path_info:
                 logger.warning(message_manager.get_log_message("L282"))
@@ -315,8 +368,22 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Use the correct temp directory from the PDF converter if available
             if hasattr(self, 'current_pdf_converter') and self.current_pdf_converter and hasattr(self.current_pdf_converter, '_temp_dir'):
                 temp_dir = self.current_pdf_converter._temp_dir
+                # Log the temp directory path for debugging, but throttle to avoid excessive logging
+                # Use global temp_dir_throttle instead of creating a new instance
+                from utils.log_throttle import temp_dir_throttle
+                # Only log on first access or very infrequently
+                if temp_dir_throttle.should_log(f"temp_dir_{temp_dir}", throttle_key="temp_dir") and not hasattr(self, '_temp_dir_logged'):
+                    logger.debug(message_manager.get_log_message("L360", str(temp_dir)))
+                    self._temp_dir_logged = True
             else:
                 temp_dir = get_temp_dir()
+                # Throttle logging to avoid excessive messages
+                # Use global temp_dir_throttle instead of creating a new instance
+                from utils.log_throttle import temp_dir_throttle
+                # Only log on first access or very infrequently
+                if temp_dir_throttle.should_log(f"temp_dir_{temp_dir}", throttle_key="temp_dir") and not hasattr(self, '_temp_dir_logged'):
+                    logger.debug(message_manager.get_log_message("L348", str(temp_dir)))
+                    self._temp_dir_logged = True
                 
             # Use only one temporary directory - the converter's directory
             png_filename = f"base_{page_index + 1:04d}.png"
@@ -324,84 +391,114 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             png_path = Path(str(temp_dir)) / png_filename
             
             # Use LogThrottle to prevent excessive logging of the same PNG path
-            # Only log once per file path every 5 seconds
+            # Only log once per file path every 10 seconds (increased from 5 to further reduce logs)
             png_path_str = str(png_path)
-            if not hasattr(self, '_png_path_log_throttle'):
-                self._png_path_log_throttle: Dict[str, LogThrottle] = {}
             
-            if png_path_str not in self._png_path_log_throttle:
-                self._png_path_log_throttle[png_path_str] = LogThrottle(min_interval=5.0)
+            # Use global png_load_throttle instead of creating a new instance
+            from utils.log_throttle import png_load_throttle
                 
-            if self._png_path_log_throttle[png_path_str].should_log("png_path_check"):
-                # Looking for PNG file at path
-                logger.debug(message_manager.get_log_message("L346", str(png_path)))
-            
             # Check if PNG file exists
-            if not png_path.exists():
+            if png_path.exists():
+                try:
+                    # Open the PNG file
+                    img = Image.open(png_path)
+                    
+                    # Only log file loading - skip the file searching log to avoid consecutive logs
+                    # Use L373 message code which indicates PNG file loading
+                    # Add throttling to reduce log frequency
+                    if png_load_throttle.should_log(f"png_load_{png_path_str}", throttle_key="png_load"):
+                        logger.debug(message_manager.get_log_message("L373", str(png_path)))
+                    
+                    # Log image dimensions for debugging with throttling and dimension change detection
+                    # Create a class attribute to track last logged dimensions if it doesn't exist
+                    if not hasattr(PDFOperationApp, '_last_logged_dimensions'):
+                        PDFOperationApp._last_logged_dimensions = {}
+                    
+                    # Create a key for this image based on page index and filename
+                    dimension_key = f"{self.current_page_index}_{png_filename}"
+                    
+                    # Check if dimensions have changed or not logged before
+                    current_dimensions = (img.width, img.height)
+                    if (dimension_key not in PDFOperationApp._last_logged_dimensions or 
+                            PDFOperationApp._last_logged_dimensions[dimension_key] != current_dimensions):
+                        # Only log if dimensions have changed or not logged before
+                        # Use the new message code L410 specifically for image dimensions
+                        logger.debug(message_manager.get_log_message("L410", f"{img.width}", f"{img.height}"))
+                        # Update the stored dimensions
+                        PDFOperationApp._last_logged_dimensions[dimension_key] = current_dimensions
+                    
+                    # Apply transformations - these will be used in future implementations
+                    if self.current_page_index < len(self.base_transform_data):
+                        _, tx, ty, scale = self.base_transform_data[self.current_page_index]  # rotation is not used
+                    else:
+                        _, tx, ty, scale = 0.0, 0.0, 0.0, 1.0  # rotation is not used
+                        
+                    # Apply scale factor from mouse wheel zoom if available
+                    if hasattr(self, 'scale_factor'):
+                        # Combine the base scale with the zoom scale factor
+                        scale *= self.scale_factor
+                        # Use global zoom_throttle instead of creating a new instance
+                        from utils.log_throttle import zoom_throttle
+                        if zoom_throttle.should_log("zoom_factor", throttle_key="zoom_factor"):
+                            # Use L422 message code which is for zoom factor and [PNG] category
+                            logger.debug(message_manager.get_log_message("L422", str(scale)))
+                    
+                    # Get canvas dimensions
+                    canvas_width = self.canvas.winfo_width()
+                    canvas_height = self.canvas.winfo_height()
+                    
+                    # Convert to PhotoImage for display
+                    photo_image = ImageTk.PhotoImage(img)
+                    self.photo_image = photo_image  # Keep reference to prevent garbage collection
+                    
+                    # Clear canvas
+                    self.canvas.delete("all")
+                    
+                    # Display the image on the canvas with transformations applied
+                    # Center the image and apply translation
+                    # For PDF operation tab, set transparency to 0% (fully opaque)
+                    self.canvas.create_image(
+                        canvas_width // 2 + tx, canvas_height // 2 + ty,
+                        image=photo_image,
+                        tags="pdf_image"
+                    )
+                    
+                    # Log the final position where the image is displayed on the canvas
+                    # Use throttling to avoid excessive logging during page navigation
+                    from utils.log_throttle import image_position_throttle
+                    if image_position_throttle.should_log("image_position", throttle_key="image_position"):
+                        logger.debug(message_manager.get_log_message("L370", f"{canvas_width // 2 + tx}", f"{canvas_height // 2 + ty}"))
+                except Exception as e:
+                    logger.error(message_manager.get_log_message("L285", str(e)))
+                    import traceback
+                    logger.error(traceback.format_exc())
+            else:
                 logger.warning(message_manager.get_log_message("L279", str(png_path)))
                 return
-            
-            # Load the PNG file
-            pil_image: Union[Image.Image, ImageFile] = Image.open(png_path)
-            
-            # Apply any transformations from transform data
-            if hasattr(self, 'base_transform_data') and len(self.base_transform_data) > page_index:
-                # Get transform data for current page
-                rotation, translate_x, translate_y, scale = self.base_transform_data[page_index]
                 
-                # Apply transformations if needed
-                if rotation != 0 or scale != 1.0:
-                    # Apply rotation if needed (PIL can handle any rotation angle, not limited to 90 degree increments)
-                    if rotation != 0:
-                        # Use cast to handle type compatibility
-                        # PIL can rotate by any angle - no need to normalize to 90 degree increments
-                        rotated_image = pil_image.rotate(rotation, resample=Resampling.BICUBIC, expand=True)
-                        pil_image = cast(Union[Image.Image, ImageFile], rotated_image)
-                    
-                    # Apply scaling if needed
-                    if scale != 1.0:
-                        new_width = int(pil_image.width * scale)
-                        new_height = int(pil_image.height * scale)
-                        if new_width > 0 and new_height > 0:
-                            # Use cast to handle type compatibility
-                            resized_image = pil_image.resize((new_width, new_height), Resampling.LANCZOS)
-                            pil_image = cast(Union[Image.Image, ImageFile], resized_image)
-            
-            # Convert to PhotoImage for display
-            photo_image = ImageTk.PhotoImage(pil_image)
-            self.photo_image = photo_image  # Keep reference to prevent garbage collection
-            
-            # Clear canvas
-            self.canvas.delete("all")
-            
-            # Display image with any translation offset
-            if hasattr(self, 'base_transform_data') and self.base_transform_data:
-                _, translate_x, translate_y, _ = self.base_transform_data[page_index]
-                self.canvas.create_image(
-                    int(translate_x), int(translate_y),
-                    anchor="nw", 
-                    image=self.photo_image
-                )
-            else:
-                self.canvas.create_image(0, 0, anchor="nw", image=self.photo_image)
-            
-            # Update scroll region
-            self.canvas.config(scrollregion=self.canvas.bbox("all"))
-            
             # Store previous page index to check if page actually changed
             previous_page_index = getattr(self, 'current_page_index', None)
             
             # Update current page index
             self.current_page_index = page_index
             
+            # Update scroll region
+            self.canvas.config(scrollregion=self.canvas.bbox("all"))
+            
             # Update page control frame
             if self.page_control_frame:
                 # Only update label if page index changed
                 if previous_page_index != page_index:
+                    # Update with page_index because update_page_label expects 0-based index
                     self.page_control_frame.update_page_label(page_index, self.page_count)
+                    
+                    # Force update of page var to ensure consistency
+                    self.page_control_frame.page_var.set(page_index + 1)
+                    # Force update of total pages to ensure it's displayed
+                    self.page_control_frame.current_file_page_amount.set(self.page_count)
                 
             # Update mouse handler
-            if self.mouse_handler:
+            if hasattr(self, 'pdf_mouse_handler') and self.pdf_mouse_handler and self.pdf_mouse_handler.mouse_handler:
                 # Create visibility layer dictionary (0=base, 1=comp)
                 visible_layers = {}
                 visible_layers[0] = True  # Base is visible
@@ -409,7 +506,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 
                 # Update mouse handler with correct parameters
                 try:
-                    self.mouse_handler.update_state(
+                    self.pdf_mouse_handler.mouse_handler.update_state(
                         current_page_index=page_index,
                         visible_layers=visible_layers
                     )
@@ -445,48 +542,226 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.current_page_index -= 1
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
-                # Update the page control UI (1-based index for display)
-                self.page_control_frame.update_page_label(self.current_page_index + 1, page_count)
+                # Update the page control UI (0-based index for update_page_label)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
+                # Update the page variable to ensure consistency
+                self.page_control_frame.page_var.set(self.current_page_index + 1)
                 
-            # Log page movement
-            logger.info(message_manager.get_log_message("L290", self.current_page_index + 1, page_count))
+            # Log page movement using window_resize_throttle to prevent excessive logging
+            if window_resize_throttle.should_log("page_navigation"):
+                logger.info(message_manager.get_log_message("L290", self.current_page_index + 1, page_count))
         else:
             # Already at first page
             logger.info(message_manager.get_log_message("L291"))
             # Show info message that this is the first page
             messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U058"))
-            
-    def _on_mouse_wheel(self, event: Any) -> None:
+
+    def _initialize_mouse_handler(self) -> None:
+        """Initialize the mouse event handler.
+        
+        This method creates a new MouseEventHandler instance and configures it
+        for use with the PDF viewer.
         """
-        Handle mouse wheel events for zooming in/out.
+        try:
+            # Initialize base transform data if not already created
+            if not hasattr(self, 'base_transform_data'):
+                # Default transformation: no rotation, no translation, scale=1.0
+                self.base_transform_data = [(0.0, 0.0, 0.0, 1.0)] * self.page_count
+                
+            # Create a dictionary for layer transform data
+            # For PDF operation tab, we only have one layer (base)
+            layer_transform_data = {0: self.base_transform_data}
+            
+            # Create a dictionary for layer visibility
+            # For PDF operation tab, only the base layer is visible
+            visible_layers = {0: True}
+            
+            # Create mouse event handler with current page index
+            self.mouse_handler = MouseEventHandler(
+                layer_transform_data=layer_transform_data,
+                current_page_index=self.current_page_index if hasattr(self, 'current_page_index') else 0,
+                visible_layers=visible_layers,
+                on_transform_update=self._on_transform_update
+            )
+            
+            # Log successful initialization
+            logger.debug(message_manager.get_log_message("L175"))
+        except Exception as e:
+            # Log error
+            logger.error(message_manager.get_log_message("L067", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def _on_mouse_wheel(self, event: Any) -> None:
+        """Handle mouse wheel events for zooming in/out by delegating to MouseEventHandler.
         
         Args:
             event: Mouse wheel event
         """
         try:
-            # Check if PDF is loaded
-            if not hasattr(self, 'file_path_info') or not self.file_path_info:
+            # Initialize mouse handler if not already created
+            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                self._initialize_mouse_handler()
+                
+            # Safety check - return if mouse handler is still not available
+            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                logger.warning(message_manager.get_log_message("L300", "Mouse handler not initialized"))
                 return
                 
-            # Check if mouse handler exists
-            if not self.mouse_handler:
-                return
+            # Get the delta - Windows uses event.delta
+            # Normalize the delta for consistent behavior
+            delta = event.delta if hasattr(event, 'delta') else 0
+            
+            # For Linux/Unix platforms
+            if hasattr(event, 'num'):
+                if event.num == 4:  # Scroll up
+                    delta = 120
+                elif event.num == 5:  # Scroll down
+                    delta = -120
+            
+            # Get mouse position for centered zoom
+            mouse_x = event.x
+            mouse_y = event.y
+                    
+            # Calculate zoom factor based on delta
+            zoom_factor = 1.0
+            if delta > 0:
+                # Zoom in (make larger)
+                zoom_factor = 1.1  # Increase by 10%
+            elif delta < 0:
+                # Zoom out (make smaller)
+                zoom_factor = 0.9  # Decrease by 10%
                 
-            # Forward the event to the mouse handler
-            if hasattr(self.mouse_handler, 'on_mouse_wheel'):
-                self.mouse_handler.on_mouse_wheel(event)
+            # Log zoom factor for debugging
+            logger.debug(message_manager.get_log_message("L301", str(zoom_factor)))
+            
+            # Apply zoom to current page
+            if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
+                # Get current transformation
+                rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
+                
+                # Apply zoom factor to scale
+                new_scale = scale * zoom_factor
+                
+                # Limit scale to reasonable bounds (0.1 to 10.0)
+                new_scale = max(0.1, min(10.0, new_scale))
+                
+                # Calculate new translation to zoom toward mouse position
+                # This makes the zoom feel more natural by zooming toward cursor
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                
+                # Adjust translation based on zoom factor and mouse position
+                # This keeps the point under the mouse in the same position after zooming
+                if canvas_width > 0 and canvas_height > 0:  # Avoid division by zero
+                    # Calculate relative position of mouse in canvas (0.0 to 1.0)
+                    rel_x = mouse_x / canvas_width
+                    rel_y = mouse_y / canvas_height
+                    
+                    # Calculate zoom adjustment factor
+                    zoom_adj = 1.0 - zoom_factor
+                    
+                    # Adjust translation to keep point under mouse stable
+                    new_tx = tx + (canvas_width * rel_x * zoom_adj)
+                    new_ty = ty + (canvas_height * rel_y * zoom_adj)
+                else:
+                    new_tx = tx
+                    new_ty = ty
+                
+                # Update transformation data
+                self.base_transform_data[self.current_page_index] = (rotation, new_tx, new_ty, new_scale)
+                
+                # Update mouse handler state
+                if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
+                    self.mouse_handler.update_state(
+                        current_page_index=self.current_page_index,
+                        visible_layers={0: True}
+                    )
+                
+                # Update display
+                self._on_transform_update()
+                
+                # Store the scale factor for other methods to use
+                self.scale_factor = new_scale
+                
+            # Log successful mouse wheel event processing
+            logger.debug(message_manager.get_log_message("L299"))
+                
         except Exception as e:
             # Always log errors regardless of throttling
+            logger.error(message_manager.get_log_message("L302", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
             logger.error(message_manager.get_log_message("L300", str(e)))
         
-        # Reset bindings immediately to ensure wheel events are captured
-        self._rebind_mouse_wheel()
+        # Prevent event propagation to ensure our handler is the only one processing it
+        return "break"
 
     def _rebind_mouse_wheel(self) -> None:
         """Rebind mouse wheel event bindings."""
+        # Ensure mouse handler is initialized before binding events
+        if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+            self._initialize_mouse_handler()
+            
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)    # Linux UP
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)    # Linux DOWN
+        
+    def _zoom_in(self, mouse_x: int, mouse_y: int) -> None:
+        """Zoom in on the PDF at the specified mouse position.
+        
+        Args:
+            mouse_x: X coordinate of the mouse position
+            mouse_y: Y coordinate of the mouse position
+        """
+        # Check if PDF is loaded
+        if not hasattr(self, 'file_path_info') or not self.file_path_info:
+            logger.warning(message_manager.get_log_message("L289"))
+            return
+            
+        # Check if we have a current scale factor
+        if not hasattr(self, 'scale_factor'):
+            self.scale_factor = 1.0
+            
+        # Increase scale factor (zoom in)
+        self.scale_factor *= 1.1  # Increase by 10%
+        
+        # Limit maximum zoom level
+        self.scale_factor = min(self.scale_factor, 5.0)
+        
+        # Log zoom level change
+        logger.debug(message_manager.get_log_message("L301", str(self.scale_factor)))
+        
+        # Redisplay the current page with the new scale factor
+        self._display_page(self.current_page_index)
+        
+    def _zoom_out(self, mouse_x: int, mouse_y: int) -> None:
+        """Zoom out on the PDF at the specified mouse position.
+        
+        Args:
+            mouse_x: X coordinate of the mouse position
+            mouse_y: Y coordinate of the mouse position
+        """
+        # Check if PDF is loaded
+        if not hasattr(self, 'file_path_info') or not self.file_path_info:
+            logger.warning(message_manager.get_log_message("L289"))
+            return
+            
+        # Check if we have a current scale factor
+        if not hasattr(self, 'scale_factor'):
+            self.scale_factor = 1.0
+            
+        # Decrease scale factor (zoom out)
+        self.scale_factor *= 0.9  # Decrease by 10%
+        
+        # Limit minimum zoom level
+        self.scale_factor = max(self.scale_factor, 0.2)
+        
+        # Log zoom level change
+        logger.debug(message_manager.get_log_message("L301", str(self.scale_factor)))
+        
+        # Redisplay the current page with the new scale factor
+        self._display_page(self.current_page_index)
         
     def _on_next_page(self) -> None:
         """Go to next page."""
@@ -506,11 +781,15 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.current_page_index += 1
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
-                # Update the page control UI (1-based index for display)
-                self.page_control_frame.update_page_label(self.current_page_index + 1, page_count)
+                # Update the page control UI (0-based index for update_page_label)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
+                # Update the page variable to ensure consistency
+                self.page_control_frame.page_var.set(self.current_page_index + 1)
                 
-            # Log page movement
-            logger.info(message_manager.get_log_message("L294", self.current_page_index + 1, page_count))
+            # Log page movement using window_resize_throttle to prevent excessive logging
+            if window_resize_throttle.should_log("page_navigation"):
+                # Use L353 for page navigation which has placeholders for page numbers
+                logger.info(message_manager.get_log_message("L353", self.current_page_index + 1, page_count))
         else:
             # Already at last page
             logger.info(message_manager.get_log_message("L295"))
@@ -520,16 +799,18 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     def _on_page_entry(self, event: tk.Event) -> None:
         """Handle page entry event."""
         try:
-            # Log page entry event
-            logger.info(message_manager.get_log_message("L305"))
-            
             # Get the page control frame
             if not self.page_control_frame:
-                logger.info(message_manager.get_log_message("L306"))
+                # Use L295 for page control frame not available
+                logger.warning(message_manager.get_log_message("L294"))
                 return
                 
-            # Get the entered page number (1-based)
+            # Get the entered page number (1-based) directly from the page control frame
             page_num = self.page_control_frame.page_var.get()
+            
+            # Log page entry event with throttling to prevent excessive logging
+            if window_resize_throttle.should_log("page_entry"):
+                logger.info(message_manager.get_log_message("L354", str(page_num)))
             
             # Convert to 0-based index and validate
             page_index = page_num - 1
@@ -541,11 +822,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.current_page_index = page_index
             self._display_page(self.current_page_index)
             
-            # Update page label (page_num is already 1-based)
-            self.page_control_frame.update_page_label(page_num, self.page_count)
+            # Update page label with 0-based index for update_page_label
+            # update_page_label expects 0-based index and adds 1 internally
+            self.page_control_frame.update_page_label(page_index, self.page_count)
             
-            # Log success
-            logger.info(message_manager.get_log_message("L308", str(page_num), str(self.page_count)))
+            # Log success with throttling
+            if window_resize_throttle.should_log("page_entry_success"):
+                logger.info(message_manager.get_log_message("L353", str(page_num), str(self.page_count)))
         except Exception as e:
             # Log error
             logger.error(message_manager.get_log_message("L309", str(e)))
@@ -567,7 +850,6 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Create visibility layer dictionary
         visible_layers = {
             0: True,  # Base is visible
-            1: False  # Comp is not visible
         }
         
         # Clear any existing mouse handler
@@ -598,32 +880,87 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Store the mouse handler
         self.mouse_handler = mouse_handler
         
-        # Log mouse handler creation
-        logger.info(message_manager.get_log_message("L301", page_count))
+        # Log PDF page count
+        logger.info(message_manager.get_log_message("L318", page_count))
+        
+        # Make canvas focusable for keyboard events
+        self.canvas.config(takefocus=1)
+        
+        # Set initial focus to the canvas to ensure keyboard events work
+        self.canvas.focus_set()
         
         # Explicitly bind mouse events to ensure they work
-        self.canvas.bind("<Button-1>", lambda e: self.mouse_handler.on_mouse_down(e) if self.mouse_handler else None)
+        # Use a wrapper function to set focus before handling the event
+        def on_mouse_down_wrapper(e):
+            self.canvas.focus_set()  # Ensure canvas has focus when clicked
+            if self.mouse_handler:
+                return self.mouse_handler.on_mouse_down(e)
+            return None
+            
+        self.canvas.bind("<Button-1>", on_mouse_down_wrapper)
         self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
         self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
         self.canvas.bind("<Button-3>", lambda e: self.mouse_handler.on_right_click(e) if self.mouse_handler and hasattr(self.mouse_handler, 'on_right_click') else None)
         
         # MouseWheel events are handled in PDFOperationApp class
-        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
-        self.canvas.bind("<Button-4>", self._on_mouse_wheel)  # Linux scroll up
-        self.canvas.bind("<Button-5>", self._on_mouse_wheel)  # Linux scroll down
+        # Ensure these events also set focus to the canvas
+        def on_mouse_wheel_wrapper(e):
+            self.canvas.focus_set()  # Ensure canvas has focus for wheel events
+            return self._on_mouse_wheel(e)
+            
+        self.canvas.bind("<MouseWheel>", on_mouse_wheel_wrapper)  # Windows
+        self.canvas.bind("<Button-4>", on_mouse_wheel_wrapper)  # Linux scroll up
+        self.canvas.bind("<Button-5>", on_mouse_wheel_wrapper)  # Linux scroll down
+        
+        # Bind key events directly to canvas
+        self.canvas.bind("<Control-KeyPress>", lambda e: logger.debug(message_manager.get_log_message("L303", f"Control key pressed: {e.keysym}")))
+        self.canvas.bind("<KeyRelease>", lambda e: logger.debug(message_manager.get_log_message("L303", f"Key released: {e.keysym}")) if e.keysym in ('Control_L', 'Control_R') else None)
         
         # Add key bindings for transform operations
         self.bind_all("<Control-r>", lambda e: self._reset_transform())
-        self.bind_all("<Control-plus>", lambda e: self._zoom_in())
-        self.bind_all("<Control-minus>", lambda e: self._zoom_out())
+        
+        # Handle zoom operations via MouseEventHandler
+        def handle_zoom_in(e):
+            # Create mouse handler if needed
+            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                self._initialize_mouse_handler()
+            
+            # Get canvas dimensions
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            # Create event data for zoom in
+            # We'll simulate a mouse wheel event with positive delta
+            simulated_event = type('obj', (object,), {'delta': 120, 'x': canvas_width//2, 'y': canvas_height//2})
+            
+            # Call mouse wheel handler with simulated event
+            self._on_mouse_wheel(simulated_event)
+        
+        def handle_zoom_out(e):
+            # Create mouse handler if needed
+            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                self._initialize_mouse_handler()
+            
+            # Get canvas dimensions
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            # Create event data for zoom out
+            # We'll simulate a mouse wheel event with negative delta
+            simulated_event = type('obj', (object,), {'delta': -120, 'x': canvas_width//2, 'y': canvas_height//2})
+            
+            # Call mouse wheel handler with simulated event
+            self._on_mouse_wheel(simulated_event)
+        
+        # Bind zoom keyboard shortcuts
+        self.bind_all("<Control-plus>", handle_zoom_in)
+        self.bind_all("<Control-minus>", handle_zoom_out)
+        self.bind_all("<Control-equal>", handle_zoom_in)  # For keyboards where + is on the = key
         
         # Log event binding
         logger.info(message_manager.get_log_message("L302"))
 
-    def _on_transform_update(self) -> None:
-        """Callback when transform data is updated."""
-        # Redisplay the current page with updated transform data
-        self._display_page(self.current_page_index)
+    # _on_transform_update method is defined later in the class
     
     def _reset_transform(self) -> None:
         """Reset transformation for the current page."""
@@ -633,29 +970,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.base_transform_data[self.current_page_index] = (0.0, 0.0, 0.0, 1.0)
             self._on_transform_update()
     
-    def _zoom_in(self) -> None:
-        """Zoom in on the current page."""
-        # Apply zoom by scaling
-        if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
-            # Get current transform data
-            rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
-            # Apply smoother zoom increment
-            scale *= 1.05  # Smaller increment for smoother zooming
-            # Update transform data
-            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
-            self._on_transform_update()
-    
-    def _zoom_out(self) -> None:
-        """Zoom out on the current page."""
-        # Apply zoom by scaling
-        if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
-            # Get current transform data
-            rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
-            # Apply smoother zoom decrement
-            scale *= 0.95  # Smaller decrement for smoother zooming
-            # Update transform data
-            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
-            self._on_transform_update()
+    # _zoom_in and _zoom_out methods have been integrated into MouseEventHandler
             
     def _go_to_first_page(self) -> None:
         """Go to the first page of the document."""
@@ -672,6 +987,78 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._display_page(self.current_page_index)
             if self.page_control_frame:
                 self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
+                
+    def _on_prev_page(self) -> None:
+        """Handle previous page button click."""
+        # Log the previous page request
+        logger.info(message_manager.get_log_message("L286"))
+        
+        # Check if PDF is loaded
+        if not hasattr(self, 'file_path_info') or not self.file_path_info:
+            # Log attempt to navigate when no PDF is loaded
+            logger.warning(message_manager.get_log_message("L289"))
+            # Show info message that no PDF is loaded
+            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
+            return
+            
+        # Get total page count
+        page_count = self.page_count if hasattr(self, 'page_count') else 0
+        
+        # Check if we can go to a previous page
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self._display_page(self.current_page_index)
+            if hasattr(self, 'page_control_frame') and self.page_control_frame:
+                # Update the page control UI (0-based index for update_page_label)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
+                # Update the page variable to ensure consistency
+                self.page_control_frame.page_var.set(self.current_page_index + 1)
+                
+            # Log page movement using window_resize_throttle to prevent excessive logging
+            if window_resize_throttle.should_log("page_navigation"):
+                # Use L353 for page navigation which has placeholders for page numbers
+                logger.info(message_manager.get_log_message("L353", self.current_page_index + 1, page_count))
+        else:
+            # Already at first page
+            logger.info(message_manager.get_log_message("L291"))
+            # Show info message that this is the first page
+            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U058"))
+    
+    def _on_next_page(self) -> None:
+        """Handle next page button click."""
+        # Log the next page request
+        logger.info(message_manager.get_log_message("L288"))
+        
+        # Check if PDF is loaded
+        if not hasattr(self, 'file_path_info') or not self.file_path_info:
+            # Log attempt to navigate when no PDF is loaded
+            logger.warning(message_manager.get_log_message("L289"))
+            # Show info message that no PDF is loaded
+            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
+            return
+            
+        # Get total page count
+        page_count = self.page_count if hasattr(self, 'page_count') else 0
+        
+        # Check if we can go to a next page
+        if self.current_page_index < page_count - 1:
+            self.current_page_index += 1
+            self._display_page(self.current_page_index)
+            if hasattr(self, 'page_control_frame') and self.page_control_frame:
+                # Update the page control UI (0-based index for update_page_label)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
+                # Update the page variable to ensure consistency
+                self.page_control_frame.page_var.set(self.current_page_index + 1)
+                
+            # Log page movement using window_resize_throttle to prevent excessive logging
+            if window_resize_throttle.should_log("page_navigation"):
+                # Use L353 for page navigation which has placeholders for page numbers
+                logger.info(message_manager.get_log_message("L353", self.current_page_index + 1, page_count))
+        else:
+            # Already at last page
+            logger.info(message_manager.get_log_message("L292"))
+            # Show info message that this is the last page
+            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U059"))
     
     def _on_drop(self, file_path: str) -> None:
         """Handle file drop event.
@@ -717,6 +1104,86 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Schedule removal of feedback
         self.after(500, lambda: self.canvas.delete("drop_feedback"))
     
+    def _create_page_control_frame(self, page_count: int) -> None:
+        """Create or update the page control frame with navigation buttons.
+        
+        Args:
+            page_count: Total number of pages
+        """
+        try:
+            # Remove existing page control frame if it exists
+            if hasattr(self, 'page_control_frame') and self.page_control_frame:
+                self.page_control_frame.destroy()
+                
+            # Initialize page control variables
+            self.page_var = tk.IntVar(value=self.current_page_index + 1)  # 1-based for display
+            self.current_file_page_amount = tk.IntVar(value=page_count)
+            
+            # Log page count for debugging
+            # Log the total number of pages when creating page control frame
+            logger.debug(message_manager.get_log_message("L355", str(page_count)))
+            
+            # Create a new page control frame
+            self.page_control_frame = PageControlFrame(
+                parent=cast(tk.Frame, self),  # Cast to tk.Frame to satisfy type checker
+                color_key="page_control",
+                base_pages=self.base_pages,
+                comp_pages=[],  # No comparison pages in PDF Operation tab
+                base_transform_data=self.base_transform_data,
+                comp_transform_data=[],  # No comparison transform data
+                visualized_image=tk.StringVar(value="base"),  # Always show base image
+                page_amount_limit=page_count,
+                on_prev_page=self._on_prev_page,
+                on_next_page=self._on_next_page,
+                on_insert_blank=self._on_insert_blank_page,
+                on_export=self._on_complete_edit,
+                on_page_entry=self._on_page_entry
+            )
+            
+            # Set initial page number and total pages
+            self.page_control_frame.page_var.set(self.current_page_index + 1)
+            # Explicitly set total pages
+            self.page_control_frame.current_file_page_amount.set(page_count)
+            # Force update of the label
+            self.page_control_frame.total_pages_label.configure(text=f"/ {page_count}")
+            
+            # Place the page control frame above the canvas
+            self.page_control_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5, in_=self.frame_main2)
+            
+            # Register with widgets tracker
+            self.base_widgets.add_widget(self.page_control_frame)
+            
+            # Log successful creation
+            logger.debug(message_manager.get_log_message("L298"))
+            
+        except Exception as e:
+            # Log error
+            logger.error(message_manager.get_log_message("L067", str(e)))
+            
+    # Mouse handler initialization has been moved to PDFMouseHandler class
+    
+    def _setup_mouse_events(self) -> None:
+        """Set up mouse events for canvas operations."""
+        # Use the new PDF mouse handler to set up mouse events
+        self.pdf_mouse_handler.setup_mouse_events()
+
+    # Mouse event handling methods have been moved to PDFMouseHandler class
+
+    def _on_transform_update(self) -> None:
+        """Callback when transform data is updated."""
+        try:
+            # Store current scale factor for use in _display_page
+            if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
+                _, _, _, scale = self.base_transform_data[self.current_page_index]
+                self.scale_factor = scale
+                
+            # Redisplay the current page with updated transformations
+            self._display_page(self.current_page_index)
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L303", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
+    
     def _on_insert_blank_page(self) -> None:
         """Insert a blank page after the current page."""
         if not hasattr(self, 'page_count') or self.page_count == 0:
@@ -754,6 +1221,39 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         logger.info(message_manager.get_log_message("L304", insert_position + 1))
     
+
+    def apply_theme_color(self, theme_data: Dict[str, Any]) -> None:
+        """Apply theme colors to the PDF operation tab widgets.
+        
+        Args:
+            theme_data (Dict[str, Any]): Theme data obtained from ColorThemeManager.load_theme
+        """
+        try:
+            # Apply theme to canvas
+            canvas_settings = theme_data.get("Canvas", {})
+            self._config_widget(canvas_settings)
+            
+            # Log theme application
+            logger.debug(message_manager.get_log_message("L380", "PDFOperationApp"))
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L381", str(e)))
+    
+    def _config_widget(self, theme_settings: Dict[str, Any]) -> None:
+        """Configure widget-specific theme settings for the canvas.
+        
+        Args:
+            theme_settings (Dict[str, Any]): Widget-specific theme settings
+        """
+        try:
+            # Apply background color to canvas
+            bg_color = theme_settings.get("bg", "#ffffff")
+            self.canvas.configure(bg=bg_color)
+            
+            # Log canvas theme configuration
+            logger.debug(message_manager.get_log_message("L382", bg_color))
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L383", str(e)))
+    
     def _on_complete_edit(self) -> None:
         """Complete the editing process and export the PDF."""
         if not hasattr(self, 'page_count') or self.page_count == 0:
@@ -774,7 +1274,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._output_folder_path_entry.path_var.set(output_folder)
             
         # Get the base file name for the new PDF
-        base_file_name = os.path.basename(self.base_path.get())
+        base_path = self.base_path.get()
+        if not base_path or base_path == "":
+            # If base_path is not set, use a default name
+            base_file_name = "output.pdf"
+            logger.warning(message_manager.get_log_message("L307", "No base path set, using default filename"))
+        else:
+            base_file_name = os.path.basename(base_path)
+            
         output_file = os.path.join(output_folder, f"edited_{base_file_name}")
         
         try:
@@ -792,38 +1299,6 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 message_manager.get_ui_message("U062").format(str(e))
             )
             
-    def apply_theme_color(self, theme_data: Dict[str, Any]) -> None:
-        """Apply theme colors to the PDF operation tab widgets.
-        
-        Args:
-            theme_data (Dict[str, Any]): Theme data obtained from ColorThemeManager.load_theme
-        """
-        try:
-            # Apply theme to frame backgrounds
-            frame_settings = theme_data.get("Frame", {})
-            for frame in [self.frame_main0, self.frame_main1, self.frame_main2]:
-                frame.configure(bg=frame_settings.get("bg", "#1d1d29"))
-                
-            # Apply theme to canvas
-            canvas_settings = theme_data.get("Canvas", {})
-            if canvas_settings and hasattr(self, 'canvas'):
-                self._config_widget(canvas_settings)
-                
-            logger.debug(message_manager.get_log_message("L211", "PDF operation tab"))
-        except Exception as e:
-            logger.error(message_manager.get_log_message("L199", str(e)))
-    
-    def _config_widget(self, theme_settings: Dict[str, Any]) -> None:
-        """Configure widget-specific theme settings for the canvas.
-        
-        Args:
-            theme_settings (Dict[str, Any]): Widget-specific theme settings
-        """
-        try:
-            if hasattr(self, 'canvas'):
-                self.canvas.configure(bg=theme_settings.get("bg", "#1a1a1a"))
-                # Additional canvas-specific configuration can be added here
-                
-            logger.debug(message_manager.get_log_message("L200", self.__class__.__name__, theme_settings))
-        except Exception as e:
-            logger.error(message_manager.get_log_message("L201", self.__class__.__name__, str(e)))
+    # This is the end of _on_complete_edit method
+    # The duplicate apply_theme_color and _config_widget methods have been removed
+    # The original methods are defined at lines 1202 and 1217

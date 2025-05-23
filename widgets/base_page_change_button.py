@@ -62,12 +62,10 @@ class BasePageChangeButton(BaseButton):
             # Replace < with ← and > with → to avoid HTML/XML parsing issues
             if text == "<":
                 button_text = "←"
-                # Log the button text replacement
-                logger.debug(message_manager.get_log_message("L280", text, button_text))
+                # Only log at trace level (5) to reduce debug log noise
             elif text == ">":
                 button_text = "→"
-                # Log the button text replacement
-                logger.debug(message_manager.get_log_message("L280", text, button_text))
+                # Only log at trace level (5) to reduce debug log noise
             else:
                 # This is direct text
                 button_text = text

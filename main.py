@@ -9,7 +9,10 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
 from pathlib import Path
-from typing import Final
+from typing import Final, Dict, Any
+
+# Global dictionary to track window states
+_window_states: Dict[str, Dict[str, Any]] = {}
 
 # Core utilities and configuration
 from configurations import tool_settings
@@ -17,6 +20,7 @@ from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
 from configurations.user_setting_manager import get_user_setting_manager as usm
 from controllers.color_theme_manager import ColorThemeManager
+from utils.log_throttle import icon_throttle
 
 # View components
 from views.description import DescriptionApp
@@ -115,16 +119,18 @@ def initialize_application() -> str:
         logger.debug(message_manager.get_log_message("L184", settings_manager._settings_status, os.path.exists(tool_settings.USER_SETTINGS_FILE)))
 
         # Initialize color themes - explicitly load themes before creating UI components
-        logger.debug(message_manager.get_log_message("L185"))
+        # The theme manager will log its own initialization
         theme_manager = ColorThemeManager.get_instance()
         theme_color = settings_manager.get_setting("theme_color")
-        # Load saved theme if available
+        
+        # Load saved theme if available - this will be logged by the theme manager itself
         if theme_color:
             theme_manager.load_theme(theme_color)
-        logger.debug(message_manager.get_log_message("L186", theme_manager.get_current_theme_name()))
+        else:
+            # Log that default theme is being used
+            logger.debug(message_manager.get_log_message("L186", "default"))
         
         # Set application state for UI components
-        logger.debug(message_manager.get_log_message("L187"))
         
         # Retrieve language setting and determine two-letter code
         lang_setting = settings_manager.get_setting("language", tool_settings.DEFAULT_LANGUAGE)
@@ -136,8 +142,14 @@ def initialize_application() -> str:
             language_code = "ja" if lang_setting.lower() == "japanese" else "en"
         else:
             language_code = tool_settings.DEFAULT_LANGUAGE
+            
+        # Set language in MessageManager - this will log appropriate messages internally
+        # so we don't need to add another log message here
         get_message_manager().set_language(language_code)
-        logger.debug(message_manager.get_log_message("L242", language_code))
+        
+        # Remove redundant language setting log - MessageManager already logs this
+        # The following line is commented out to avoid duplicate logging
+        # logger.debug(message_manager.get_log_message("L228", language_code))
         
         # Return temp directory path
         return str(temp_dir)
@@ -182,10 +194,8 @@ class WindowEventManager:
         self.event_bus.subscribe(EventNames.WINDOW_MINIMIZE_REQUESTED, self.handle_minimize_request)
         self.event_bus.subscribe(EventNames.WINDOW_MAXIMIZE_REQUESTED, self.handle_maximize_request)
         
-        # Print statements for debugging
-        print("WindowEventManager initialized")
-        # Log that WindowEventManager was successfully initialized
-        logger.debug(message_manager.get_log_message("L341", "WindowEventManager"))
+        # Only log in debug mode, no need for print statements
+        logger.debug(message_manager.get_log_message("L413"))
     
     def setup_window_protocols(self) -> None:
         """Set up window protocol handlers.
@@ -193,8 +203,8 @@ class WindowEventManager:
         CRITICAL: This method sets the WM_DELETE_WINDOW protocol handler
         which must not be overridden by any other code.
         """
-        # Print to console for debugging
-        print("Setting up window protocols in WindowEventManager")
+        # Log window protocol setup
+        logger.debug(message_manager.get_log_message("L412"))
         
         # CRITICAL: Register WM_DELETE_WINDOW protocol handler for close button clicks
         # This must be the ONLY place in the entire application that sets this protocol
@@ -378,9 +388,18 @@ def create_main_window() -> tk.Tk:
 
 
 def change_logo_icon() -> str:
-    """Get path to the application logo icon using resource resolver."""
-    # Resolve icon path from project resources
-    return "images/LOGO_032.ico"
+    """Get path to the application logo icon using resource resolver.
+    
+    Returns:
+        Absolute path to the application icon file.
+    """
+    # Import utility function for resolving resource paths
+    from utils.utils import get_resource_path
+    # Get absolute path to the icon file using resource resolver
+    icon_path = get_resource_path("images/LOGO_032.ico")
+    # Log the icon path for debugging
+    logger.debug(message_manager.get_log_message("L229", icon_path))
+    return icon_path
 
 
 def cleanup() -> None:
@@ -502,11 +521,32 @@ def main() -> None:
         version_info = get_version_info()
         main_window.title(f"PDF Diff Checker {version_info}")
         
-        # Set window icon
+        # Set window icon - ensure it's applied to both window and taskbar
         icon_path = change_logo_icon()
         if os.path.exists(icon_path):
             try:
-                main_window.iconbitmap(icon_path)
+                # Use global icon_throttle imported at the top of the file
+                
+                # Use the global dictionary to track icon state
+                # No need to check if it exists since it's defined at the module level
+                
+                # Only set icon if not already set for this window
+                window_id = str(id(main_window))
+                if window_id not in _window_states or not _window_states.get(window_id, {}).get('icon_set', False):
+                    # Set the window icon
+                    main_window.iconbitmap(icon_path)
+                    # Ensure the icon is set for the taskbar as well
+                    main_window.wm_iconbitmap(icon_path)
+                    # Mark icon as set in our tracking dictionary
+                    if window_id not in _window_states:
+                        _window_states[window_id] = {}
+                    _window_states[window_id]['icon_set'] = True
+                    # Force update to ensure icon is applied
+                    main_window.update_idletasks()
+                    
+                    # Log only once with throttling to avoid excessive logs
+                    if icon_throttle.should_log("main_window_icon", throttle_key="window_icon", min_interval=300.0):
+                        logger.debug(message_manager.get_log_message("L294", icon_path))
             except Exception as e:
                 logger.warning(message_manager.get_log_message("L227", f"Failed to set window icon: {str(e)}"))
         
@@ -573,8 +613,8 @@ def main() -> None:
         license_app.pack(expand=True, fill="both")
         
         # Language is fixed to Japanese, so language switching buttons are not needed
-        # Set default language to Japanese
-        message_manager.set_language("ja")
+        # Default language is already set to Japanese in initialize_language function
+        # message_manager.set_language("ja") - Removed to avoid duplicate language setting
         
         # Pack notebook to fill the window
         notebook.pack(expand=True, fill=tk.BOTH)
@@ -590,13 +630,22 @@ def main() -> None:
         # Ensure cleanup on normal exit
         cleanup()
     except Exception as e:
-        logger.critical(message_manager.get_log_message("L017", str(e)))
-        print(f"Critical error in main: {e}")
-        traceback.print_exc()
+        # Get more detailed error information
+        error_type = type(e).__name__
+        error_message = str(e)
+        error_traceback = traceback.format_exc()
+        
+        # Log detailed error information
+        logger.critical(message_manager.get_log_message("L017", f"{error_type}: {error_message}"))
+        print(f"Critical error in main: {error_type}: {error_message}")
+        print(error_traceback)
+        
         # Always attempt cleanup on errors
         cleanup()
-        # Show error message to user
-        messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+        
+        # Show error message to user with more details
+        error_details = f"Error type: {error_type}\nDetails: {error_message}"
+        messagebox.showerror("Application Error", f"An unexpected error occurred during application initialization:\n\n{error_details}")
         sys.exit(1)
 
 

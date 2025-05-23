@@ -12,6 +12,7 @@ from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
 from configurations.user_setting_manager import UserSettingManager as usm
 from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
+from utils.log_throttle import theme_throttle
 
 logger = getLogger(__name__)
 
@@ -62,10 +63,12 @@ class ColorThemeManager:
     2. "light": Light theme
     3. "pastel": Pastel color theme
     """
-
     __instance: Optional[ColorThemeManager] = None
-    __current_theme: ThemeColors = cast(ThemeColors, {})
-    __current_theme_name: ThemeType = DEFAULT_THEME
+    __current_theme: Optional[ThemeColors] = None
+    __current_theme_name: str = DEFAULT_THEME
+    _last_theme_apply_logged: Optional[str] = None
+    _default_theme_logged: bool = False
+    _last_skipped_theme: Optional[ThemeType] = None
     __initialization_complete: bool = False
 
     def __new__(cls) -> ColorThemeManager:
@@ -91,8 +94,10 @@ class ColorThemeManager:
         cls.__current_theme_name = DEFAULT_THEME
         message_manager = get_message_manager()
         # L038: Loaded default color theme
-        # Log default theme load event
-        logger.debug(message_manager.get_log_message("L038"))
+        # Only log default theme load during initial startup, not during regular theme operations
+        if not hasattr(cls, '_default_theme_logged') or not cls._default_theme_logged:
+            logger.debug(message_manager.get_log_message("L038"))
+            cls._default_theme_logged = True
 
     @classmethod
     def init_color_theme(cls) -> None:
@@ -175,8 +180,11 @@ class ColorThemeManager:
         try:
             # Skip if theme is already loaded and force_reload is False
             if cls.__current_theme_name == theme_name and cls.__current_theme and not force_reload:
-                message_manager = get_message_manager()
-                logger.debug(message_manager.get_log_message("L154", f"{theme_name} (already loaded)"))
+                # Log skipped theme load only once per theme to reduce log noise
+                if not hasattr(cls, '_last_skipped_theme') or cls._last_skipped_theme != theme_name:
+                    message_manager = get_message_manager()
+                    logger.debug(message_manager.get_log_message("L039", f"{theme_name} (already loaded)"))
+                    cls._last_skipped_theme = theme_name
                 return True
                 
             # This line creates the correct theme file path based on the theme name
@@ -192,12 +200,20 @@ class ColorThemeManager:
                     cls.__current_theme = cast(ThemeColors, theme_data)
                     cls.__current_theme_name = theme_name
 
-                message_manager = get_message_manager()
-                # Log detailed theme load including file source
-                if force_reload:
-                    logger.debug(message_manager.get_log_message("L042", f"{theme_name} (file={theme_file}, force_reload=True)"))
-                else:
-                    logger.debug(message_manager.get_log_message("L042", f"{theme_name} (file={theme_file})"))
+                # Use global theme_throttle imported at the top of the file
+                
+                # Only log when theme actually changes or force_reload is True
+                # AND throttle to avoid excessive logging during rapid theme changes
+                if (previous_theme != theme_name or force_reload) and \
+                   theme_throttle.should_log(f"theme_load_{theme_name}", throttle_key="theme_load"):
+                    message_manager = get_message_manager()
+                    # Log simplified theme load message - reduce verbosity
+                    if force_reload:
+                        # Log theme loading first, before applying
+                        logger.debug(message_manager.get_log_message("L042", f"{theme_name} (force_reload=True)"))
+                    else:
+                        # Log theme loading first, before applying
+                        logger.debug(message_manager.get_log_message("L042", f"{theme_name}"))
 
                 # Update user settings only if theme actually changed
                 if previous_theme != theme_name:
@@ -206,8 +222,9 @@ class ColorThemeManager:
                         "theme_color", cast(Union[str, int, bool, None], theme_name)
                     )
                     settings.save_settings()
-                    message_manager = get_message_manager()
-                    logger.debug(message_manager.get_log_message("L240", previous_theme, theme_name))
+                    # Theme change logs are already output in widgets_tracker, so we don't output them here
+                    # message_manager = get_message_manager()
+                    # logger.debug(message_manager.get_log_message("L240", previous_theme, theme_name))
                 return True
             else:
                 message_manager = get_message_manager()
@@ -217,6 +234,13 @@ class ColorThemeManager:
                 return False
         except (ValueError, FileNotFoundError, RuntimeError, Exception) as e:
             message_manager = get_message_manager()
+            # Skip logging errors for default theme to reduce noise
+            if theme_name == DEFAULT_THEME and hasattr(cls, '_default_theme_logged') and cls._default_theme_logged:
+                # Silently load default theme without logging error
+                cls._load_default_theme()
+                return True
+                
+            # Log appropriate error based on exception type
             if isinstance(e, ValueError):
                 # L044: Invalid theme value: {error}
                 logger.error(message_manager.get_log_message("L044", str(e)))
@@ -229,6 +253,11 @@ class ColorThemeManager:
             else:
                 # L047: Error loading theme: {error}
                 logger.error(message_manager.get_log_message("L047", str(e)))
+                
+            # Mark that we've logged an error for default theme
+            if theme_name == DEFAULT_THEME:
+                cls._default_theme_logged = True
+                
             cls._load_default_theme()
             return False
 
@@ -239,7 +268,12 @@ class ColorThemeManager:
         Returns:
             ThemeColors: Current color theme
         """
-        return cls.__current_theme
+        # Ensure we always return a valid ThemeColors object
+        if cls.__current_theme is None:
+            # Load default theme if not already loaded
+            cls._load_default_theme()
+        # Cast to ThemeColors to satisfy type checker
+        return cast(ThemeColors, cls.__current_theme)
 
     @classmethod
     def get_current_theme_name(cls) -> ThemeType:
@@ -248,7 +282,12 @@ class ColorThemeManager:
         Returns:
             ThemeType: Current theme name
         """
-        return cls.__current_theme_name
+        # Ensure theme name is one of the valid themes
+        if cls.__current_theme_name not in VALID_THEMES:
+            # If not valid, return default theme
+            return DEFAULT_THEME
+        # Cast to ThemeType to satisfy type checker
+        return cast(ThemeType, cls.__current_theme_name)
         
     @classmethod
     def is_initialization_complete(cls) -> bool:
@@ -322,10 +361,6 @@ class ColorThemeManager:
             current_theme = cls.__current_theme
             current_theme_name = cls.__current_theme_name
             
-            # Log the theme application attempt
-            message_manager = get_message_manager()
-            logger.debug(message_manager.get_log_message("L047", current_theme_name))
-            
             # Publish event for theme change - all subscribers will receive this
             EventBus().publish(
                 EventNames.THEME_CHANGED,
@@ -333,8 +368,17 @@ class ColorThemeManager:
                 theme_name=current_theme_name
             )
             
-            # Log successful event publication
-            logger.debug(message_manager.get_log_message("L049", current_theme_name))
+            # Use global theme_throttle imported at the top of the file
+                
+            # Use the class variable defined at the class level and throttle logging
+            # Only log theme application once per theme and with a minimum time interval
+            if ((not hasattr(cls, '_last_theme_apply_logged') or cls._last_theme_apply_logged != current_theme_name) and
+                theme_throttle.should_log(f"theme_apply_{current_theme_name}", min_interval=5.0)):
+                message_manager = get_message_manager()
+                # L044: Applied color theme to widgets: {theme_name}
+                # Make it clear this is the final step after theme loading
+                logger.debug(message_manager.get_log_message("L044", current_theme_name))
+                cls._last_theme_apply_logged = current_theme_name
         except Exception as e:
             message_manager = get_message_manager()
             # L050: Error occurred while applying color theme to widget: {error}

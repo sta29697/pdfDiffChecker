@@ -39,6 +39,14 @@ INIT_MESSAGES = {
         "en": "Error formatting message {}: {}",
         "ja": "メッセージのフォーマットエラー {}: {}",
     },
+    "language_already_set": {
+        "en": "[SYS] Language is already set to {}. Skipping.",
+        "ja": "[SYS] 言語は既に {} に設定されています。スキップします",
+    },
+    "language_set": {
+        "en": "[SYS] Language set to {}",
+        "ja": "[SYS] 言語を {} に設定しました",
+    },
 }
 
 
@@ -114,19 +122,30 @@ class MessageManager:
         """
         # Skip processing if language is already set to requested language
         if self._language == language_code:
-            # Only debug log for repeated language setting attempts
-            logger.debug(f"Language already set to: {language_code}, skipping")
+            # Only debug log for repeated language setting attempts - use L003 message code if available
+            if "L003" in self._messages.get("log_codes", {}):
+                logger.debug(self.get_log_message("L003", language_code))
+            else:
+                logger.debug(INIT_MESSAGES["language_already_set"][self._language].format(language_code))
             return
             
         # Log current and requested language for actual changes
-        logger.debug(f"Current language: {self._language}, Requested language: {language_code}")
-        if language_code in ["en", "ja"]:
-            self._language = language_code
+        # Support both ISO codes (ja, en) and friendly names (japanese, english)
+        normalized_code = language_code.lower()
+        if normalized_code in ["en", "ja", "english", "japanese"]:
+            # Map friendly names to ISO codes
+            if normalized_code == "japanese":
+                self._language = "ja"
+            elif normalized_code == "english":
+                self._language = "en"
+            else:
+                self._language = normalized_code
+                
             # Use direct logging to avoid potential infinite recursion
             if "L003" in self._messages.get("log_codes", {}):
-                logger.info(self.get_log_message("L003", language_code))
+                logger.info(self.get_log_message("L003", self._language))
             else:
-                logger.info(f"Language set to: {language_code}")
+                logger.info(INIT_MESSAGES["language_set"][self._language].format(self._language))
             # Additional check to prevent redundant theme reloads with language changes
             # Only notify about language change, not reload themes on redundant calls
         else:

@@ -76,7 +76,8 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
             if AppState.should_log_widget_init():
                 # Use a more internationalized format for path information
                 current_path = self.path_entry.get() or message_manager.get_ui_message("U098") # Using "None" or localized equivalent
-                logger.debug(message_manager.get_log_message("L107", current_path))
+                # Use appropriate message code for path entry initialization
+                logger.debug(message_manager.get_log_message("L083", current_path))
         except Exception as e:
             # Always log errors regardless of initialization state
             # Failed to create widget: {error}

@@ -5,8 +5,9 @@ import tkinter as tk
 from PIL import Image, ImageTk
 
 from controllers.image_operations import ImageOperations
-from models.file_converter import PdfFileConverter, TiffFileConverter
-from widgets.create_layer_select_button import LayerSelectButton
+# Suppress type checking errors for the module
+from models.file_converter import PdfFileConverter, TiffFileConverter  # type: ignore
+from widgets.create_layer_select_button import LayerSelectButton  # type: ignore
 from configurations.message_manager import get_message_manager
 
 message_manager = get_message_manager()

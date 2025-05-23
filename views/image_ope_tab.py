@@ -231,8 +231,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         )
         if file_path:
             self._base_file_path_entry.path_var.set(file_path)
-            # Log base file selection
-            logger.debug(message_manager.get_log_message("L070", file_path))
+            # Log base file selection with correct message code
+            logger.debug(message_manager.get_log_message("L071", file_path))
 
     def _on_output_folder_select(self) -> None:
         """Handle output folder selection.

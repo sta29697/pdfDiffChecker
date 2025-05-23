@@ -7,7 +7,7 @@
         "language": "japanese",
         "input_file_path": "直接入力、参照選択",
         "comparison_file_path": "直接入力、参照選択",
-        "output_folder_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker\\temp",
+        "output_folder_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker",
         "window_position_x": 500,
         "window_position_y": 10,
         "window_width": 800,

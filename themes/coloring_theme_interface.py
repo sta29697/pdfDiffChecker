@@ -4,6 +4,7 @@ from typing import Any, Dict
 from abc import ABC, abstractmethod
 
 from configurations.message_manager import get_message_manager
+from controllers.color_theme_manager import ColorThemeManager
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
@@ -52,7 +53,6 @@ class ColoringNotebookIF(ttk.Notebook, ColoringThemeIF):
             )
             # Get theme name from singleton ColorThemeManager if possible
             try:
-                from controllers.color_theme_manager import ColorThemeManager
                 theme_name = ColorThemeManager.get_current_theme_name()
             except Exception:
                 theme_name = "dark"  # Default to 'dark' theme as a safe fallback

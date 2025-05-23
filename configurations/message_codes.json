@@ -167,8 +167,8 @@
             "ja": "一時ディレクトリの作成に失敗しました: {0}"
         },
         "L014": {
-            "en": "Created directory: {0}",
-            "ja": "ディレクトリを作成しました: {0}"
+            "en": "Using directory: {0}",
+            "ja": "ディレクトリを使用します: {0}"
         },
         "L015": {
             "en": "Temporary directory configured: {0}",
@@ -179,8 +179,8 @@
             "ja": "一時ディレクトリの設定が完了しました"
         },
         "L017": {
-            "en": "Failed to create directories: {0}",
-            "ja": "ディレクトリの作成に失敗しました: {0}"
+            "en": "Critical error in application initialization: {0}",
+            "ja": "アプリケーション初期化中に重大なエラーが発生しました: {0}"
         },
         "L018": {
             "en": "Failed to clean temporary directory: {0}",
@@ -287,8 +287,8 @@
             "ja": "[テーマ] テーマファイルが見つかりません: {0}"
         },
         "L044": {
-            "en": "[THEME] Failed to load color theme: {0}",
-            "ja": "[テーマ] カラーテーマの読み込みでエラーが発生しました: {0}"
+            "en": "[THEME] Applied color theme to widgets: {0}",
+            "ja": "[テーマ] カラーテーマをウィジェットに適用しました: {0}"
         },
         "L045": {
             "en": "[THEME] Color theme saved: {0}",
@@ -379,8 +379,8 @@
             "ja": "[ウィジェット] エントリーフレームを設定しました: {0}"
         },
         "L067": {
-            "en": "[WIDGET] Failed to setup widgets: {0}",
-            "ja": "[ウィジェット] ウィジェットの設定でエラーが発生しました: {0}"
+            "en": "[WIDGET] Failed to initialize mouse event handler: {0}",
+            "ja": "[ウィジェット] マウスイベントハンドラの初期化に失敗しました: {0}"
         },
         "L068": {
             "en": "[UI] Subwindow {0} is closing: {1}",
@@ -499,8 +499,8 @@
             "ja": "[テーマ] 新しいテーマがNoneでしたので、デフォルトを'dark'に設定しました"
         },
         "L097": {
-            "en": "[THEME] Color theme changed to: {0}",
-            "ja": "[テーマ] カラーテーマを変更しました: {0}"
+            "en": "[THEME] Using color theme: {0}",
+            "ja": "[テーマ] カラーテーマを使用しています: {0}"
         },
         "L098": {
             "en": "[WIDGET] Failed to update button theme: {0}",
@@ -535,8 +535,8 @@
             "ja": "[CONFIG] ユーザー設定の読み込みでエラーが発生しました: {0}"
         },
         "L107": {
-            "en": "[THEME] Failed to load theme: {0}",
-            "ja": "[テーマ] テーマの読み込みでエラーが発生しました: {0}"
+            "en": "[THEME] Path entry widget initialized with theme: {0}",
+            "ja": "[テーマ] パス入力ウィジェットがtheme settingsで初期化されました: {0}"
         },
         "L108": {
             "en": "[PDF] Foreground/Background threshold updated to: {0}",
@@ -803,12 +803,12 @@
             "ja": "[ウィジェット] テーマ色の適用でエラーが発生しました: {0}"
         },
         "L175": {
-            "en": "[WIDGET] Failed to configure widget with theme settings: {0}",
-            "ja": "[ウィジェット] テーマ設定によるウィジェットの設定でエラーが発生しました: {0}"
+            "en": "[WIDGET] Failed to apply theme settings to widget: {0}",
+            "ja": "[ウィジェット] ウィジェットにテーマ設定を適用できませんでした: {0}"
         },
         "L176": {
-            "en": "[WIDGET] ConvertImageButton initialized with key={0}",
-            "ja": "[ウィジェット] ConvertImageButtonがkey={0}で初期化されました"
+            "en": "[WIDGET] ConvertImageButton initialized with key: {0}",
+            "ja": "[ウィジェット] ConvertImageButtonがキー: {0} で初期化されました"
         },
         "L177": {
             "en": "[WIDGET] No output directory specified",
@@ -900,15 +900,15 @@
         },
         "L199": {
             "en": "[THEME] Failed to apply theme to ttk.Notebook widget: {0}",
-            "ja": "[THEME] ttk.Notebookウィジェットへのテーマ適用でエラーが発生しました: {0}"
+            "ja": "[テーマ] ttk.Notebookウィジェットへのテーマ適用でエラーが発生しました: {0}"
         },
         "L200": {
             "en": "[THEME] Configured {0} with settings: {1}",
-            "ja": "[THEME] {0}を設定で構成しました: {1}"
+            "ja": "[テーマ] {0}を設定で構成しました: {1}"
         },
         "L201": {
             "en": "[THEME] Failed to configure {0}: {1}",
-            "ja": "[THEME] {0}の構成でエラーが発生しました: {1}"
+            "ja": "[テーマ] {0}の構成でエラーが発生しました: {1}"
         },
         "L202": {
             "en": "[WIDGET] BaseLabelClass initialized with text: {0}",
@@ -948,7 +948,7 @@
         },
         "L211": {
             "en": "[THEME] Theme applied to ttk.Notebook widget: {0}",
-            "ja": "[THEME] ttk.Notebookウィジェットにテーマが適用されました: {0}"
+            "ja": "[テーマ] ttk.Notebookウィジェットにテーマが適用されました: {0}"
         },
         "L212": {
             "en": "[WIDGET] Registered widget: {0}",
@@ -989,6 +989,10 @@
         "L228": {
             "en": "[UI] Language changed to: {0}",
             "ja": "[UI] 言語が変更されました: {0}"
+        },
+        "L229": {
+            "en": "[APP] Successfully set window and taskbar icon: {0}",
+            "ja": "[APP] ウィンドウとタスクバーのアイコンを設定しました: {0}"
         },
         "L230": {
             "en": "[UI] {0} setup complete",
@@ -1075,12 +1079,12 @@
             "ja": "[UI] ボタン親要素の背景色を更新しました: {0}"
         },
         "L257": {
-            "en": "[UI] Button dimensions set to: {0}",
-            "ja": "[UI] ボタンの寸法を設定: {0}"
+            "en": "[UI] Button dimensions set: width={0}, height={1}, frame height={2}",
+            "ja": "[UI] ボタンの寸法を設定: 幅={0}, 高さ={1}, フレーム高さ={2}"
         },
         "L258": {
             "en": "[UI] Status bar was updated with message: {0}",
-            "ja": "[UI] ステータスバーがメッセージで更新されました: {0}"
+            "ja": "[UI] {0}コンポーネントが初期化されました"
         },
         "L259": {
             "en": "[EVENT] Event handler received {0} completion event",
@@ -1151,8 +1155,8 @@
             "ja": "[UI] 言語を {0} に変更しました"
         },
         "L276": {
-            "en": "[PDF] Loaded PDF with {0} pages: {1}",
-            "ja": "[PDF] {0}ページのPDFを読み込みました: {1}"
+            "en": "[PDF] Completed loading and conversion of PDF with {0} pages: {1}",
+            "ja": "[PDF] {0}ページのPDFの読み込み、変換作業を全て完了しました: {1}"
         },
         "L277": {
             "en": "[PDF] Error loading PDF: {0}",
@@ -1222,45 +1226,49 @@
             "en": "[PDF] Page entry event received",
             "ja": "[PDF] ページ入力イベントを受信しました"
         },
+        "L422": {
+            "en": "[PNG] Current zoom scale: {0}",
+            "ja": "[PNG] 現在のズーム倍率: {0}"
+        },
         "L294": {
-            "en": "[PDF] PDF is not loaded",
-            "ja": "[PDF] PDFが読み込まれていません"
+            "en": "[UI] Window icon successfully set: {0}",
+            "ja": "[UI] ウィンドウアイコンを正常に設定しました: {0}"
         },
         "L295": {
-            "en": "[PDF] Page control frame is not available",
-            "ja": "[PDF] ページコントロールフレームが利用できません"
+            "en": "[UI] Window icon setting failed (code {0}): This is a common Windows error that can be safely ignored",
+            "ja": "[UI] ウィンドウアイコン設定エラー (コード {0}): これはWindowsの一般的なエラーで無視できます"
         },
         "L296": {
             "en": "[PDF] Moved to page {0}/{1}",
             "ja": "[PDF] ページ {0}/{1} に移動しました"
         },
         "L297": {
-            "en": "[PDF] Invalid page number: {0}, valid range: 1-{1}",
-            "ja": "[PDF] 無効なページ番号です: {0}, 有効範囲: 1-{1}"
+            "en": "[UI] Theme application error: {0}",
+            "ja": "[UI] テーマ適用エラー: {0}"
         },
         "L298": {
-            "en": "[PDF] Created page control frame",
-            "ja": "[PDF] ページコントロールフレームを作成しました"
+            "en": "[UI] Created page control frame",
+            "ja": "[UI] ページコントロールフレームを作成しました"
         },
         "L299": {
-            "en": "[PDF] Processed mouse wheel event",
-            "ja": "[PDF] マウスホイールイベントを処理しました"
+            "en": "[PNG] Processed mouse wheel event",
+            "ja": "[PNG] マウスホイールイベントを処理しました"
         },
         "L300": {
-            "en": "[PDF] Mouse wheel event processing error: {0}",
-            "ja": "[PDF] マウスホイールイベント処理エラー: {0}"
+            "en": "[PNG] Mouse wheel event processing error: {0}",
+            "ja": "[PNG] マウスホイールイベント処理エラー: {0}"
         },
         "L301": {
-            "en": "[PDF] Set up mouse event handler for PDF with {0} pages",
-            "ja": "[PDF] {0}ページのPDF用マウスイベントハンドラを設定しました"
+            "en": "[PNG] Current zoom scale factor: {0}",
+            "ja": "[PNG] 現在のズーム倍率: {0}"
         },
         "L302": {
-            "en": "[PDF] Bound mouse/keyboard events to canvas",
-            "ja": "[PDF] マウス/キーボードイベントをキャンバスにバインドしました"
+            "en": "[CONTROLLER] Bound mouse/keyboard events to canvas",
+            "ja": "[CONTROLLER] マウス/キーボードイベントをキャンバスにバインドしました"
         },
         "L303": {
-            "en": "[PDF] Error setting up mouse events: {0}",
-            "ja": "[PDF] マウスイベント設定中にエラーが発生しました: {0}"
+            "en": "[CONTROLLER] Control key state detected: {0}",
+            "ja": "[CONTROLLER] Controlキーの状態を検出しました: {0}"
         },
         "L304": {
             "en": "[FILE] File processing completed",
@@ -1395,12 +1403,12 @@
             "ja": "[PDF] ページ数を {0} に設定しています"
         },
         "L337": {
-            "en": "[PDF] Basic metadata from PyPDFium2",
-            "ja": "[PDF] PyPDFium2からの基本メタデータ"
+            "en": "[PDF] Retrieved PDF page count and metadata from PyPDFium2",
+            "ja": "[PDF] PyPDFium2からPDFの総ページ数と基本情報を取得しました"
         },
         "L338": {
-            "en": "[PDF] Processing PDF file path: {0}",
-            "ja": "[PDF] PDFファイルパスを処理中: {0}"
+            "en": "[PNG] Rotating PNG image: {0}",
+            "ja": "[PNG] PNG画像を回転中: {0}"
         },
         "L339": {
             "en": "[PDF] Calculating scale factor for DPI: {0}",
@@ -1433,6 +1441,174 @@
         "L346": {
             "en": "[FILE] Looking for PNG file at path: {0}",
             "ja": "[ファイル] PNGファイルを探しています: {0}"
+        },
+        "L347": {
+            "en": "[MOUSE] Zoom operation with scale factor: {0}",
+            "ja": "[マウス] ズーム操作: 倍率={0}"
+        },
+        "L348": {
+            "en": "[PDF] Image loaded with dimensions: {0}x{1}",
+            "ja": "[PDF] 画像が読み込まれました（寸法: {0}x{1}）"
+        },
+        "L349": {
+            "en": "[PDF] Image displayed on canvas at position ({0}, {1})",
+            "ja": "[PDF] 画像がキャンバス上の位置 ({0}, {1}) に表示されました"
+        },
+        "L350": {
+            "en": "[UI] Window icon set successfully with ID: {0}",
+            "ja": "[UI] ウィンドウアイコンがID: {0} で正常に設定されました"
+        },
+        "L351": {
+            "en": "[UI] Window icon set with warning code: {0} (ERROR_INSUFFICIENT_BUFFER - This is a common Windows warning related to buffer size that can be safely ignored)",
+            "ja": "[UI] ウィンドウアイコンが警告コード付きで設定されました: {0}（ERROR_INSUFFICIENT_BUFFER - バッファサイズに関するWindowsの一般的な警告で、無視して問題ありません）"
+        },
+        "L352": {
+            "en": "[UI] Creating page control frame with page count: {0}",
+            "ja": "[UI] ページ数 {0} のページコントロールフレームを作成しています"
+        },
+        "L353": {
+            "en": "[PDF] Navigated to page {0} of {1}",
+            "ja": "[PDF] ページ {0}/{1} に移動しました"
+        },
+        "L354": {
+            "en": "[UI] Page entry event detected: {0}",
+            "ja": "[UI] ページ入力イベントを検出しました: {0}"
+        },
+        "L355": {
+            "en": "[PNG] Image positioned at coordinates: {0}",
+            "ja": "[PNG] 画像の配置座標: {0}"
+        },
+        "L359": {
+            "en": "[PDF] Comparison file analysis started",
+            "ja": "[PDF] 比較ファイルの解析を開始しました"
+        },
+        "L360": {
+            "en": "[SYS] Using temporary directory: {0}",
+            "ja": "[SYS] 一時ディレクトリを使用しています: {0}"
+        },
+        "L361": {
+            "en": "[PDF] Converting PDF to PNG images: {0}",
+            "ja": "[PDF] PDFをPNG画像に変換中: {0}"
+        },
+        "L362": {
+            "en": "[MOUSE] Mouse down at position: x={0}, y={1}",
+            "ja": "[マウス] マウスダウン位置: x={0}, y={1}"
+        },
+        "L363": {
+            "en": "[MOUSE] Mouse move to: x={0}, y={1}",
+            "ja": "[マウス] マウス移動: x={0}, y={1}"
+        },
+        "L364": {
+            "en": "[MOUSE] Mouse up at: x={0}, y={1}",
+            "ja": "[マウス] マウスボタン解放: x={0}, y={1}"
+        },
+        "L365": {
+            "en": "[MOUSE] Zoom in to scale: {0}",
+            "ja": "[マウス] ズームイン: 倍率={0}"
+        },
+        "L366": {
+            "en": "[MOUSE] Zoom out to scale: {0}",
+            "ja": "[マウス] ズームアウト: 倍率={0}"
+        },
+        "L367": {
+            "en": "[UI] Page control frame created",
+            "ja": "[UI] ページコントロールフレームを作成しました"
+        },
+        "L368": {
+            "en": "[TRANSFORM] Updated: Scale={0}, TranslateX={1}, TranslateY={2}",
+            "ja": "[変換] 更新: 倍率={0}, X移動={1}, Y移動={2}"
+        },
+        "L369": {
+            "en": "[PDF] PDF file processing started",
+            "ja": "[PDF] PDFファイルの処理を開始しました"
+        },
+        "L370": {
+            "en": "[PNG] Image positioned at: x={0}, y={1}",
+            "ja": "[PNG] 画像の配置位置: x={0}, y={1}"
+        },
+        "L372": {
+            "en": "[MOUSE] Mouse event handler update failed: {0}",
+            "ja": "[マウス] マウスイベントハンドラの更新に失敗しました: {0}"
+        },
+        "L373": {
+            "en": "[FILE] Loading PNG file: {0}",
+            "ja": "[ファイル] PNGファイルを読み込みます: {0}"
+        },
+        "L374": {
+            "en": "[UI] Button image dimensions: {0}",
+            "ja": "[UI] ボタン画像の寸法: {0}"
+        },
+        "L401": {
+            "en": "[THEME] Theme loading log throttle interval",
+            "ja": "[テーマ] テーマ読み込みログのスロットル間隔"
+        },
+        "L402": {
+            "en": "[THEME] Theme application log throttle interval",
+            "ja": "[テーマ] テーマ適用ログのスロットル間隔"
+        },
+        "L403": {
+            "en": "[UI] Window icon setting log throttle interval",
+            "ja": "[UI] ウィンドウアイコン設定ログのスロットル間隔"
+        },
+        "L404": {
+            "en": "[FILE] Temporary directory log throttle interval",
+            "ja": "[ファイル] 一時ディレクトリログのスロットル間隔"
+        },
+        "L405": {
+            "en": "[PNG] PNG file loading log throttle interval",
+            "ja": "[PNG] PNGファイル読み込みログのスロットル間隔"
+        },
+        "L406": {
+            "en": "[PDF] Transform update log throttle interval",
+            "ja": "[PDF] 変換更新ログのスロットル間隔"
+        },
+        "L407": {
+            "en": "[PDF] Zoom factor log throttle interval",
+            "ja": "[PDF] ズーム係数ログのスロットル間隔"
+        },
+        "L408": {
+            "en": "[PDF] Image position log throttle interval",
+            "ja": "[PDF] 画像位置ログのスロットル間隔"
+        },
+        "L409": {
+            "en": "[UI] Window resize log throttle interval",
+            "ja": "[UI] ウィンドウリサイズログのスロットル間隔"
+        },
+        "L410": {
+            "en": "[PNG] Image dimensions: width={0}, height={1}",
+            "ja": "[PNG] 画像の寸法: 幅={0}, 高さ={1}"
+        },
+       "L412": {
+            "en": "[CONTROLLER] Window protocols setup",
+            "ja": "[CONTROLLER] ウィンドウプロトコルがセットアップされました"
+        },
+        "L413": {
+            "en": "[CONTROLLER] WindowEventManager initialized",
+            "ja": "[CONTROLLER] ウィンドウイベントマネージャが初期化されました"
+        },
+        "L414": {
+            "en": "[UI] Feedback circle position: {0}",
+            "ja": "[UI] フィードバックサークル位置: {0}"
+        },
+        "L415": {
+            "en": "[PNG] Rotating image 90 degrees right",
+            "ja": "[PNG] 画像を90度右に回転中"
+        },
+        "L416": {
+            "en": "[PNG] Rotating image 90 degrees left",
+            "ja": "[PNG] 画像を90度左に回転中"
+        },
+        "L417": {
+            "en": "[PNG] Rotating image 180 degrees",
+            "ja": "[PNG] 画像を180度回転中"
+        },
+        "L418": {
+            "en": "[PNG] Flipping image vertically",
+            "ja": "[PNG] 画像を垂直方向に反転中"
+        },
+        "L419": {
+            "en": "[PNG] Flipping image horizontally",
+            "ja": "[PNG] 画像を水平方向に反転中"
         }
     },
     "message_codes": {
@@ -1893,6 +2069,10 @@
         "U060": {
             "en": "Shortcut Keys",
             "ja": "ショートカットキー"
+        },
+        "U098": {
+            "en": "Theme Settings",
+            "ja": "テーマ設定"
         }
     }
 }

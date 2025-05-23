@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Iterator
 from logging import getLogger
-from typing import List, Protocol, runtime_checkable, Dict, Any, Final
+from typing import List, Protocol, runtime_checkable, Dict, Any, Final, Optional
 
 from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
@@ -69,31 +69,34 @@ class WidgetWithChildren(Protocol):
 
 class WidgetsTracker:
     """Singleton class for tracking and theming widgets.
-
+    
     This class manages the registration and theme application for all widgets
     in the application. It maintains a single source of truth for widget references
     and ensures that when the theme changes, all registered widgets are updated.
     
     Subscribes to event bus events to coordinate theme application timing.
-
+    
     Now uses event-driven architecture to receive theme changes from ColorThemeManager
     without direct dependencies, solving circular dependency issues.
-
+    
     Note:
         Uses tk.Misc as the base type for all widgets to ensure compatibility
         with both tk and ttk widgets while maintaining type safety.
-
+        
     Attributes:
         __instance: Singleton instance of WidgetsTracker.
         __registered_widgets: List of registered widgets that support theme colors.
         __theme_initialized: Flag indicating if theme system is initialized.
         __current_theme: Current theme data received from events.
+        _initialization_logged: Flag to track if initialization has been logged.
     """
-
-    __instance: WidgetsTracker | None = None
+    
+    __instance: Optional[WidgetsTracker] = None
     __registered_widgets: List[ThemeColorApplicable] = []
     __theme_initialized: bool = False
     __current_theme: Dict[str, Any] = {}
+    __previous_theme_name: str = "default"
+    _initialization_logged: bool = False
     __widget_origins: Dict[int, Dict[str, Any]] = {}  # Dict to store parent file information for each widget
 
     def __new__(cls) -> WidgetsTracker:
@@ -144,8 +147,12 @@ class WidgetsTracker:
             EventBus().subscribe(EventNames.THEME_APPLICATION_COMPLETED, self._handle_theme_application_completed)
             EventBus().subscribe(EventNames.TAB_LAYOUT_COMPLETED, self._handle_tab_layout_completed)
             
-            # Log initialization with message code
-            logger.debug(message_manager.get_log_message("L258", "WidgetsTracker"))
+            # Log initialization with message code - only once per application run
+            # Use class-level flag defined at the class level
+            if not WidgetsTracker._initialization_logged:
+                # Use message_manager imported at the top of the file
+                logger.debug(message_manager.get_log_message("L258", "WidgetsTracker"))
+                WidgetsTracker._initialization_logged = True
     
     def _handle_theme_changed(self, theme: Dict[str, Any], theme_name: str) -> None:
         """Handle theme changed event.
@@ -154,14 +161,26 @@ class WidgetsTracker:
             theme: Theme data from event
             theme_name: Name of the theme
         """
-        # Store the current theme 
-        self.__current_theme = theme 
-        self.__theme_initialized = True
+        # Get previous theme name before updating
+        previous_theme = getattr(self, "_WidgetsTracker__previous_theme_name", "default")
         
-        # Apply theme to all registered widgets
-        self.apply_colors_to_widgets(theme)
-        # Use the appropriate message code for theme application to multiple widgets
-        logger.debug(message_manager.get_log_message("L231", theme_name, len(self.__registered_widgets)))
+        # Only process if theme actually changed to reduce unnecessary processing
+        if previous_theme != theme_name or not self.__theme_initialized:
+            # Store the current theme 
+            self.__current_theme = theme 
+            self.__theme_initialized = True
+            self.__previous_theme_name = theme_name  # Store for next change
+            
+            # Apply theme to all registered widgets
+            self.apply_colors_to_widgets(theme)
+            
+            # Log theme change with both previous and current theme names
+            # Only log when theme actually changes
+            if previous_theme != theme_name:
+                logger.debug(message_manager.get_log_message("L240", previous_theme, theme_name))
+                # Also log widget application count
+                logger.debug(message_manager.get_log_message("L231", theme_name, len(self.__registered_widgets)))
+        # If theme hasn't changed, don't log or reapply theme to reduce log noise
     
     def _handle_phase1_completed(self) -> None:
         """Handle phase 1 completion event.
@@ -303,7 +322,9 @@ class WidgetsTracker:
                     caller_info = file_name
                     break
                 
-        logger.debug(message_manager.get_log_message("L038", f"Applying theme from {caller_info}"))
+        # L038 message code means "Default color theme loaded", which is not appropriate here.
+        # Using L180 instead for applying theme to widgets
+        logger.debug(message_manager.get_log_message("L180", f"Applying theme to {len(self.__registered_widgets)} widgets"))
         
         # Count the number of widgets
         widget_count = 0

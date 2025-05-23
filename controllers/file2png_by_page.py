@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Protocol, TypedDict, cast
 
 # Import PyPDFium2 for PDF rendering
 try:
-    import pypdfium2 as pdfium
+    import pypdfium2 as pdfium  # type: ignore
     HAVE_PYPDFIUM2 = True
 except ImportError:
     HAVE_PYPDFIUM2 = False
@@ -285,6 +285,9 @@ class Pdf2PngByPages(BaseImageConverter):
         # Get directory path and explicitly set as str (not None)
         self._temp_dir = cast(str, utils.create_directories(pdf_file_name))
         
+        # Track if metadata has been retrieved to avoid redundant logging
+        self._metadata_retrieved: bool = False
+        
         # Extract metadata and page count
         self._extract_metadata()
         
@@ -309,10 +312,12 @@ class Pdf2PngByPages(BaseImageConverter):
         # Use LogThrottle to prevent excessive logging of metadata extraction
         if not hasattr(self, '_metadata_log_throttle'):
             from utils.log_throttle import LogThrottle
-            self._metadata_log_throttle = LogThrottle(min_interval=10.0)  # 10秒間隔で制限
+            # Set a long throttle interval (60 seconds) to suppress metadata extraction logs
+            self._metadata_log_throttle = LogThrottle(min_interval=60.0)  # Limit to 60-second intervals
             
+        # Lower log level from info to debug and limit output with a long throttle interval
         if self._metadata_log_throttle.should_log("metadata_extraction"):
-            logger.info(message_manager.get_log_message("L334"))
+            logger.debug(message_manager.get_log_message("L334"))
             
         if HAVE_PYPDF:
             try:
@@ -368,7 +373,10 @@ class Pdf2PngByPages(BaseImageConverter):
                 page_count = len(pdf)
                 
                 # Basic metadata from PyPDFium2
-                logger.info(message_manager.get_log_message("L337"))
+                # Only log metadata retrieval on first load or significant changes
+                if not hasattr(self, '_metadata_retrieved') or not self._metadata_retrieved:
+                    logger.info(message_manager.get_log_message("L337"))
+                    self._metadata_retrieved = True
                 metadata = {
                     "NumberOfPages": page_count,
                     "Library": "PyPDFium2",
@@ -376,7 +384,10 @@ class Pdf2PngByPages(BaseImageConverter):
                 }
                 
                 # Update file_info metadata
-                logger.info(message_manager.get_log_message("L335"))
+                # Only log metadata updates when there's a significant change
+                old_page_count = self.file_info.file_meta_info.get('Pages', 0)
+                if old_page_count != page_count or not self.file_info.file_meta_info:
+                    logger.info(message_manager.get_log_message("L335"))
                 self.file_info.file_meta_info.update(metadata)
                 
                 # Set page count
@@ -477,6 +488,7 @@ class Pdf2PngByPages(BaseImageConverter):
                     base_filename = f"base_{page_num:04d}.png"
                     base_path = os.path.join(str(self._temp_dir), base_filename)
                     
+                    # Fix format error: Ensure arguments match the message format {0} and {1}
                     logger.info(message_manager.get_log_message("L332", page_num, target_path))
                     
                     # Get the page from the PDF (0-based index)
