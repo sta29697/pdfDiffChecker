@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
+import gc
+import ctypes
 from logging import getLogger
 from pathlib import Path
 import tkinter as tk
@@ -15,12 +18,12 @@ from PIL import Image, ImageTk
 from utils.log_throttle import LogThrottle, window_resize_throttle
 from utils.utils import get_temp_dir
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+from utils.image_cache import ImageCache
 
 # Controller imports
 from controllers.mouse_event_handler import MouseEventHandler
 from controllers.drag_and_drop_file import DragAndDropHandler
 from controllers.file2png_by_page import Pdf2PngByPages
-from controllers.pdf_mouse_handler import PDFMouseHandler
 
 # Configuration imports
 from configurations.message_manager import get_message_manager
@@ -62,6 +65,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Initialize variables for status updates
         self.status_var: tk.StringVar = tk.StringVar(value="")
         self.after_id: Optional[str] = None
+        
+        # Initialize image cache
+        # Use a larger cache size for PDF operations (200MB) to improve performance
+        self.image_cache = ImageCache(max_size_mb=200, ttl=600)  # 10 minutes TTL
 
         # Initialize paths with internationalized messages
         self.base_path = tk.StringVar()
@@ -110,8 +117,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # UI components
         self.mouse_handler: Optional[MouseEventHandler] = None
-        self.pdf_mouse_handler = PDFMouseHandler(self)  # New PDF mouse handler
         self.page_control_frame: Optional[PageControlFrame] = None
+        
+        # Log throttling for mouse events
+        self._wheel_log_throttle = LogThrottle(min_interval=1.0)
 
         # Setup UI
         self._setup_ui()
@@ -315,7 +324,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._create_page_control_frame(self.page_count)
             
             # Initialize mouse handler with the transform data
-            self.pdf_mouse_handler.initialize_mouse_handler()
+            self._initialize_mouse_handler()
             
             # Set up mouse events for canvas operations
             self._setup_mouse_events()
@@ -400,8 +409,30 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Check if PNG file exists
             if png_path.exists():
                 try:
-                    # Open the PNG file
-                    img = Image.open(png_path)
+                    # Check if image is in cache first
+                    cached_img = self.image_cache.get(str(png_path))
+                    
+                    if cached_img:
+                        # Use cached image
+                        img = cached_img
+                        logger.debug(message_manager.get_log_message("L484", str(img.width), str(img.height), img.mode))
+                        logger.debug(f"Using cached image for {png_path}")
+                    else:
+                        # Open the PNG file and add to cache
+                        img = Image.open(png_path)
+                        # Add to cache for future use
+                        self.image_cache.put(str(png_path), img)
+                        
+                        # Log cache statistics periodically
+                        if self.current_page_index % 5 == 0:  # Log every 5 pages
+                            cache_info = self.image_cache.get_cache_info()
+                            logger.info(message_manager.get_log_message("L494", 
+                                                                     f"{cache_info['size_mb']:.2f}", 
+                                                                     str(cache_info['item_count']), 
+                                                                     f"{cache_info['hit_rate']:.2f}"))
+                    
+                    # Log PNG file details including dimensions and mode
+                    logger.debug(message_manager.get_log_message("L484", str(img.width), str(img.height), img.mode))
                     
                     # Only log file loading - skip the file searching log to avoid consecutive logs
                     # Use L373 message code which indicates PNG file loading
@@ -429,19 +460,50 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     
                     # Apply transformations - these will be used in future implementations
                     if self.current_page_index < len(self.base_transform_data):
-                        _, tx, ty, scale = self.base_transform_data[self.current_page_index]  # rotation is not used
+                        rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
                     else:
-                        _, tx, ty, scale = 0.0, 0.0, 0.0, 1.0  # rotation is not used
+                        rotation, tx, ty, scale = 0.0, 0.0, 0.0, 1.0
+                    
+                    # Log the original scale factor before any modifications
+                    logger.debug(message_manager.get_log_message("L485", str(scale), str(scale)))
                         
                     # Apply scale factor from mouse wheel zoom if available
                     if hasattr(self, 'scale_factor'):
+                        # Store original scale for logging
+                        original_scale = scale
+                        
                         # Combine the base scale with the zoom scale factor
                         scale *= self.scale_factor
+                        
+                        # Log scale factor before and after application
+                        logger.debug(message_manager.get_log_message("L485", str(original_scale), str(scale)))
+                        
                         # Use global zoom_throttle instead of creating a new instance
                         from utils.log_throttle import zoom_throttle
                         if zoom_throttle.should_log("zoom_factor", throttle_key="zoom_factor"):
-                            # Use L422 message code which is for zoom factor and [PNG] category
-                            logger.debug(message_manager.get_log_message("L422", str(scale)))
+                            # Use L407 message code which is for zoom factor log throttle interval
+                            logger.debug(message_manager.get_log_message("L407", str(scale)))
+                    
+                    # Log the final transformation values that will be applied
+                    logger.debug(message_manager.get_log_message("L486", str(rotation), str(tx), str(ty), str(scale)))
+                    
+                    # Actually apply transformations to the image
+                    if scale != 1.0:
+                        # Calculate new dimensions based on scale factor
+                        new_width = int(img.width * scale)
+                        new_height = int(img.height * scale)
+                        
+                        # Resize the image using the calculated dimensions
+                        # Use LANCZOS resampling for better quality
+                        img = img.resize((new_width, new_height), Image.LANCZOS)
+                        logger.debug(f"[DEBUG] Image resized to {new_width}x{new_height} with scale={scale}")
+                    
+                    # Apply rotation if needed
+                    if rotation != 0.0:
+                        # Rotate the image
+                        # Use expand=True to ensure the entire rotated image is visible
+                        img = img.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+                        logger.debug(f"[DEBUG] Image rotated by {rotation} degrees")
                     
                     # Get canvas dimensions
                     canvas_width = self.canvas.winfo_width()
@@ -451,17 +513,96 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     photo_image = ImageTk.PhotoImage(img)
                     self.photo_image = photo_image  # Keep reference to prevent garbage collection
                     
-                    # Clear canvas
-                    self.canvas.delete("all")
+                    # Store UI elements that should be preserved during rotation mode
+                    preserved_items = []
+                    
+                    # Check if mouse handler exists and is in rotation mode
+                    in_rotation_mode = False
+                    if hasattr(self, 'mouse_handler') and self.mouse_handler:
+                        # Check if the mouse handler has rotation mode attribute and it's True
+                        if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_mode'):
+                            in_rotation_mode = self.mouse_handler._MouseEventHandler__rotation_mode
+                    
+                    # If in rotation mode, preserve UI elements
+                    if in_rotation_mode and self.mouse_handler:
+                        # Get all canvas items
+                        all_items = self.canvas.find_all()
+                        
+                        for item_id in all_items:
+                            # Check if this is a rotation-related UI element by checking tags
+                            tags = self.canvas.gettags(item_id)
+                            # Skip the image itself
+                            if 'pdf_image' not in tags:
+                                # Store item properties for recreation
+                                item_type = self.canvas.type(item_id)
+                                coords = self.canvas.coords(item_id)
+                                options = {}
+                                
+                                # Get all configuration options for this item
+                                if item_type == 'oval':
+                                    options['fill'] = self.canvas.itemcget(item_id, 'fill')
+                                    options['outline'] = self.canvas.itemcget(item_id, 'outline')
+                                    options['width'] = self.canvas.itemcget(item_id, 'width')
+                                elif item_type == 'text':
+                                    options['text'] = self.canvas.itemcget(item_id, 'text')
+                                    options['fill'] = self.canvas.itemcget(item_id, 'fill')
+                                    options['font'] = self.canvas.itemcget(item_id, 'font')
+                                    options['anchor'] = self.canvas.itemcget(item_id, 'anchor')
+                                elif item_type == 'rectangle':
+                                    options['fill'] = self.canvas.itemcget(item_id, 'fill')
+                                    options['outline'] = self.canvas.itemcget(item_id, 'outline')
+                                    options['width'] = self.canvas.itemcget(item_id, 'width')
+                                
+                                # Store item for recreation
+                                preserved_items.append((item_type, coords, options, tags))
+                    
+                    # Clear canvas but only remove the image
+                    self.canvas.delete("pdf_image")
                     
                     # Display the image on the canvas with transformations applied
                     # Center the image and apply translation
                     # For PDF operation tab, set transparency to 0% (fully opaque)
-                    self.canvas.create_image(
+                    image_id = self.canvas.create_image(
                         canvas_width // 2 + tx, canvas_height // 2 + ty,
                         image=photo_image,
                         tags="pdf_image"
                     )
+                    
+                    # Lower the image to ensure it's behind all UI elements
+                    self.canvas.lower(image_id)
+                    
+                    # Recreate preserved items if in rotation mode
+                    # Store the recreated item IDs for potential future use
+                    recreated_item_ids = []
+                    for item_type, coords, options, tags in preserved_items:
+                        if item_type == 'oval':
+                            item_id = self.canvas.create_oval(
+                                *coords,
+                                fill=options['fill'],
+                                outline=options['outline'],
+                                width=options['width'],
+                                tags=tags
+                            )
+                            recreated_item_ids.append(item_id)
+                        elif item_type == 'text':
+                            item_id = self.canvas.create_text(
+                                *coords,
+                                text=options['text'],
+                                fill=options['fill'],
+                                font=options['font'],
+                                anchor=options['anchor'],
+                                tags=tags
+                            )
+                            recreated_item_ids.append(item_id)
+                        elif item_type == 'rectangle':
+                            item_id = self.canvas.create_rectangle(
+                                *coords,
+                                fill=options['fill'],
+                                outline=options['outline'],
+                                width=options['width'],
+                                tags=tags
+                            )
+                            recreated_item_ids.append(item_id)
                     
                     # Log the final position where the image is displayed on the canvas
                     # Use throttling to avoid excessive logging during page navigation
@@ -497,8 +638,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     # Force update of total pages to ensure it's displayed
                     self.page_control_frame.current_file_page_amount.set(self.page_count)
                 
-            # Update mouse handler
-            if hasattr(self, 'pdf_mouse_handler') and self.pdf_mouse_handler and self.pdf_mouse_handler.mouse_handler:
+            # Update mouse handler only if page actually changed
+            if hasattr(self, 'mouse_handler') and self.mouse_handler and previous_page_index != page_index:
                 # Create visibility layer dictionary (0=base, 1=comp)
                 visible_layers = {}
                 visible_layers[0] = True  # Base is visible
@@ -506,7 +647,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 
                 # Update mouse handler with correct parameters
                 try:
-                    self.pdf_mouse_handler.mouse_handler.update_state(
+                    self.mouse_handler.update_state(
                         current_page_index=page_index,
                         visible_layers=visible_layers
                     )
@@ -584,6 +725,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 on_transform_update=self._on_transform_update
             )
             
+            # Attach to canvas for visual feedback and event handling
+            self.mouse_handler.attach_to_canvas(self.canvas)
+            
             # Log successful initialization
             logger.debug(message_manager.get_log_message("L175"))
         except Exception as e:
@@ -592,179 +736,96 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             import traceback
             logger.error(traceback.format_exc())
 
-    def _on_mouse_wheel(self, event: Any) -> None:
-        """Handle mouse wheel events for zooming in/out by delegating to MouseEventHandler.
-        
-        Args:
-            event: Mouse wheel event
-        """
-        try:
-            # Initialize mouse handler if not already created
-            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                self._initialize_mouse_handler()
-                
-            # Safety check - return if mouse handler is still not available
-            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                logger.warning(message_manager.get_log_message("L300", "Mouse handler not initialized"))
-                return
-                
-            # Get the delta - Windows uses event.delta
-            # Normalize the delta for consistent behavior
-            delta = event.delta if hasattr(event, 'delta') else 0
-            
-            # For Linux/Unix platforms
-            if hasattr(event, 'num'):
-                if event.num == 4:  # Scroll up
-                    delta = 120
-                elif event.num == 5:  # Scroll down
-                    delta = -120
-            
-            # Get mouse position for centered zoom
-            mouse_x = event.x
-            mouse_y = event.y
-                    
-            # Calculate zoom factor based on delta
-            zoom_factor = 1.0
-            if delta > 0:
-                # Zoom in (make larger)
-                zoom_factor = 1.1  # Increase by 10%
-            elif delta < 0:
-                # Zoom out (make smaller)
-                zoom_factor = 0.9  # Decrease by 10%
-                
-            # Log zoom factor for debugging
-            logger.debug(message_manager.get_log_message("L301", str(zoom_factor)))
-            
-            # Apply zoom to current page
-            if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
-                # Get current transformation
-                rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
-                
-                # Apply zoom factor to scale
-                new_scale = scale * zoom_factor
-                
-                # Limit scale to reasonable bounds (0.1 to 10.0)
-                new_scale = max(0.1, min(10.0, new_scale))
-                
-                # Calculate new translation to zoom toward mouse position
-                # This makes the zoom feel more natural by zooming toward cursor
-                canvas_width = self.canvas.winfo_width()
-                canvas_height = self.canvas.winfo_height()
-                
-                # Adjust translation based on zoom factor and mouse position
-                # This keeps the point under the mouse in the same position after zooming
-                if canvas_width > 0 and canvas_height > 0:  # Avoid division by zero
-                    # Calculate relative position of mouse in canvas (0.0 to 1.0)
-                    rel_x = mouse_x / canvas_width
-                    rel_y = mouse_y / canvas_height
-                    
-                    # Calculate zoom adjustment factor
-                    zoom_adj = 1.0 - zoom_factor
-                    
-                    # Adjust translation to keep point under mouse stable
-                    new_tx = tx + (canvas_width * rel_x * zoom_adj)
-                    new_ty = ty + (canvas_height * rel_y * zoom_adj)
-                else:
-                    new_tx = tx
-                    new_ty = ty
-                
-                # Update transformation data
-                self.base_transform_data[self.current_page_index] = (rotation, new_tx, new_ty, new_scale)
-                
-                # Update mouse handler state
-                if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
-                    self.mouse_handler.update_state(
-                        current_page_index=self.current_page_index,
-                        visible_layers={0: True}
-                    )
-                
-                # Update display
-                self._on_transform_update()
-                
-                # Store the scale factor for other methods to use
-                self.scale_factor = new_scale
-                
-            # Log successful mouse wheel event processing
-            logger.debug(message_manager.get_log_message("L299"))
-                
-        except Exception as e:
-            # Always log errors regardless of throttling
-            logger.error(message_manager.get_log_message("L302", str(e)))
-            import traceback
-            logger.error(traceback.format_exc())
-            logger.error(message_manager.get_log_message("L300", str(e)))
-        
-        # Prevent event propagation to ensure our handler is the only one processing it
-        return "break"
+    # _on_mouse_wheel method has been removed as its functionality is now handled by MouseEventHandler.on_mouse_wheel
 
     def _rebind_mouse_wheel(self) -> None:
-        """Rebind mouse wheel event bindings."""
-        # Ensure mouse handler is initialized before binding events
+        """Rebind mouse wheel event bindings.
+        
+        This method sets up mouse wheel event bindings for zoom functionality.
+        It includes platform-specific bindings and error handling to ensure
+        robust operation across different environments.
+        """
+        # Create mouse handler if it doesn't exist
         if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-            self._initialize_mouse_handler()
+            try:
+                self._initialize_mouse_handler()
+            except Exception as ex:
+                # Log initialization error with specific error code
+                logger.error(message_manager.get_log_message("L287", f"Failed to initialize mouse handler: {str(ex)}"))
+                return  # Exit if initialization fails
             
-        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
-        self.canvas.bind("<Button-4>", self._on_mouse_wheel)    # Linux UP
-        self.canvas.bind("<Button-5>", self._on_mouse_wheel)    # Linux DOWN
-        
-    def _zoom_in(self, mouse_x: int, mouse_y: int) -> None:
-        """Zoom in on the PDF at the specified mouse position.
-        
-        Args:
-            mouse_x: X coordinate of the mouse position
-            mouse_y: Y coordinate of the mouse position
-        """
-        # Check if PDF is loaded
-        if not hasattr(self, 'file_path_info') or not self.file_path_info:
-            logger.warning(message_manager.get_log_message("L289"))
-            return
+        # Create a wrapper function for mouse wheel events with improved error handling
+        def on_mouse_wheel_wrapper_zoom(e):
+            # Use throttle to reduce excessive logging
+            log_event = self._wheel_log_throttle.should_log("wheel_zoom", throttle_key="mouse_wheel")
             
-        # Check if we have a current scale factor
-        if not hasattr(self, 'scale_factor'):
-            self.scale_factor = 1.0
+            try:
+                # Ensure canvas has focus for wheel events
+                self.canvas.focus_set()
+                
+                # Verify all required components are available
+                if (hasattr(self, 'mouse_handler') and self.mouse_handler and 
+                    hasattr(self, 'base_transform_data') and 
+                    hasattr(self, 'current_page_index')):
+                    
+                    # Create the single layer data format expected by MouseEventHandler.on_mouse_wheel
+                    single_layer_data = [
+                        self.current_page_index,
+                        self.base_transform_data,
+                        True,  # Visible
+                        self._on_transform_update  # Callback function
+                    ]
+                    
+                    # If logging is allowed, log the event with more detailed information
+                    if log_event:
+                        # Log mouse wheel event detection
+                        logger.debug(message_manager.get_log_message("L424", self.current_page_index + 1))
+                        # Log that we're about to call the zoom method
+                        logger.debug(message_manager.get_log_message("L467", "on_mouse_wheel"))
+                    
+                    # Process the wheel event
+                    result = self.mouse_handler.on_mouse_wheel(e, single_layer_data)
+                    
+                    # Log successful zoom operation
+                    if log_event:
+                        logger.debug(message_manager.get_log_message("L468"))
+                        
+                    return result
+                else:
+                    # Only log missing components if throttling allows
+                    if log_event:
+                        logger.warning(message_manager.get_log_message("L287", "Missing required components for mouse wheel handling"))
+            except Exception as ex:
+                # Only log errors if throttling allows to prevent log flooding
+                if log_event:
+                    logger.error(message_manager.get_log_message("L287", f"Mouse wheel error: {str(ex)}"))
+            return None
             
-        # Increase scale factor (zoom in)
-        self.scale_factor *= 1.1  # Increase by 10%
+        # Unbind any existing wheel bindings first to prevent duplicates
+        try:
+            self.canvas.unbind("<MouseWheel>")
+            self.canvas.unbind("<Button-4>")
+            self.canvas.unbind("<Button-5>")
+        except Exception as ex:
+            logger.warning(message_manager.get_log_message("L287", f"Failed to unbind mouse wheel events: {str(ex)}"))
         
-        # Limit maximum zoom level
-        self.scale_factor = min(self.scale_factor, 5.0)
-        
-        # Log zoom level change
-        logger.debug(message_manager.get_log_message("L301", str(self.scale_factor)))
-        
-        # Redisplay the current page with the new scale factor
-        self._display_page(self.current_page_index)
-        
-    def _zoom_out(self, mouse_x: int, mouse_y: int) -> None:
-        """Zoom out on the PDF at the specified mouse position.
-        
-        Args:
-            mouse_x: X coordinate of the mouse position
-            mouse_y: Y coordinate of the mouse position
-        """
-        # Check if PDF is loaded
-        if not hasattr(self, 'file_path_info') or not self.file_path_info:
-            logger.warning(message_manager.get_log_message("L289"))
-            return
+        # Bind wheel events for all platforms with error handling
+        try:
+            self.canvas.bind("<MouseWheel>", on_mouse_wheel_wrapper_zoom)  # Windows
+            self.canvas.bind("<Button-4>", on_mouse_wheel_wrapper_zoom)    # Linux scroll up
+            self.canvas.bind("<Button-5>", on_mouse_wheel_wrapper_zoom)    # Linux scroll down
             
-        # Check if we have a current scale factor
-        if not hasattr(self, 'scale_factor'):
-            self.scale_factor = 1.0
-            
-        # Decrease scale factor (zoom out)
-        self.scale_factor *= 0.9  # Decrease by 10%
+            # Log wheel binding with throttling
+            if self._wheel_log_throttle.should_log("wheel_binding", throttle_key="mouse_wheel"):
+                logger.debug(message_manager.get_log_message("L431"))
+        except Exception as ex:
+            logger.error(message_manager.get_log_message("L287", f"Failed to bind mouse wheel events: {str(ex)}"))
         
-        # Limit minimum zoom level
-        self.scale_factor = max(self.scale_factor, 0.2)
-        
-        # Log zoom level change
-        logger.debug(message_manager.get_log_message("L301", str(self.scale_factor)))
-        
-        # Redisplay the current page with the new scale factor
-        self._display_page(self.current_page_index)
+    # _zoom_in and _zoom_out methods have been removed and integrated with MouseEventHandler
         
     def _on_next_page(self) -> None:
         """Go to next page."""
+# ... (rest of the code remains the same)
         # Check if PDF is loaded
         if not hasattr(self, 'file_path_info') or not self.file_path_info:
             # Log attempt to navigate when no PDF is loaded
@@ -836,129 +897,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             messagebox.showerror(message_manager.get_ui_message("U056"), 
                                message_manager.get_ui_message("U060") + str(e))
         
-    def _setup_mouse_events(self, page_count: int) -> None:
-        """Set up mouse events for canvas operations.
-        
-        Args:
-            page_count: Number of pages in the PDF
-        """
-        # Create layer transform data dictionary
-        layer_transform_data = {
-            0: self.base_transform_data,  # Layer 0 = base
-        }
-        
-        # Create visibility layer dictionary
-        visible_layers = {
-            0: True,  # Base is visible
-        }
-        
-        # Clear any existing mouse handler
-        if self.mouse_handler is not None:
-            # Remove existing bindings
-            self.canvas.unbind("<Button-1>")
-            self.canvas.unbind("<B1-Motion>")
-            self.canvas.unbind("<ButtonRelease-1>")
-            self.canvas.unbind("<Button-3>")
-            
-        # Create a new mouse event handler with the required parameters
-        mouse_handler = MouseEventHandler(
-            layer_transform_data=layer_transform_data,
-            current_page_index=self.current_page_index,
-            visible_layers=visible_layers,
-            on_transform_update=self._on_transform_update
-        )
-        
-        # Attach mouse handler to canvas
-        mouse_handler.attach_to_canvas(self.canvas)
-        
-        # Update the mouse handler state with current page data
-        mouse_handler.update_state(
-            current_page_index=self.current_page_index,
-            visible_layers=visible_layers
-        )
-        
-        # Store the mouse handler
-        self.mouse_handler = mouse_handler
-        
-        # Log PDF page count
-        logger.info(message_manager.get_log_message("L318", page_count))
-        
-        # Make canvas focusable for keyboard events
-        self.canvas.config(takefocus=1)
-        
-        # Set initial focus to the canvas to ensure keyboard events work
-        self.canvas.focus_set()
-        
-        # Explicitly bind mouse events to ensure they work
-        # Use a wrapper function to set focus before handling the event
-        def on_mouse_down_wrapper(e):
-            self.canvas.focus_set()  # Ensure canvas has focus when clicked
-            if self.mouse_handler:
-                return self.mouse_handler.on_mouse_down(e)
-            return None
-            
-        self.canvas.bind("<Button-1>", on_mouse_down_wrapper)
-        self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
-        self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
-        self.canvas.bind("<Button-3>", lambda e: self.mouse_handler.on_right_click(e) if self.mouse_handler and hasattr(self.mouse_handler, 'on_right_click') else None)
-        
-        # MouseWheel events are handled in PDFOperationApp class
-        # Ensure these events also set focus to the canvas
-        def on_mouse_wheel_wrapper(e):
-            self.canvas.focus_set()  # Ensure canvas has focus for wheel events
-            return self._on_mouse_wheel(e)
-            
-        self.canvas.bind("<MouseWheel>", on_mouse_wheel_wrapper)  # Windows
-        self.canvas.bind("<Button-4>", on_mouse_wheel_wrapper)  # Linux scroll up
-        self.canvas.bind("<Button-5>", on_mouse_wheel_wrapper)  # Linux scroll down
-        
-        # Bind key events directly to canvas
-        self.canvas.bind("<Control-KeyPress>", lambda e: logger.debug(message_manager.get_log_message("L303", f"Control key pressed: {e.keysym}")))
-        self.canvas.bind("<KeyRelease>", lambda e: logger.debug(message_manager.get_log_message("L303", f"Key released: {e.keysym}")) if e.keysym in ('Control_L', 'Control_R') else None)
-        
-        # Add key bindings for transform operations
-        self.bind_all("<Control-r>", lambda e: self._reset_transform())
-        
-        # Handle zoom operations via MouseEventHandler
-        def handle_zoom_in(e):
-            # Create mouse handler if needed
-            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                self._initialize_mouse_handler()
-            
-            # Get canvas dimensions
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-            
-            # Create event data for zoom in
-            # We'll simulate a mouse wheel event with positive delta
-            simulated_event = type('obj', (object,), {'delta': 120, 'x': canvas_width//2, 'y': canvas_height//2})
-            
-            # Call mouse wheel handler with simulated event
-            self._on_mouse_wheel(simulated_event)
-        
-        def handle_zoom_out(e):
-            # Create mouse handler if needed
-            if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                self._initialize_mouse_handler()
-            
-            # Get canvas dimensions
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
-            
-            # Create event data for zoom out
-            # We'll simulate a mouse wheel event with negative delta
-            simulated_event = type('obj', (object,), {'delta': -120, 'x': canvas_width//2, 'y': canvas_height//2})
-            
-            # Call mouse wheel handler with simulated event
-            self._on_mouse_wheel(simulated_event)
-        
-        # Bind zoom keyboard shortcuts
-        self.bind_all("<Control-plus>", handle_zoom_in)
-        self.bind_all("<Control-minus>", handle_zoom_out)
-        self.bind_all("<Control-equal>", handle_zoom_in)  # For keyboards where + is on the = key
-        
-        # Log event binding
-        logger.info(message_manager.get_log_message("L302"))
+    # This method has been merged with the other _setup_mouse_events method at line ~1228
 
     # _on_transform_update method is defined later in the class
     
@@ -1160,14 +1099,198 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Log error
             logger.error(message_manager.get_log_message("L067", str(e)))
             
-    # Mouse handler initialization has been moved to PDFMouseHandler class
-    
-    def _setup_mouse_events(self) -> None:
-        """Set up mouse events for canvas operations."""
-        # Use the new PDF mouse handler to set up mouse events
-        self.pdf_mouse_handler.setup_mouse_events()
 
-    # Mouse event handling methods have been moved to PDFMouseHandler class
+    
+    def destroy(self) -> None:
+        """Clean up resources before destroying the widget.
+        
+        This method ensures all timers are cancelled and resources are properly released
+        when the application is closed, preventing memory leaks and CPU usage after exit.
+        """
+        try:
+            # Cancel all pending after() timers in mouse handler
+            if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
+                # Cancel hide timers
+                for after_id in self.mouse_handler._hide_after_ids:
+                    if self.canvas:
+                        try:
+                            self.canvas.after_cancel(after_id)
+                        except Exception:
+                            pass  # Ignore if already cancelled
+                self.mouse_handler._hide_after_ids.clear()
+            
+            # Call parent destroy method
+            super().destroy()
+            
+            # Log successful cleanup
+            logger.debug(message_manager.get_log_message("L067", "PDFOperationApp destroyed successfully"))
+        except Exception as e:
+            # Log error during cleanup
+            logger.error(message_manager.get_log_message("L067", f"Error during PDFOperationApp destroy: {str(e)}"))
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def _setup_mouse_events(self, page_count: int | None = None) -> None:
+        """Set up mouse events for canvas operations.
+        
+        Args:
+            page_count: Number of pages in the PDF (optional)
+        """
+        try:
+            # Use page_count if provided, otherwise use existing value
+            if page_count is None:
+                page_count = getattr(self, 'page_count', 0)
+                
+            # Initialize mouse handler if not already initialized
+            if self.mouse_handler is None:
+                self._initialize_mouse_handler()
+            
+            # Create visibility layer dictionary
+            visible_layers = {
+                0: True,  # Base is visible
+            }
+            
+            # Create layer transform data dictionary for the mouse handler
+            # This will be used when initializing or updating the mouse handler
+            layer_transform_data = {
+                0: self.base_transform_data,  # Layer 0 = base
+            }
+            
+            # Update the mouse handler with the layer transform data if it exists
+            if self.mouse_handler is not None and hasattr(self.mouse_handler, 'update_state'):
+                self.mouse_handler.update_state(
+                    current_page_index=self.current_page_index,
+                    visible_layers=visible_layers,
+                    layer_transform_data=layer_transform_data
+                )
+            
+            # Clear any existing mouse handler bindings
+            if self.mouse_handler is not None:
+                # Remove existing bindings
+                self.canvas.unbind("<Button-1>")
+                self.canvas.unbind("<B1-Motion>")
+                self.canvas.unbind("<ButtonRelease-1>")
+                self.canvas.unbind("<Button-3>")
+                self.canvas.unbind("<KeyPress>")
+                self.canvas.unbind("<KeyRelease>")
+            
+            # Update the mouse handler state with current page data if it exists
+            if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
+                self.mouse_handler.update_state(
+                    current_page_index=self.current_page_index,
+                    visible_layers=visible_layers
+                )
+            
+            # Make canvas focusable to receive keyboard events
+            self.canvas.config(takefocus=1)
+            
+            # Set initial focus to the canvas to ensure keyboard events work
+            self.canvas.focus_set()
+            
+            # Explicitly bind mouse events to ensure they work
+            # Use a wrapper function to set focus before handling the event
+            def on_mouse_down_wrapper(e):
+                self.canvas.focus_set()  # Ensure canvas has focus when clicked
+                if self.mouse_handler:
+                    return self.mouse_handler.on_mouse_down(e)
+                return None
+                
+            # Bind mouse events to canvas
+            self.canvas.bind("<Button-1>", on_mouse_down_wrapper)
+            self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
+            self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+            
+            # Bind keyboard shortcuts
+            self.canvas.bind("<KeyPress>", self._on_key_press)
+            self.canvas.bind("<KeyRelease>", self._on_key_release)
+            
+            # Bind mouse wheel for zooming
+            self._rebind_mouse_wheel()
+            
+            # Add key bindings for transform operations
+            self.bind_all("<Control-r>", lambda e: self._reset_transform())
+            
+            # Use MouseEventHandler's handle_zoom_shortcut method for zoom operations
+            def handle_zoom_in(e):
+                # Create mouse handler if needed
+                if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                    self._initialize_mouse_handler()
+                
+                # Use the mouse wheel handler with appropriate zoom factor
+                if self.mouse_handler and hasattr(self.mouse_handler, 'on_mouse_wheel'):
+                    # Create a synthetic event with positive delta for zoom in
+                    e.delta = 120  # Positive delta for zoom in
+                    self.mouse_handler.on_mouse_wheel(e)
+            
+            def handle_zoom_out(e):
+                # Create mouse handler if needed
+                if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
+                    self._initialize_mouse_handler()
+                
+                # Use the mouse wheel handler with appropriate zoom factor
+                if self.mouse_handler and hasattr(self.mouse_handler, 'on_mouse_wheel'):
+                    # Create a synthetic event with negative delta for zoom out
+                    e.delta = -120  # Negative delta for zoom out
+                    self.mouse_handler.on_mouse_wheel(e)
+            
+            # Bind zoom keyboard shortcuts
+            self.bind_all("<Control-plus>", handle_zoom_in)
+            self.bind_all("<Control-minus>", handle_zoom_out)
+            self.bind_all("<Control-equal>", handle_zoom_in)  # For keyboards where + is on the = key
+            
+            # Log successful setup
+            logger.debug(message_manager.get_log_message("L422", "From _setup_mouse_events method"))
+            
+            # Log PDF page count if available
+            if page_count > 0:
+                logger.info(message_manager.get_log_message("L318", page_count))
+                
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L423", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def _on_mouse_down(self, event: tk.Event) -> None:
+        """Handle mouse button press event."""
+        if self.mouse_handler:
+            self.mouse_handler.on_mouse_down(event)
+    
+    def _on_mouse_drag(self, event: tk.Event) -> None:
+        """Handle mouse drag event."""
+        if self.mouse_handler:
+            self.mouse_handler.on_mouse_drag(event)
+    
+    def _on_mouse_up(self, event: tk.Event) -> None:
+        """Handle mouse button release event."""
+        if self.mouse_handler:
+            self.mouse_handler.on_mouse_up(event)
+            
+    def _on_key_press(self, event: tk.Event) -> None:
+        """Handle keyboard press events."""
+        if self.mouse_handler:
+            self.mouse_handler.on_key_press(event)
+            
+    def _on_key_release(self, event: tk.Event) -> None:
+        """Handle keyboard release events."""
+        if self.mouse_handler and hasattr(self.mouse_handler, 'on_key_release'):
+            self.mouse_handler.on_key_release(event)
+            
+    def _on_mouse_wheel(self, event: tk.Event) -> None:
+        """Handle mouse wheel events for zooming."""
+        try:
+            # Log wheel event with throttling
+            if self._wheel_log_throttle.should_log("wheel_event"):
+                delta = event.delta if hasattr(event, 'delta') else 0
+                logger.debug(message_manager.get_log_message("L424", f"delta={delta}"))
+                
+            # Forward event to mouse handler
+            if self.mouse_handler and self.current_page_index < len(self.base_transform_data):
+                # Call mouse handler's on_mouse_wheel method
+                self.mouse_handler.on_mouse_wheel(event)
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L425", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
 
     def _on_transform_update(self) -> None:
         """Callback when transform data is updated."""
@@ -1177,6 +1300,89 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 _, _, _, scale = self.base_transform_data[self.current_page_index]
                 self.scale_factor = scale
                 
+            # Log memory usage before garbage collection
+            if sys.platform == 'win32':
+                import psutil
+                process = psutil.Process(os.getpid())
+                memory_before = process.memory_info().rss / (1024 * 1024)
+                logger.debug(f"Memory usage before GC: {memory_before:.2f}MB")
+            
+            # Enhanced memory management to ensure proper resource cleanup
+            # First, clear any references that might be keeping objects alive
+            if hasattr(self, 'image_cache'):
+                # Mark unused images for deletion
+                self.image_cache.mark_unused()
+            
+            # Force full garbage collection with generational cleanup
+            # Generation 2 is the oldest generation and contains long-lived objects
+            gc.collect(2)  # Collect oldest generation first
+            gc.collect(1)  # Then middle generation
+            gc.collect(0)  # Finally, youngest generation
+            
+            # Additional steps to ensure memory is released back to the OS
+            if sys.platform == 'win32':
+                # On Windows, explicitly request memory compaction
+                ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, -1)
+            
+            # Log memory usage after garbage collection
+            if sys.platform == 'win32':
+                memory_after = process.memory_info().rss / (1024 * 1024)
+                logger.debug(f"Memory usage after GC: {memory_after:.2f}MB, Freed: {memory_before - memory_after:.2f}MB")
+                
+            # Redisplay the current page with updated transformations
+            self._display_page(self.current_page_index)
+            
+            # Log cache statistics periodically during transformations
+            if hasattr(self, 'image_cache'):
+                # Only log every few operations to avoid excessive logging
+                if not hasattr(self, '_transform_count'):
+                    self._transform_count = 0
+                self._transform_count += 1
+                
+                if self._transform_count % 10 == 0:  # Log every 10 transformations
+                    cache_info = self.image_cache.get_cache_info()
+                    logger.info(message_manager.get_log_message("L494", 
+                                                             f"{cache_info['size_mb']:.2f}", 
+                                                             str(cache_info['item_count']), 
+                                                             f"{cache_info['hit_rate']:.2f}"))
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L406", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
+            
+    def update_image_transform(self, rotation: float = 0.0, tx: float = 0.0, ty: float = 0.0, scale: float = 1.0) -> None:
+        """Update image transformation parameters and redisplay the current page.
+        
+        This method updates the transformation data for the current page and triggers
+        a redisplay of the page with the new transformation applied.
+        
+        Args:
+            rotation (float): Rotation angle in degrees (default: 0.0)
+            tx (float): X-axis translation (default: 0.0)
+            ty (float): Y-axis translation (default: 0.0)
+            scale (float): Scale factor (default: 1.0)
+        """
+        try:
+            # Ensure we have valid base_transform_data
+            if not hasattr(self, 'base_transform_data') or not self.base_transform_data:
+                logger.warning(message_manager.get_log_message("L344", "no_transform_data_available"))
+                return
+                
+            # Ensure current_page_index is valid
+            if not hasattr(self, 'current_page_index') or self.current_page_index < 0 or self.current_page_index >= len(self.base_transform_data):
+                logger.warning(message_manager.get_log_message("L344", "invalid_page_index"))
+                return
+                
+            # Update transformation data for the current page
+            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+            
+            # Store scale factor for use in _display_page
+            self.scale_factor = scale
+            
+            # Log the transformation update
+            logger.debug(message_manager.get_log_message("L344", 
+                f"update_image_transform: rotation={rotation}, tx={tx}, ty={ty}, scale={scale}"))
+            
             # Redisplay the current page with updated transformations
             self._display_page(self.current_page_index)
         except Exception as e:

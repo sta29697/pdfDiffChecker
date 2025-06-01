@@ -10,6 +10,7 @@ from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import WidgetsTracker
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
+from configurations.tool_settings import font_family, font_size
 
 logger = getLogger(__name__)
 # Initialize singleton message manager
@@ -54,7 +55,8 @@ class CustomMessageBox(tk.Toplevel, ColoringThemeIF):
         self.attributes("-topmost", True)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.color_key = color_key
-        self.label = tk.Label(self, text=message, justify=tk.LEFT, font=("Arial", 10))
+        # Use font settings from tool_settings for consistent UI appearance
+        self.label = tk.Label(self, text=message, justify=tk.LEFT, font=(font_family, font_size))
         self.label.pack(padx=12, pady=8)
         self.button = tk.Button(self, text="OK", command=self.destroy)
         self.button.pack(pady=(0, 8))

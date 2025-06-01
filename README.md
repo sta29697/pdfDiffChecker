@@ -28,12 +28,13 @@ A Tkinter-based application for comparing PDF files page by page, supporting adv
 - pytest-cov >= 4.0.0
 - pypdfium2
 - pypdf
+- psutil
 
 ## Usage
 1. Install dependencies:
    ```sh
    python -m pip install --upgrade pip
-   pip install numpy pillow pdf2image tkinterdnd2 matplotlib pytest-cov pypdfium2 pypdf
+   pip install numpy pillow pdf2image tkinterdnd2 matplotlib pytest-cov pypdfium2 pypdf psutil
    ```
 2. Run the application:
    ```sh

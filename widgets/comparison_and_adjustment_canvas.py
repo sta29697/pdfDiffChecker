@@ -154,47 +154,27 @@ class PDFCompareCanvas(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_transform_update=self.__show_current_page
         )
         
-        # Attach mouse handler to canvas for keyboard shortcuts
+        # Attach mouse handler to canvas for all mouse and keyboard events
+        # This handles all necessary event bindings internally
         self.__mouse_handler.attach_to_canvas(self.__canvas)
-
-        # Bind mouse events
-        self.__bind_mouse_events()
 
     def __bind_mouse_events(self) -> None:
         """Bind mouse events to the canvas."""
         try:
-            # Use simple and direct event handlers
-            def on_click(e: tk.Event) -> None:
-                logger.debug("Mouse down event triggered")
-                self.__canvas.focus_set()
-                self.__mouse_handler.on_mouse_down(e)
+            if self.__canvas and self.__mouse_handler:
+                # Use the mouse handler's attach_to_canvas method to bind all events
+                # This centralizes all event binding in the MouseEventHandler class
+                self.__mouse_handler.attach_to_canvas(self.__canvas)
                 
-            def on_drag(e: tk.Event) -> None:
-                logger.debug("Mouse drag event triggered")
-                self.__mouse_handler.on_mouse_drag(e)
+                # Log successful binding
+                logger.debug("Mouse events bound successfully via MouseEventHandler")
                 
-            def on_release(e: tk.Event) -> None:
-                logger.debug("Mouse release event triggered")
-                self.__mouse_handler.on_mouse_up(e)
-                
-            def on_wheel(e: tk.Event) -> None:
-                logger.debug("Mouse wheel event triggered")
-                self.__mouse_handler.on_mouse_wheel(e)
-            
-            # Perform bindings
-            self.__canvas.bind("<Button-1>", on_click)
-            self.__canvas.bind("<B1-Motion>", on_drag)
-            self.__canvas.bind("<ButtonRelease-1>", on_release)
-            self.__canvas.bind("<MouseWheel>", on_wheel)
-            
-            # Make canvas focusable
-            self.__canvas.config(takefocus=1)
-            
-            # Mouse events bound successfully
-            logger.debug(message_manager.get_log_message("L137"))
+                # Note: No need to manually bind events or make canvas focusable
+                # as these are handled by the MouseEventHandler.attach_to_canvas method
+                logger.debug(message_manager.get_log_message("L137"))
         except Exception as e:
             # Failed to bind mouse events: {error}
-            logger.error(message_manager.get_log_message("L067", str(e)))
+            logger.error(message_manager.get_log_message("L067").format(str(e)))
             raise
 
     def __toggle_visibility(self, image_type: str, new_state: bool) -> None:

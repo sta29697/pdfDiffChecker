@@ -1226,10 +1226,6 @@
             "en": "[PDF] Page entry event received",
             "ja": "[PDF] ページ入力イベントを受信しました"
         },
-        "L422": {
-            "en": "[PNG] Current zoom scale: {0}",
-            "ja": "[PNG] 現在のズーム倍率: {0}"
-        },
         "L294": {
             "en": "[UI] Window icon successfully set: {0}",
             "ja": "[UI] ウィンドウアイコンを正常に設定しました: {0}"
@@ -1578,7 +1574,7 @@
             "en": "[PNG] Image dimensions: width={0}, height={1}",
             "ja": "[PNG] 画像の寸法: 幅={0}, 高さ={1}"
         },
-       "L412": {
+        "L412": {
             "en": "[CONTROLLER] Window protocols setup",
             "ja": "[CONTROLLER] ウィンドウプロトコルがセットアップされました"
         },
@@ -1603,12 +1599,408 @@
             "ja": "[PNG] 画像を180度回転中"
         },
         "L418": {
-            "en": "[PNG] Flipping image vertically",
+            "en": "[PNG] Flipped image vertically",
             "ja": "[PNG] 画像を垂直方向に反転中"
         },
         "L419": {
             "en": "[PNG] Flipping image horizontally",
             "ja": "[PNG] 画像を水平方向に反転中"
+        },
+        "L420": {
+            "en": "[MOUSE] Mouse event handler initialized successfully",
+            "ja": "[マウス] マウスイベントハンドラが正常に初期化されました"
+        },
+        "L421": {
+            "en": "[MOUSE] Failed to initialize mouse event handler: {0}",
+            "ja": "[マウス] マウスイベントハンドラの初期化に失敗しました: {0}"
+        },
+        "L422": {
+            "en": "[MOUSE] Mouse events setup completed: {0}",
+            "ja": "[マウス] マウスイベントの設定が完了しました: {0}"
+        },
+        "L423": {
+            "en": "[MOUSE] Rotation mode state check: mode={0}, active={1}, dragging={2}",
+            "ja": "[マウス] 回転モード状態チェック: モード={0}, アクティブ={1}, ドラッグ中={2}"
+        },
+        "L424": {
+            "en": "[MOUSE] Forced rotation mode reset due to inconsistent state",
+            "ja": "[マウス] 不整合状態のため回転モードを強制リセットしました"
+        },
+        "L425": {
+            "en": "[MOUSE] Mouse wheel event error: {0}",
+            "ja": "[マウス] マウスホイールイベントエラー: {0}"
+        },
+        "L426": {
+            "en": "[PDF] Current page index set to {0}",
+            "ja": "[PDF] 現在のページインデックスが {0} に設定されました"
+        },
+        "L427": {
+            "en": "[PDF] Transform updated: layer={0}, page={1}, rotation={2}, tx={3}, ty={4}, scale={5}",
+            "ja": "[PDF] 変換が更新されました: レイヤー={0}, ページ={1}, 回転={2}, tx={3}, ty={4}, スケール={5}"
+        },
+        "L428": {
+            "en": "[MOUSE] Rotation feedback displayed at {0},{1}",
+            "ja": "[マウス] 回転フィードバックが {0},{1} に表示されました"
+        },
+        "L429": {
+            "en": "[MOUSE] Feedback circle hidden",
+            "ja": "[マウス] フィードバックサークルが非表示になりました"
+        },
+        "L430": {
+            "en": "[MOUSE] Guidance text displayed: {0}",
+            "ja": "[マウス] ガイダンステキストが表示されました: {0}"
+        },
+        "L431": {
+            "en": "[MOUSE] Mouse wheel bindings established",
+            "ja": "[マウス] マウスホイールバインディングが確立されました"
+        },
+        "L432": {
+            "en": "[MOUSE] Ctrl key state: {0}",
+            "ja": "[マウス] Ctrlキーの状態: {0}"
+        },
+        "L433": {
+            "en": "[MOUSE] Ctrl key detection error: {0}",
+            "ja": "[マウス] Ctrlキー検出エラー: {0}"
+        },
+        "L434": {
+            "en": "[MOUSE] Rotation mode activated",
+            "ja": "[マウス] 回転モードが有効になりました"
+        },
+        "L435": {
+            "en": "[MOUSE] Rotation mode exited",
+            "ja": "[マウス] 回転モードが終了しました"
+        },
+        "L436": {
+            "en": "[MOUSE] Rotation mode maintained",
+            "ja": "[マウス] 回転モードが維持されています"
+        },
+        "L437": {
+            "en": "[MOUSE] Hide feedback error: {0}",
+            "ja": "[マウス] フィードバック非表示エラー: {0}"
+        },
+        "L438": {
+            "en": "[MOUSE] Mouse wheel event detected",
+            "ja": "[マウス] マウスホイールイベントが検出されました"
+        },
+        "L439": {
+            "en": "[MOUSE] Mouse wheel zoom operation initiated",
+            "ja": "[マウス] マウスホイールによるズーム操作が開始されました"
+        },
+        "L440": {
+            "en": "[MOUSE] Shortcut help resized",
+            "ja": "[マウス] ショートカットヘルプのサイズが変更されました"
+        },
+        "L441": {
+            "en": "[MOUSE] Shortcut help displayed",
+            "ja": "[マウス] ショートカットヘルプが表示されました"
+        },
+        "L442": {
+            "en": "[MOUSE] Using fallback feedback circle display",
+            "ja": "[マウス] フォールバックフィードバックサークル表示を使用しています"
+        },
+        "L443": {
+            "en": "[MOUSE] Guidance text hidden",
+            "ja": "[マウス] ガイダンステキストが非表示になりました"
+        },
+        "L444": {
+            "en": "[MOUSE] Notification displayed: {0}",
+            "ja": "[マウス] 通知が表示されました: {0}"
+        },
+        "L445": {
+            "en": "[MOUSE] Notification hidden",
+            "ja": "[マウス] 通知が非表示になりました"
+        },
+        "L446": {
+            "en": "[MOUSE] Failed to hide notification: {0}",
+            "ja": "[マウス] 通知の非表示に失敗しました: {0}"
+        },
+        "L447": {
+            "en": "[MOUSE] Error deleting notification: {0}",
+            "ja": "[マウス] 通知の削除エラー: {0}"
+        },
+        "L448": {
+            "en": "[MOUSE] Error deleting notification item {0}: {1}",
+            "ja": "[マウス] 通知アイテム{0}の削除エラー: {1}"
+        },
+        "L449": {
+            "en": "[MOUSE] Failed to show notification: {0}",
+            "ja": "[マウス] 通知の表示に失敗しました: {0}"
+        },
+        "L450": {
+            "en": "[MOUSE] Error creating notification: {0}",
+            "ja": "[マウス] 通知の作成エラー: {0}"
+        },
+        "L451": {
+            "en": "[MOUSE] Cannot show notification: canvas reference is None",
+            "ja": "[マウス] 通知を表示できません: キャンバス参照がNoneです"
+        },
+        "L452": {
+            "en": "[MOUSE] Failed to show guidance text: {0}",
+            "ja": "[マウス] ガイダンステキストの表示に失敗しました: {0}"
+        },
+        "L453": {
+            "en": "[MOUSE] Error creating guidance text: {0}",
+            "ja": "[マウス] ガイダンステキストの作成エラー: {0}"
+        },
+        "L454": {
+            "en": "[MOUSE] Cannot show guidance text: canvas reference is None",
+            "ja": "[マウス] ガイダンステキストを表示できません: キャンバス参照がNoneです"
+        },
+        "L455": {
+            "en": "[MOUSE] Failed to show feedback circle: {0}",
+            "ja": "[マウス] フィードバックサークルの表示に失敗しました: {0}"
+        },
+        "L456": {
+            "en": "[MOUSE] Error in regular feedback display: {0}",
+            "ja": "[マウス] 通常フィードバック表示のエラー: {0}"
+        },
+        "L457": {
+            "en": "[MOUSE] Critical error in feedback display: {0}",
+            "ja": "[マウス] フィードバック表示の重大エラー: {0}"
+        },
+        "L458": {
+            "en": "[MOUSE] Error in rotation feedback display: {0}",
+            "ja": "[マウス] 回転フィードバック表示のエラー: {0}"
+        },
+        "L459": {
+            "en": "[MOUSE] Cannot show feedback circle: canvas reference is None",
+            "ja": "[マウス] フィードバックサークルを表示できません: キャンバス参照がNoneです"
+        },
+        "L460": {
+            "en": "[TRANSFORM] TransformationManager initialized",
+            "ja": "[変換] 変換マネージャが初期化されました"
+        },
+        "L461": {
+            "en": "[TRANSFORM] Layer {0} not found",
+            "ja": "[変換] レイヤー {0} が見つかりません"
+        },
+        "L462": {
+            "en": "[TRANSFORM] Page {0} out of range",
+            "ja": "[変換] ページ {0} が範囲外です"
+        },
+        "L463": {
+            "en": "[TRANSFORM] Transform reset: layer={0}, page={1}",
+            "ja": "[変換] 変換がリセットされました: レイヤー={0}, ページ={1}"
+        },
+        "L464": {
+            "en": "[TRANSFORM] All transforms reset",
+            "ja": "[変換] すべての変換がリセットされました"
+        },
+        "L465": {
+            "en": "[TRANSFORM] Layer {0} added with {1} pages",
+            "ja": "[変換] レイヤー {0} が {1} ページで追加されました"
+        },
+        "L466": {
+            "en": "[TRANSFORM] Layer {0} removed",
+            "ja": "[変換] レイヤー {0} が削除されました"
+        },
+        "L467": {
+            "en": "[MOUSE] Calling zoom method: {0}",
+            "ja": "[マウス] ズームメソッドを呼び出します: {0}"
+        },
+        "L468": {
+            "en": "[MOUSE] Zoom method completed successfully",
+            "ja": "[マウス] ズームメソッドが正常に完了しました"
+        },
+        "L469": {
+            "en": "[MOUSE] Single layer zoom processing completed",
+            "ja": "[マウス] 単一レイヤーのズーム処理が完了しました"
+        },
+        "L470": {
+            "en": "[MOUSE] Multi-layer zoom processing completed",
+            "ja": "[マウス] 複数レイヤーのズーム処理が完了しました"
+        },
+        "L471": {
+            "en": "[MOUSE] Scale factor applied to page {0}: {1} -> {2}",
+            "ja": "[マウス] ページ {0} にスケールファクターが適用されました: {1} -> {2}"
+        },
+        "L472": {
+            "en": "[KEYBOARD] Ctrl key detected in key press event",
+            "ja": "[キーボード] Ctrlキーがキープレスイベントで検出されました"
+        },
+        "L473": {
+            "en": "[KEYBOARD] Key detected: {0}",
+            "ja": "[キーボード] キーが検出されました: {0}"
+        },
+        "L474": {
+            "en": "[KEYBOARD] Processing shortcut: Ctrl+{0}",
+            "ja": "[キーボード] ショートカット処理中: Ctrl+{0}"
+        },
+        "L475": {
+            "en": "[KEYBOARD] Shortcut processing completed: Ctrl+{0}",
+            "ja": "[キーボード] ショートカット処理完了: Ctrl+{0}"
+        },
+        "L476": {
+            "en": "[KEYBOARD] Ctrl key released",
+            "ja": "[キーボード] Ctrlキーが離されました"
+        },
+        "L477": {
+            "en": "[ROTATION] Ctrl+Click detected at coordinates: x={0}, y={1}",
+            "ja": "[回転] Ctrl+クリックが座標で検出されました: x={0}, y={1}"
+        },
+        "L478": {
+            "en": "[ROTATION] Feedback circle displayed at coordinates: x={0}, y={1}",
+            "ja": "[回転] フィードバックサークルが座標に表示されました: x={0}, y={1}"
+        },
+        "L479": {
+            "en": "[ROTATION] Entering rotation mode",
+            "ja": "[回転] 回転モードに入りました"
+        },
+        "L480": {
+            "en": "[ROTATION] Click released at coordinates: x={0}, y={1}",
+            "ja": "[回転] クリックが座標で解放されました: x={0}, y={1}"
+        },
+        "L481": {
+            "en": "[ROTATION] Drag detected, movement: dx={0}, dy={1}",
+            "ja": "[回転] ドラッグが検出されました、移動量: dx={0}, dy={1}"
+        },
+        "L482": {
+            "en": "[ROTATION] Rotation method called with angle: {0} degrees",
+            "ja": "[回転] 回転メソッドが角度で呼び出されました: {0}度"
+        },
+        "L483": {
+            "en": "[ROTATION] Exiting rotation mode",
+            "ja": "[回転] 回転モードを終了しました"
+        },
+        "L484": {
+            "en": "[SCALE] PNG file loaded with dimensions: {0}x{1}, mode: {2}",
+            "ja": "[スケール] PNGファイルが読み込まれました。サイズ: {0}x{1}、モード: {2}"
+        },
+        "L485": {
+            "en": "[SCALE] Scale factor before: {0}, after: {1}",
+            "ja": "[スケール] スケールファクター 適用前: {0}、適用後: {1}"
+        },
+        "L486": {
+            "en": "[SCALE] Image transformation applied - rotation: {0}, tx: {1}, ty: {2}, scale: {3}",
+            "ja": "[スケール] 画像変換が適用されました - 回転: {0}, tx: {1}, ty: {2}, スケール: {3}"
+        },
+        "L487": {
+            "en": "[SHORTCUT] Shortcut key detected: {0}",
+            "ja": "[ショートカット] ショートカットキーが検出されました: {0}"
+        },
+        "L488": {
+            "en": "[SHORTCUT] Transformation data before shortcut: {0}",
+            "ja": "[ショートカット] ショートカット適用前の変換データ: {0}"
+        },
+        "L489": {
+            "en": "[SHORTCUT] Transformation data after shortcut: {0}",
+            "ja": "[ショートカット] ショートカット適用後の変換データ: {0}"
+        },
+        "L490": {
+            "en": "[SHORTCUT] Transform update callback executed",
+            "ja": "[ショートカット] 変換更新コールバックが実行されました"
+        },
+        "L491": {
+            "en": "[ROTATION] Feedback circle displayed at x: {0}, y: {1}",
+            "ja": "[回転] フィードバックサークルが表示されました x: {0}, y: {1}"
+        },
+        "L492": {
+            "en": "[ROTATION] Rotation center set to x: {0}, y: {1}",
+            "ja": "[回転] 回転中心が設定されました x: {0}, y: {1}"
+        },
+        "L493": {
+            "en": "[CACHE] Image cache initialized with max size: {0}MB, TTL: {1}s",
+            "ja": "[キャッシュ] 画像キャッシュが初期化されました。最大サイズ: {0}MB、TTL: {1}秒"
+        },
+        "L494": {
+            "en": "[CACHE] Image cache stats: Size={0}MB, Items={1}, Hit rate={2}%",
+            "ja": "[キャッシュ] 画像キャッシュの統計: サイズ={0}MB、アイテム数={1}、ヒット率={2}%"
+        },
+        "L495": {
+            "en": "[CACHE] Cache hit: {0}",
+            "ja": "[キャッシュ] キャッシュヒット: {0}"
+        },
+        "L496": {
+            "en": "[CACHE] Cache miss: {0}",
+            "ja": "[キャッシュ] キャッシュミス: {0}"
+        },
+        "L497": {
+            "en": "[CACHE] Image too large to cache: {0} ({1}MB)",
+            "ja": "[キャッシュ] 画像がキャッシュには大きすぎます: {0} ({1}MB)"
+        },
+        "L498": {
+            "en": "[CACHE] Image cache cleared",
+            "ja": "[キャッシュ] 画像キャッシュがクリアされました"
+        },
+        "L499": {
+            "en": "[MOUSE] Keeping {0} visible during rotation",
+            "ja": "[マウス] 回転中に{0}を表示したままにします"
+        },
+        "L500": {
+            "en": "[UI] Notification position adjusted for better visibility",
+            "ja": "[UI] 通知の位置が見やすさのために調整されました"
+        },
+        "L501": {
+            "en": "[CACHE] Marked {0} unused items for deletion ({1}MB)",
+            "ja": "[キャッシュ] 未使用の{0}アイテムを削除対象としてマークしました ({1}MB)"
+        },
+        "L502": {
+            "en": "[TIMER] Timer ID stored for cancellation: {0}",
+            "ja": "[タイマー] キャンセル用にタイマーIDを保存しました: {0}"
+        },
+        "L503": {
+            "en": "[TIMER] Timer cancelled: {0}",
+            "ja": "[タイマー] タイマーをキャンセルしました: {0}"
+        },
+        "L504": {
+            "en": "[UI] Feedback circle created at x={0}, y={1}, rotating={2}",
+            "ja": "[UI] フィードバックサークルを作成しました: x={0}, y={1}, 回転中={2}"
+        },
+        "L505": {
+            "en": "[UI] Error deleting feedback circle: {0}",
+            "ja": "[UI] フィードバックサークルの削除エラー: {0}"
+        },
+        "L506": {
+            "en": "[UI] Error deleting background: {0}",
+            "ja": "[UI] 背景の削除エラー: {0}"
+        },
+        "L507": {
+            "en": "[UI] Guidance text displayed: {0}",
+            "ja": "[UI] ガイダンステキストを表示しました: {0}"
+        },
+        "L508": {
+            "en": "[UI] Error deleting guidance text: {0}",
+            "ja": "[UI] ガイダンステキストの削除エラー: {0}"
+        },
+        "L509": {
+            "en": "[UI] Notification displayed: {0}, duration={1}s",
+            "ja": "[UI] 通知を表示しました: {0}, 表示時間={1}秒"
+        },
+        "L510": {
+            "en": "Error deleting notification log",
+            "ja": "通知ログの削除中にエラーが発生しました: {0}"
+        },
+        "L511": {
+            "en": "Rotation operation performed: {0} degrees",
+            "ja": "回転操作が実行されました: {0}度"
+        },
+        "L512": {
+            "en": "Mouse button pressed at coordinates: ({0}, {1})",
+            "ja": "マウスボタンが座標 ({0}, {1}) で押されました"
+        },
+        "L513": {
+            "en": "Mouse dragged to coordinates: ({0}, {1}), delta: ({2}, {3})",
+            "ja": "マウスが座標 ({0}, {1}) にドラッグされました、移動量: ({2}, {3})"
+        },
+        "L514": {
+            "en": "Mouse button released at coordinates: ({0}, {1})",
+            "ja": "マウスボタンが座標 ({0}, {1}) で解放されました"
+        },
+        "L515": {
+            "en": "Rotation mode activated at coordinates: ({0}, {1})",
+            "ja": "回転モードが座標 ({0}, {1}) でアクティブになりました"
+        },
+        "L516": {
+            "en": "Rotation mode deactivated",
+            "ja": "回転モードが非アクティブになりました"
+        },
+        "L517": {
+            "en": "Zoom operation applied with factor: {0}",
+            "ja": "ズーム操作が適用されました、倍率: {0}"
+        },
+        "L518": {
+            "en": "Mouse handler state updated: page_index={0}, total_layers={1}, visible_layers={2}",
+            "ja": "マウスハンドラの状態が更新されました: ページインデックス={0}, 全レイヤー数={1}, 表示レイヤー数={2}"
         }
     },
     "message_codes": {
@@ -1777,11 +2169,11 @@
             "ja": "ボタンのテーマ設定が見つかりません: {0}"
         },
         "M042": {
-            "en": "Rotation mode - drag to rotate",
-            "ja": "回転モード - ドラッグして回転"
+            "en": "Rotation Mode",
+            "ja": "回転モード"
         },
         "M043": {
-            "en": "Rotation complete",
+            "en": "Rotation completed",
             "ja": "回転完了"
         },
         "M044": {

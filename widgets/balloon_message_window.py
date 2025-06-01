@@ -9,6 +9,7 @@ from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import WidgetsTracker
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
+from configurations.tool_settings import font_family, font_size
 from utils.theme_helpers import get_theme_color
 message_manager = get_message_manager()
 
@@ -41,7 +42,8 @@ class BalloonMessageWindow(tk.Toplevel, ColoringThemeIF):
         self.hover_delay = hover_delay  # Seconds to wait before showing the balloon
         self.display_time = display_time  # Milliseconds to display the balloon
         
-        self.label = tk.Label(self, text=message, justify=tk.LEFT, font=("Arial", 9))
+        # Use font settings from tool_settings for consistent UI appearance
+        self.label = tk.Label(self, text=message, justify=tk.LEFT, font=(font_family, font_size-3))
         self.label.pack(padx=2, pady=2)
         self.__apply_theme()
         

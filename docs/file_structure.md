@@ -2,93 +2,239 @@
 
 ## Project Overview
 
-PDF Diff Checkerは、2つのPDFファイル間の差分を表示するアプリケーションです。このドキュメントでは、アプリケーションのファイル構造と各コンポーネントの役割について説明します。
+PDF Diff Checker is an application for displaying differences between two PDF files. This document explains the file structure and the role of each component in the application.
 
 ## Directory Structure
 
-```
+```bash
 pdfDiffChecker/
-├── configurations/     # 設定ファイルとメッセージコード
-├── controllers/        # イベント処理とコントローラー
-├── docs/               # ドキュメントとER図
-├── images/             # アプリケーションで使用される画像
-├── logs/               # ログファイル
-├── models/             # データモデルとビジネスロジック
-├── tests/              # テストコード
-├── themes/             # カラーテーマ
-├── utils/              # ユーティリティ関数
-├── views/              # UIビュー
-├── widgets/            # 再利用可能なUIコンポーネント
-└── main.py             # アプリケーションのエントリーポイント
+├── configurations/     # Configuration files and message codes
+├── controllers/        # Event handling and controllers
+├── docs/               # Documentation and ER diagrams
+├── images/             # Images used in the application
+├── logs/               # Log files
+├── models/             # Data models and business logic
+├── tests/              # Test code
+├── themes/             # Color themes
+├── utils/              # Utility functions
+├── views/              # UI views
+├── widgets/            # Reusable UI components
+└── main.py             # Application entry point
+```
+
+## Detailed File Structure with Classes and Methods
+
+```bash
+pdfDiffChecker/
+├── configurations/
+│   ├── message_manager.py
+│   │   └── MessageManager class
+│   │       ├── get_message(code, *args) - Get message based on code
+│   │       ├── get_log_message(code, *args) - Get log message
+│   │       └── set_language(lang) - Change language setting
+│   ├── tool_settings.py - Font settings and general configuration values
+│   └── user_setting_manager.py
+│       └── UserSettingManager class
+│           ├── load_settings() - Load settings from JSON
+│           ├── save_settings() - Save settings to JSON
+│           └── update_setting(section, key, value) - Update setting value
+├── controllers/
+│   ├── color_theme_manager.py
+│   │   └── ColorThemeManager class
+│   │       ├── load_theme(theme_name) - Load theme
+│   │       ├── apply_theme(widget) - Apply theme to widget
+│   │       └── change_theme(theme_name) - Change theme
+│   ├── event_bus.py
+│   │   └── EventBus class
+│   │       ├── subscribe(event_name, callback) - Subscribe to event
+│   │       ├── publish(event_name, *args, **kwargs) - Publish event
+│   │       └── unsubscribe(event_name, callback) - Unsubscribe
+│   ├── file2png_by_page.py
+│   │   └── PDFConverter class
+│   │       ├── convert_pdf_to_png(pdf_path, output_dir) - Convert PDF to PNG
+│   │       ├── extract_metadata(pdf_path) - Extract metadata from PDF
+│   │       └── update_progress(progress, page, total) - Update progress
+│   ├── mouse_event_handler.py
+│   │   └── MouseEventHandler class
+│   │       ├── update_state(current_page_index, visible_layers) - Update state
+│   │       ├── add_layer(layer_id, init_transform_data) - Add a new layer
+│   │       ├── remove_layer(layer_id) - Remove a layer
+│   │       ├── attach_to_canvas(canvas_widget) - Attach to a canvas for visual feedback
+│   │       ├── on_key_press(event) - Handle key press events
+│   │       ├── on_mouse_down(event) - Handle mouse button press
+│   │       ├── on_mouse_drag(event) - Handle mouse drag
+│   │       ├── on_mouse_up(event) - Handle mouse button release
+│   │       ├── __force_display_rotation_elements() - Force display of rotation-related visual elements
+│   │       ├── __schedule_ctrl_check_timer() - Schedule timer to check Ctrl key state
+│   │       ├── __check_ctrl_key_state() - Check if Ctrl key is still pressed
+│   │       ├── __exit_rotation_mode() - Exit rotation mode and clean up visual elements
+│   │       ├── on_mouse_move(event) - Handle mouse movement events
+│   │       ├── clear_feedback() - Clear all visual feedback elements
+│   │       ├── hide_feedback_circle() - Hide any displayed feedback circle
+│   │       ├── hide_guidance_text() - Hide any displayed guidance text
+│   │       ├── on_mouse_wheel(event, single_layer_data) - Handle mouse wheel for zooming
+│   │       ├── _process_wheel_zoom(event, transform_data, page_index, callback_function) - Process zoom for single layer
+│   │       ├── _process_wheel_zoom_multi_layer(event) - Process zoom for multiple layers
+│   │       ├── __rotate_by_angle(angle) - Rotate all visible layers by angle
+│   │       ├── on_rotate_right(event) - Handle right rotation (90°)
+│   │       ├── on_rotate_left(event) - Handle left rotation (90°)
+│   │       ├── on_flip_vertical(event) - Handle vertical flip
+│   │       ├── on_flip_horizontal(event) - Handle horizontal flip
+│   │       ├── on_reset_transform(event) - Reset transformations
+│   │       ├── show_feedback_circle(x, y, is_rotating) - Show feedback circle at position
+│   │       ├── show_guidance_text(message, is_rotation) - Show guidance text on canvas
+│   │       ├── show_notification(message, duration) - Show transient notification
+│   │       └── hide_notification() - Hide the notification text
+│   ├── transform_manager.py
+│   │   └── TransformationManager class
+│   │       ├── get_transform_data(layer_id, page_index) - Get transformation data
+│   │       ├── set_transform_data(layer_id, page_index, rotation, tx, ty, scale) - Set transformation data
+│   │       ├── update_transform_data(layer_id, page_index, rotation, tx, ty, scale) - Update transformation data
+│   │       ├── reset_transform(layer_id, page_index) - Reset transformation data
+│   │       ├── reset_all_transforms() - Reset all transformation data
+│   │       ├── set_current_page_index(page_index) - Set current page index
+│   │       ├── get_current_page_index() - Get current page index
+│   │       ├── add_layer(layer_id, transform_data) - Add a new layer
+│   │       ├── remove_layer(layer_id) - Remove a layer
+│   │       └── get_all_transform_data() - Get all transformation data
+│   └── widgets_tracker.py
+│       └── WidgetsTracker class
+│           ├── register_widget(widget) - Register widget
+│           ├── unregister_widget(widget) - Unregister widget
+│           └── apply_theme_to_all(theme) - Apply theme to all widgets
+├── models/
+│   └── file_info.py
+│       ├── FilePathInfo class - Hold file path information
+│       └── FolderPathInfo class - Hold folder path information
+├── themes/
+│   ├── coloring_theme_interface.py
+│   │   └── ColoringThemeIF class - Theme interface
+│   ├── dark.json - Dark theme settings
+│   ├── light.json - Light theme settings
+│   └── pastel.json - Pastel theme settings
+├── utils/
+│   ├── baloon_message.py
+│   │   └── BalloonMessage class - Display balloon message
+│   ├── log_throttle.py
+│   │   └── LogThrottle class - Limit log output
+│   └── utils.py - General utility functions
+├── views/
+│   ├── description.py
+│   │   └── DescriptionTab class - Description tab
+│   ├── file_extension_tab.py
+│   │   └── FileExtensionTab class - File extension tab
+│   ├── licenses.py
+│   │   └── LicensesTab class - Licenses tab
+│   └── pdf_ope_tab.py
+│       └── PDFOperationApp class - PDF operation tab
+│           ├── _setup_ui() - Setup the user interface
+│           ├── _on_base_file_select() - Handle base file selection event
+│           ├── _on_output_folder_select() - Handle output folder selection
+│           ├── _setup_drag_and_drop() - Setup drag and drop functionality
+│           ├── _load_and_display_pdf(file_path) - Load and display PDF file
+│           ├── _display_page(page_index) - Display specified page of PDF
+│           ├── _initialize_mouse_handler() - Initialize mouse event handler
+│           ├── _rebind_mouse_wheel() - Rebind mouse wheel events
+│           ├── _on_next_page() - Go to next page
+│           ├── _on_prev_page() - Go to previous page
+│           ├── _on_page_entry(event) - Handle page entry event
+│           ├── _setup_mouse_events() - Set up mouse events for canvas
+│           ├── _reset_transform() - Reset transformation for current page
+│           ├── _go_to_first_page() - Go to first page of document
+│           ├── _go_to_last_page() - Go to last page of document
+│           ├── _on_drop(file_path) - Handle file drop event
+│           ├── _show_drop_feedback(drop_data, is_valid) - Show drop feedback
+│           ├── _create_page_control_frame(page_count) - Create page control frame
+│           ├── _on_transform_update() - Callback when transform data updated
+│           ├── update_image_transform(rotation, tx, ty, scale) - Update image transformation
+│           ├── _on_insert_blank_page() - Insert blank page after current page
+│           ├── apply_theme_color(theme_data) - Apply theme colors to widgets
+│           ├── _config_widget(theme_settings) - Configure widget theme settings
+│           └── _on_complete_edit() - Complete editing and export PDF
+├── widgets/
+│   ├── base_page_change_button.py
+│   │   └── BasePageChangeButton class - Page change button
+│   ├── base_path_entry.py
+│   │   └── BasePathEntry class - Path input field
+│   ├── base_path_select_button.py
+│   │   └── BasePathSelectButton class - Path selection button
+│   ├── base_tab_widgets.py
+│   │   └── BaseTabWidgets class - Base class for tab widgets
+│   ├── color_theme_change_button.py
+│   │   └── ColorThemeChangeButton class - Theme change button
+│   └── progress_window.py
+│       └── ProgressWindow class - Progress display window
+└── main.py - Application entry point
+    └── CreateComparisonFileApp class - Main application
 ```
 
 ## Key Components
 
 ### Controllers
 
+#### `transform_manager.py`
+
+Manages transformation data for PDF layers, providing a centralized interface for rotation, scaling, and translation operations.
+
+```python
+class TransformationManager:
+    def __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], 
+                 current_page_index: int, on_transform_update: Callable[[], None]):
+        # Initialize transformation data, current page index, and update callback
+    
+    def get_transform_data(self, layer_id: int, page_index: int) -> Tuple[float, float, float, float]:
+        # Get transformation data (rotation, tx, ty, scale) for a specific layer and page
+    
+    def update_transform_data(self, layer_id: int, page_index: int, rotation: Optional[float] = None,
+                             tx: Optional[float] = None, ty: Optional[float] = None,
+                             scale: Optional[float] = None, scale_x: Optional[float] = None,
+                             update_callback: bool = True) -> None:
+        # Update transformation data for a specific layer and page
+    
+    def reset_transform(self, layer_id: int, page_index: int) -> None:
+        # Reset transformation data to default values
+```
+
 #### `mouse_event_handler.py`
 
-マウスイベント（ドラッグ、ズーム、クリックなど）を処理する低レベルのコアロジックを提供します。
+Provides comprehensive mouse event handling and transformation operations for PDF layers. Uses TransformationManager to manage transformation data.
 
 ```python
 class MouseEventHandler:
     def __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], 
                  current_page_index: int, visible_layers: Dict[int, bool], 
                  on_transform_update: Callable[[], None]):
-        # レイヤー変換データ、現在のページインデックス、表示レイヤー、更新コールバックを初期化
+        # Initialize transformation manager, visible layers, and feedback elements
     
     def on_mouse_down(self, event: tk.Event) -> None:
-        # マウスボタン押下イベントを処理
+        # Handle mouse button press events
     
     def on_mouse_drag(self, event: tk.Event) -> None:
-        # マウスドラッグイベントを処理（移動操作）
+        # Handle mouse drag events (move operations)
     
     def on_mouse_up(self, event: tk.Event) -> None:
-        # マウスボタン解放イベントを処理
+        # Handle mouse button release events
     
-    def update_state(self, current_page_index: int, visible_layers: Dict[int, bool]) -> None:
-        # 状態を更新（現在のページインデックスと表示レイヤー）
+    def on_mouse_wheel(self, event: Any, single_layer_data: Optional[List[Any]] = None) -> None:
+        # Handle mouse wheel events for zooming
     
-    def attach_to_canvas(self, canvas_widget: tk.Canvas) -> None:
-        # キャンバスにアタッチしてビジュアルフィードバックを提供
-```
-
-#### `pdf_mouse_handler.py`
-
-PDFビューアー向けに最適化された高レベルのマウスイベント処理を提供します。`MouseEventHandler`クラスを内部で使用し、エラーハンドリングとログ出力の最適化を行います。
-
-```python
-class PDFMouseHandler:
-    def __init__(self, parent: Any) -> None:
-        # 親ウィジェットへの参照を保持
-        self.parent = parent
-        self.mouse_handler: Optional[MouseEventHandler] = None
-        # ログスロットリング用のインスタンスを初期化
+    def __rotate_by_angle(self, angle: float) -> None:
+        # Rotate all visible layers by the specified angle
     
-    def initialize_mouse_handler(self) -> None:
-        # MouseEventHandlerインスタンスを初期化
+    def on_rotate_right(self, event: Optional[tk.Event] = None) -> str:
+        # Handle 90° clockwise rotation
     
-    def setup_mouse_events(self) -> None:
-        # マウスイベントのバインディングをセットアップ
+    def on_rotate_left(self, event: Optional[tk.Event] = None) -> str:
+        # Handle 90° counterclockwise rotation
     
-    def on_mouse_wheel(self, event: Any) -> None:
-        # マウスホイールイベントを処理し、ズーム機能を提供
-        # エラーハンドリングとログ出力の最適化を行う
+    def on_flip_vertical(self, event: Optional[tk.Event] = None) -> str:
+        # Handle vertical flip operation
     
-    def on_mouse_down(self, event: Any) -> None:
-        # マウスボタン押下イベントを処理し、MouseEventHandlerに委譲
+    def on_flip_horizontal(self, event: Optional[tk.Event] = None) -> str:
+        # Handle horizontal flip operation
     
-    def on_mouse_move(self, event: Any) -> None:
-        # マウス移動イベントを処理し、MouseEventHandlerのon_mouse_dragに委譲
-    
-    def on_mouse_up(self, event: Any) -> None:
-        # マウスボタン解放イベントを処理し、MouseEventHandlerに委譲
-    
-    def on_zoom_in(self, event: Any = None) -> None:
-        # ズームイン操作を処理
-    
-    def on_zoom_out(self, event: Any = None) -> None:
-        # ズームアウト操作を処理
+    def on_reset_transform(self, event: Optional[tk.Event] = None) -> str:
+        # Reset all transformations to default values
 ```
 
 #### `drag_and_drop_file.py`
@@ -108,22 +254,28 @@ class DragAndDropHandler:
 
 #### `pdf_ope_tab.py`
 
-PDFファイルの操作タブを提供します。PDFの表示、ズーム、ページ移動などの機能を実装しています。マウスイベント処理は`PDFMouseHandler`クラスに委譲しています。
+PDFファイルの操作タブを提供します。PDFの表示、ズーム、ページ移動などの機能を実装しています。マウスイベント処理は`MouseEventHandler`クラスを直接使用しています。
 
 ```python
 class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     def __init__(self, master: Optional[tk.Misc] = None, **kwargs: Any) -> None:
         # PDFビューアーの初期化
-        # PDFMouseHandlerインスタンスを作成
-        self.pdf_mouse_handler = PDFMouseHandler(self)
+        # MouseEventHandlerインスタンスを作成
+        self._initialize_mouse_handler()
+    
+    def _initialize_mouse_handler(self) -> None:
+        # MouseEventHandlerインスタンスを作成
+        self.mouse_handler = MouseEventHandler(self)
     
     def _display_page(self, page_index: int) -> None:
         # 指定されたページを表示
         # 回転、拡大縮小、移動などの変換を適用
     
     def _setup_mouse_events(self) -> None:
-        # PDFMouseHandlerを使用してマウスイベントをセットアップ
-        self.pdf_mouse_handler.setup_mouse_events()
+        # キャンバスにマウスイベントをバインド
+        self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
+        self.canvas.bind("<B1-Motion>", self._on_mouse_move)
+        self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
     
     def _on_transform_update(self) -> None:
         # 変換（回転、拡大縮小、移動）が更新された時に呼び出される

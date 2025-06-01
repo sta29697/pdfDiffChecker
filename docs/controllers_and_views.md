@@ -6,7 +6,7 @@
 
 ## マウスイベント処理の集約
 
-### `MouseEventHandler` クラス
+### マウスイベント処理の基本構造
 
 `controllers/mouse_event_handler.py`に定義されている`MouseEventHandler`クラスは、アプリケーション全体のマウスイベント処理のコアロジックを提供する低レベルのコントローラーです。
 
@@ -26,19 +26,22 @@ class MouseEventHandler:
     def on_mouse_up(self, event: tk.Event) -> None:
         # マウスボタン解放イベントを処理
         
+    def __force_display_rotation_elements(self) -> None:
+        # 回転モード中の視覚要素を強制的に表示
+        
     # その他のマウスイベントメソッド
 ```
 
-### `PDFMouseHandler` クラス
+### `MouseEventHandler` クラス
 
-`controllers/pdf_mouse_handler.py`に定義されている`PDFMouseHandler`クラスは、PDFビューアー向けに最適化された高レベルのラッパーです。このクラスは`MouseEventHandler`を内部で使用し、PDFビューアー特有の処理を行います。
+`controllers/mouse_event_handler.py`に定義されている`MouseEventHandler`クラスは、マウスイベント処理の中核となるクラスです。このクラスはPDFビューアーを含む様々なコンポーネントで直接使用されます。
 
 ```python
-class PDFMouseHandler:
+class MouseEventHandler:
     def __init__(self, parent: Any) -> None:
         # 親ウィジェットへの参照を保持
         self.parent = parent
-        self.mouse_handler: Optional[MouseEventHandler] = None
+        self.transform_manager = TransformationManager()
         # ログスロットリング用のインスタンスを初期化
         
     def initialize_mouse_handler(self) -> None:
@@ -46,7 +49,6 @@ class PDFMouseHandler:
         
     def setup_mouse_events(self) -> None:
         # マウスイベントのバインディングをセットアップ
-        
     def on_mouse_wheel(self, event: Any) -> None:
         # マウスホイールイベントを処理し、MouseEventHandlerに委譲
         
@@ -71,6 +73,17 @@ class PDFMouseHandler:
    - Ctrl+ドラッグによる回転
    - マウスホイールによるズーム
 
+3. **視覚的フィードバック**
+   - 回転中心点の表示
+   - ガイダンステキストの表示
+   - 通知メッセージの表示
+   - ショートカットヘルプの表示
+
+4. **回転モード管理**
+   - Ctrlキー状態の監視
+   - 回転モードの開始と終了
+   - 回転角度の平滑化処理
+   
 `PDFMouseHandler`クラスは以下の機能を提供します：
 
 1. **高レベルのイベント処理**
@@ -92,15 +105,21 @@ class PDFMouseHandler:
 def __init__(self, master: Optional[tk.Misc] = None, **kwargs: Any) -> None:
     # 他の初期化コード...
     
-    # PDFMouseHandlerインスタンスを作成
-    self.pdf_mouse_handler = PDFMouseHandler(self)
+    # MouseEventHandlerインスタンスを作成
+    self._initialize_mouse_handler()
     
     # マウスイベントのセットアップ
     self._setup_mouse_events()
 
+def _initialize_mouse_handler(self) -> None:
+    # MouseEventHandlerインスタンスを作成
+    self.mouse_handler = MouseEventHandler(self)
+    
 def _setup_mouse_events(self) -> None:
-    # PDFMouseHandlerを使用してマウスイベントをセットアップ
-    self.pdf_mouse_handler.setup_mouse_events()
+    # キャンバスにマウスイベントをバインド
+    self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
+    self.canvas.bind("<B1-Motion>", self._on_mouse_move)
+    self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
 
 def _on_transform_update(self) -> None:
     # 変換データが更新された時のコールバック

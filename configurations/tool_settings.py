@@ -94,6 +94,18 @@ LOG_THROTTLE_SETTINGS: Dict[str, Dict[str, Any]] = {
     "window_resize": {
         "interval": 0.2,
         "message_code": "L409"  # Window resize log throttle interval
+    },
+    "mouse_wheel": {
+        "interval": 2.0,
+        "message_code": "L410"  # Mouse wheel event log throttle interval
+    },
+    "keyboard_shortcut": {
+        "interval": 1.0,
+        "message_code": "L411"  # Keyboard shortcut log throttle interval
+    },
+    "rotation_feedback": {
+        "interval": 1.0,
+        "message_code": "L412"  # Rotation feedback log throttle interval
     }
 }
 

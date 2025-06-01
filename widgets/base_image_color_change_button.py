@@ -2,7 +2,7 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Dict, Any, Callable, Optional, cast
 from logging import getLogger
-from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
+from configurations.tool_settings import DEFAULT_COLOR_THEME_SET, font_family, font_size
 from configurations.user_setting_manager import UserSettingManager
 from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
@@ -66,7 +66,8 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
             width=5,
             fg=self.__fg,
             bg=self.__bg,
-            font=("Arial", 10),
+            # Use font settings from tool_settings for consistent UI appearance
+            font=(font_family, font_size),
             activeforeground=self.__acfg,
             activebackground=self.__acbg,
             command=self.__color_select_btn_clicked,
