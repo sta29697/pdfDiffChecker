@@ -27,6 +27,7 @@ from controllers.file2png_by_page import Pdf2PngByPages
 
 # Configuration imports
 from configurations.message_manager import get_message_manager
+from configurations.user_setting_manager import UserSettingManager # Import UserSettingManager
 
 # Widget imports
 from widgets.base_tab_widgets import BaseTabWidgets
@@ -45,16 +46,22 @@ logger = getLogger(__name__)
 message_manager = get_message_manager()
 
 class PDFOperationApp(ttk.Frame, ColoringThemeIF):
-    """PDF operation tab."""
+    """PDF operation tab for manipulating PDF files.
+    
+    This class provides a user interface for loading, viewing, and performing
+    operations on PDF files such as rotation, page extraction, and more.
+    """
 
-    def __init__(self, master: Optional[tk.Misc] = None, **kwargs: Any) -> None:
+    def __init__(self, master: Optional[tk.Misc] = None, user_settings_manager: UserSettingManager = None, **kwargs: Any) -> None: # Add user_settings_manager argument
         """Initialize the PDF operation tab.
 
         Args:
             master (Optional[tk.Misc]): Parent widget
+            user_settings_manager (UserSettingManager): Instance of UserSettingManager.
             **kwargs: Additional keyword arguments
         """
         super().__init__(master, **kwargs)
+        self.user_settings_manager = user_settings_manager # Store UserSettingManager instance
         self.base_widgets = BaseTabWidgets(self)
         
         # Configure frame to expand
@@ -260,7 +267,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 logger.warning(message_manager.get_log_message("L351", str(e)))
 
     def _on_output_folder_select(self) -> None:
-        """Handle output folder selection event using common dialog."""
+        """Handle output folder selection event using common dialog.
+        
+        Opens a folder selection dialog and updates the output folder path entry
+        with the selected folder path.
+        """
         folder_path = ask_folder_dialog(
             initialdir=self._output_folder_path_entry.path_var.get(),
             title_code="U024",
@@ -270,7 +281,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.debug(message_manager.get_log_message("L073", folder_path))
 
     def _setup_drag_and_drop(self) -> None:
-        """Setup drag and drop functionality for the canvas."""
+        """Setup drag and drop functionality for the canvas.
+        
+        Registers the canvas as a drop target for PDF files and sets up the
+        necessary callbacks for handling dropped files.
+        """
         # Try to register drop target; suppress non-fatal errors
         success = DragAndDropHandler.register_drop_target(
             self.canvas, self._on_drop, [".pdf"], self._show_drop_feedback
@@ -280,7 +295,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.info(message_manager.get_log_message("L234"))
 
     def _load_and_display_pdf(self, file_path: str) -> None:
-        """Load and display PDF file on canvas."""
+        """Load and display PDF file on canvas.
+        
+        Args:
+            file_path (str): Path to the PDF file to load and display.
+        """
         try:
             # Create temporary directory for extracted PNG files
             self.session_id = f"pdf_op_{os.path.basename(file_path)}_{Path(file_path).stem}"
@@ -320,6 +339,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Generate base_pages list for display and reference
             self.base_pages = [f"Page {i+1}" for i in range(self.page_count)]
             
+            # Initialize image_operations_dict for flip operations
+            self.image_operations_dict = {}
+            
             # Set up page control frame first to ensure page numbers are visible
             self._create_page_control_frame(self.page_count)
             
@@ -331,6 +353,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Display the first page
             self._display_page(self.current_page_index)
+            
+            # Force update the canvas to ensure the image is displayed
+            self.canvas.update()
             
             # Update page control frame explicitly
             if self.page_control_frame:
@@ -353,7 +378,29 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Args:
             page_index (int): Index of the page to display (0-based)
+        
         """
+        # Fix-1: Set current page index at the beginning
+        self.current_page_index = page_index
+        
+        # Store mouse handler state before page change
+        mouse_handler_state = None
+        if hasattr(self, 'mouse_handler') and self.mouse_handler:
+            # Check if in rotation mode
+            rotation_mode = False
+            if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_mode'):
+                rotation_mode = self.mouse_handler._MouseEventHandler__rotation_mode
+                
+            # Check if shortcut guide is visible
+            shortcut_guide_visible = False
+            if hasattr(self.mouse_handler, '_MouseEventHandler__keep_rotation_elements_visible'):
+                shortcut_guide_visible = self.mouse_handler._MouseEventHandler__keep_rotation_elements_visible
+                
+            # Store state for restoration after page change
+            mouse_handler_state = {
+                'rotation_mode': rotation_mode,
+                'shortcut_guide_visible': shortcut_guide_visible
+            }
         try:
             # Initialize transformation variables
             # These variables will be used in future implementations for image transformations
@@ -420,8 +467,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     else:
                         # Open the PNG file and add to cache
                         img = Image.open(png_path)
-                        # Add to cache for future use
-                        self.image_cache.put(str(png_path), img)
+                        # Add to cache for future use only if not already in cache
+                        # This prevents overwriting existing cache entries which may cause image disappearance
+                        if self.image_cache.get(str(png_path)) is None:
+                            self.image_cache.put(str(png_path), img)
                         
                         # Log cache statistics periodically
                         if self.current_page_index % 5 == 0:  # Log every 5 pages
@@ -464,9 +513,6 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     else:
                         rotation, tx, ty, scale = 0.0, 0.0, 0.0, 1.0
                     
-                    # Log the original scale factor before any modifications
-                    logger.debug(message_manager.get_log_message("L485", str(scale), str(scale)))
-                        
                     # Apply scale factor from mouse wheel zoom if available
                     if hasattr(self, 'scale_factor'):
                         # Store original scale for logging
@@ -486,6 +532,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     
                     # Log the final transformation values that will be applied
                     logger.debug(message_manager.get_log_message("L486", str(rotation), str(tx), str(ty), str(scale)))
+                    
+                    # Get flip flags from mouse handler if available
+                    h_flip, v_flip = False, False
+                    if hasattr(self, 'mouse_handler') and self.mouse_handler:
+                        # Use layer 0 as default for now
+                        layer_id = 0
+                        h_flip, v_flip = self.mouse_handler.get_flip_flags(layer_id, self.current_page_index)
+                        logger.debug(f"[DEBUG] Flip flags: h_flip={h_flip}, v_flip={v_flip}")
+                    
+                    # Apply horizontal flip if needed
+                    if h_flip:
+                        from PIL import ImageOps
+                        img = ImageOps.mirror(img)
+                        logger.debug("[DEBUG] Image flipped horizontally")
+                    
+                    # Apply vertical flip if needed
+                    if v_flip:
+                        from PIL import ImageOps
+                        img = ImageOps.flip(img)
+                        logger.debug("[DEBUG] Image flipped vertically")
                     
                     # Actually apply transformations to the image
                     if scale != 1.0:
@@ -512,6 +578,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     # Convert to PhotoImage for display
                     photo_image = ImageTk.PhotoImage(img)
                     self.photo_image = photo_image  # Keep reference to prevent garbage collection
+                    
+                    # Create image_operations_dict if it doesn't exist
+                    if not hasattr(self, 'image_operations_dict'):
+                        self.image_operations_dict = {}
                     
                     # Store UI elements that should be preserved during rotation mode
                     preserved_items = []
@@ -571,6 +641,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     # Lower the image to ensure it's behind all UI elements
                     self.canvas.lower(image_id)
                     
+                    # ----- Added: Create ImageOperations and register to dictionary -----
+                    from controllers.image_operations import ImageOperations
+                    # Update existing dictionary instead of overwriting
+                    if not hasattr(self, 'image_operations_dict'):
+                        self.image_operations_dict = {}
+                    # Register ImageOperations for layer 0 (base layer)
+                    self.image_operations_dict[0] = ImageOperations(self.canvas, image_id, img)
+                    
                     # Recreate preserved items if in rotation mode
                     # Store the recreated item IDs for potential future use
                     recreated_item_ids = []
@@ -603,6 +681,32 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                                 tags=tags
                             )
                             recreated_item_ids.append(item_id)
+                            
+                    # Update mouse handler with current page index
+                    if hasattr(self, 'mouse_handler') and self.mouse_handler:
+                        # Update the mouse handler with the current page index
+                        self.mouse_handler.update_state(current_page_index=self.current_page_index)
+                        
+                        # Restore mouse handler state if we stored it earlier
+                        if 'mouse_handler_state' in locals() and mouse_handler_state:
+                            # Restore rotation mode if it was active
+                            if mouse_handler_state['rotation_mode']:
+                                # Get rotation center from previous state if available
+                                if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_center_x') and \
+                                   hasattr(self.mouse_handler, '_MouseEventHandler__rotation_center_y'):
+                                    center_x = self.mouse_handler._MouseEventHandler__rotation_center_x
+                                    center_y = self.mouse_handler._MouseEventHandler__rotation_center_y
+                                    self.mouse_handler.draw_feedback_circle(center_x, center_y, is_rotating=True)
+                                    self.mouse_handler.show_guidance_text(message_manager.get_message('M042'), is_rotation=True)
+                                    
+                            # Restore shortcut guide visibility based on the stored state
+                            if mouse_handler_state['shortcut_guide_visible']:
+                                self.mouse_handler.toggle_shortcut_guide(event=None, force_show=True)
+                            else:
+                                # If the state indicates the guide should not be visible, ensure it is hidden.
+                                # This handles cases where it might have been turned on by other means
+                                # before state restoration.
+                                self.mouse_handler.toggle_shortcut_guide(event=None, force_show=False)
                     
                     # Log the final position where the image is displayed on the canvas
                     # Use throttling to avoid excessive logging during page navigation
@@ -620,8 +724,15 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Store previous page index to check if page actually changed
             previous_page_index = getattr(self, 'current_page_index', None)
             
-            # Update current page index
+            # Update current page index to the new value
             self.current_page_index = page_index
+            
+            # Set focus to the canvas for keyboard events
+            # Fix-1a: Ensure canvas gets focus for keyboard events
+            self.canvas.focus_set()
+            
+            # Fix-1b: Force canvas to update to ensure focus is properly set
+            self.canvas.update_idletasks()
             
             # Update scroll region
             self.canvas.config(scrollregion=self.canvas.bbox("all"))
@@ -638,8 +749,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     # Force update of total pages to ensure it's displayed
                     self.page_control_frame.current_file_page_amount.set(self.page_count)
                 
-            # Update mouse handler only if page actually changed
-            if hasattr(self, 'mouse_handler') and self.mouse_handler and previous_page_index != page_index:
+            # Always update mouse handler with the current page index
+            if hasattr(self, 'mouse_handler') and self.mouse_handler:
                 # Create visibility layer dictionary (0=base, 1=comp)
                 visible_layers = {}
                 visible_layers[0] = True  # Base is visible
@@ -722,11 +833,16 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 layer_transform_data=layer_transform_data,
                 current_page_index=self.current_page_index if hasattr(self, 'current_page_index') else 0,
                 visible_layers=visible_layers,
-                on_transform_update=self._on_transform_update
+                on_transform_update=self._on_transform_update,
+                user_settings_manager=self.user_settings_manager,
+                image_operations_dict=self.image_operations_dict if hasattr(self, 'image_operations_dict') else {}
             )
             
             # Attach to canvas for visual feedback and event handling
             self.mouse_handler.attach_to_canvas(self.canvas)
+            
+            # Ensure global shortcut keys are properly bound
+            self._bind_global_shortcut_keys()
             
             # Log successful initialization
             logger.debug(message_manager.get_log_message("L175"))
@@ -736,11 +852,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             import traceback
             logger.error(traceback.format_exc())
 
-    # _on_mouse_wheel method has been removed as its functionality is now handled by MouseEventHandler.on_mouse_wheel
+    # _on_mouse_wheel method has been removed as its functionality is now handled by MouseEventHandler
 
     def _rebind_mouse_wheel(self) -> None:
         """Rebind mouse wheel event bindings.
-        
+    
         This method sets up mouse wheel event bindings for zoom functionality.
         It includes platform-specific bindings and error handling to ensure
         robust operation across different environments.
@@ -764,18 +880,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 self.canvas.focus_set()
                 
                 # Verify all required components are available
-                if (hasattr(self, 'mouse_handler') and self.mouse_handler and 
-                    hasattr(self, 'base_transform_data') and 
-                    hasattr(self, 'current_page_index')):
-                    
-                    # Create the single layer data format expected by MouseEventHandler.on_mouse_wheel
-                    single_layer_data = [
-                        self.current_page_index,
-                        self.base_transform_data,
-                        True,  # Visible
-                        self._on_transform_update  # Callback function
-                    ]
-                    
+                if (hasattr(self, 'mouse_handler') and self.mouse_handler):
                     # If logging is allowed, log the event with more detailed information
                     if log_event:
                         # Log mouse wheel event detection
@@ -783,8 +888,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                         # Log that we're about to call the zoom method
                         logger.debug(message_manager.get_log_message("L467", "on_mouse_wheel"))
                     
-                    # Process the wheel event
-                    result = self.mouse_handler.on_mouse_wheel(e, single_layer_data)
+                    # Process the wheel event - no need to pass layer_data, the handler has all it needs
+                    result = self.mouse_handler.on_mouse_wheel(e)
                     
                     # Log successful zoom operation
                     if log_event:
@@ -1098,37 +1203,6 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         except Exception as e:
             # Log error
             logger.error(message_manager.get_log_message("L067", str(e)))
-            
-
-    
-    def destroy(self) -> None:
-        """Clean up resources before destroying the widget.
-        
-        This method ensures all timers are cancelled and resources are properly released
-        when the application is closed, preventing memory leaks and CPU usage after exit.
-        """
-        try:
-            # Cancel all pending after() timers in mouse handler
-            if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
-                # Cancel hide timers
-                for after_id in self.mouse_handler._hide_after_ids:
-                    if self.canvas:
-                        try:
-                            self.canvas.after_cancel(after_id)
-                        except Exception:
-                            pass  # Ignore if already cancelled
-                self.mouse_handler._hide_after_ids.clear()
-            
-            # Call parent destroy method
-            super().destroy()
-            
-            # Log successful cleanup
-            logger.debug(message_manager.get_log_message("L067", "PDFOperationApp destroyed successfully"))
-        except Exception as e:
-            # Log error during cleanup
-            logger.error(message_manager.get_log_message("L067", f"Error during PDFOperationApp destroy: {str(e)}"))
-            import traceback
-            logger.error(traceback.format_exc())
     
     def _setup_mouse_events(self, page_count: int | None = None) -> None:
         """Set up mouse events for canvas operations.
@@ -1156,6 +1230,18 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 0: self.base_transform_data,  # Layer 0 = base
             }
             
+            # Store mouse handler state before updating
+            rotation_mode = False
+            shortcut_guide_visible = False
+            if self.mouse_handler is not None:
+                # Check if in rotation mode
+                if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_mode'):
+                    rotation_mode = self.mouse_handler._MouseEventHandler__rotation_mode
+                    
+                # Check if shortcut guide is visible
+                if hasattr(self.mouse_handler, '_MouseEventHandler__keep_rotation_elements_visible'):
+                    shortcut_guide_visible = self.mouse_handler._MouseEventHandler__keep_rotation_elements_visible
+            
             # Update the mouse handler with the layer transform data if it exists
             if self.mouse_handler is not None and hasattr(self.mouse_handler, 'update_state'):
                 self.mouse_handler.update_state(
@@ -1164,22 +1250,19 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     layer_transform_data=layer_transform_data
                 )
             
-            # Clear any existing mouse handler bindings
-            if self.mouse_handler is not None:
-                # Remove existing bindings
+            # We don't need to clear and rebind mouse events on every page change
+            # Only do this if the mouse handler is newly created or bindings are missing
+            if self.mouse_handler is not None and not hasattr(self, '_mouse_events_bound'):
+                # Remove existing bindings only if necessary
                 self.canvas.unbind("<Button-1>")
                 self.canvas.unbind("<B1-Motion>")
                 self.canvas.unbind("<ButtonRelease-1>")
                 self.canvas.unbind("<Button-3>")
                 self.canvas.unbind("<KeyPress>")
                 self.canvas.unbind("<KeyRelease>")
-            
-            # Update the mouse handler state with current page data if it exists
-            if hasattr(self, 'mouse_handler') and self.mouse_handler is not None:
-                self.mouse_handler.update_state(
-                    current_page_index=self.current_page_index,
-                    visible_layers=visible_layers
-                )
+                
+                # Mark that we've bound the events
+                self._mouse_events_bound = True
             
             # Make canvas focusable to receive keyboard events
             self.canvas.config(takefocus=1)
@@ -1189,109 +1272,152 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Explicitly bind mouse events to ensure they work
             # Use a wrapper function to set focus before handling the event
-            def on_mouse_down_wrapper(e):
+            def on_mouse_press_wrapper(e):
                 self.canvas.focus_set()  # Ensure canvas has focus when clicked
                 if self.mouse_handler:
-                    return self.mouse_handler.on_mouse_down(e)
+                    return self.mouse_handler.on_mouse_press(e)
                 return None
                 
             # Bind mouse events to canvas
-            self.canvas.bind("<Button-1>", on_mouse_down_wrapper)
-            self.canvas.bind("<B1-Motion>", self._on_mouse_drag)
-            self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+            self.canvas.bind("<Button-1>", on_mouse_press_wrapper)
+            self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
+            self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
             
             # Bind keyboard shortcuts
-            self.canvas.bind("<KeyPress>", self._on_key_press)
-            self.canvas.bind("<KeyRelease>", self._on_key_release)
+            self.canvas.bind("<KeyPress>", lambda e: self.mouse_handler.on_key_press(e) if self.mouse_handler else None)
+            self.canvas.bind("<KeyRelease>", lambda e: self.mouse_handler.on_key_release(e) if self.mouse_handler else None)
             
             # Bind mouse wheel for zooming
             self._rebind_mouse_wheel()
             
-            # Add key bindings for transform operations
-            self.bind_all("<Control-r>", lambda e: self._reset_transform())
-            
-            # Use MouseEventHandler's handle_zoom_shortcut method for zoom operations
-            def handle_zoom_in(e):
-                # Create mouse handler if needed
-                if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                    self._initialize_mouse_handler()
+            # Restore state after update if needed
+            if rotation_mode:
+                # Schedule restoration of rotation mode after state update
+                self.after_idle(lambda: self._restore_rotation_mode_after_update())
                 
-                # Use the mouse wheel handler with appropriate zoom factor
-                if self.mouse_handler and hasattr(self.mouse_handler, 'on_mouse_wheel'):
-                    # Create a synthetic event with positive delta for zoom in
-                    e.delta = 120  # Positive delta for zoom in
-                    self.mouse_handler.on_mouse_wheel(e)
-            
-            def handle_zoom_out(e):
-                # Create mouse handler if needed
-                if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
-                    self._initialize_mouse_handler()
-                
-                # Use the mouse wheel handler with appropriate zoom factor
-                if self.mouse_handler and hasattr(self.mouse_handler, 'on_mouse_wheel'):
-                    # Create a synthetic event with negative delta for zoom out
-                    e.delta = -120  # Negative delta for zoom out
-                    self.mouse_handler.on_mouse_wheel(e)
-            
-            # Bind zoom keyboard shortcuts
-            self.bind_all("<Control-plus>", handle_zoom_in)
-            self.bind_all("<Control-minus>", handle_zoom_out)
-            self.bind_all("<Control-equal>", handle_zoom_in)  # For keyboards where + is on the = key
-            
-            # Log successful setup
-            logger.debug(message_manager.get_log_message("L422", "From _setup_mouse_events method"))
-            
-            # Log PDF page count if available
-            if page_count > 0:
-                logger.info(message_manager.get_log_message("L318", page_count))
+            if shortcut_guide_visible:
+                # Schedule restoration of shortcut guide after state update
+                self.after_idle(lambda: self._restore_shortcut_guide_after_update())
                 
         except Exception as e:
-            logger.error(message_manager.get_log_message("L423", str(e)))
+            # Log error
+            logger.error(message_manager.get_log_message("L067", str(e)))
             import traceback
             logger.error(traceback.format_exc())
     
-    def _on_mouse_down(self, event: tk.Event) -> None:
-        """Handle mouse button press event."""
-        if self.mouse_handler:
-            self.mouse_handler.on_mouse_down(event)
+    def _restore_rotation_mode_after_update(self) -> None:
+        """Restore rotation mode after mouse handler state update."""
+        if hasattr(self, 'mouse_handler') and self.mouse_handler:
+            # Check if rotation center coordinates are available
+            if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_center_x') and \
+               hasattr(self.mouse_handler, '_MouseEventHandler__rotation_center_y'):
+                center_x = self.mouse_handler._MouseEventHandler__rotation_center_x
+                center_y = self.mouse_handler._MouseEventHandler__rotation_center_y
+                # Fixed: Changed show_feedback_circle to draw_feedback_circle to match the correct method name
+                self.mouse_handler.draw_feedback_circle(center_x, center_y, is_rotating=True)
+                self.mouse_handler.show_guidance_text(message_manager.get_message('M042'), is_rotation=True)
     
-    def _on_mouse_drag(self, event: tk.Event) -> None:
-        """Handle mouse drag event."""
-        if self.mouse_handler:
-            self.mouse_handler.on_mouse_drag(event)
+    def _restore_shortcut_guide_after_update(self) -> None:
+        """Restore shortcut guide after mouse handler state update."""
+        if hasattr(self, 'mouse_handler') and self.mouse_handler:
+            self.mouse_handler._show_shortcut_guide(message_manager.get_message('M049'))
     
-    def _on_mouse_up(self, event: tk.Event) -> None:
-        """Handle mouse button release event."""
-        if self.mouse_handler:
-            self.mouse_handler.on_mouse_up(event)
-            
-    def _on_key_press(self, event: tk.Event) -> None:
-        """Handle keyboard press events."""
-        if self.mouse_handler:
-            self.mouse_handler.on_key_press(event)
-            
-    def _on_key_release(self, event: tk.Event) -> None:
-        """Handle keyboard release events."""
-        if self.mouse_handler and hasattr(self.mouse_handler, 'on_key_release'):
-            self.mouse_handler.on_key_release(event)
-            
-    def _on_mouse_wheel(self, event: tk.Event) -> None:
-        """Handle mouse wheel events for zooming."""
-        try:
-            # Log wheel event with throttling
-            if self._wheel_log_throttle.should_log("wheel_event"):
-                delta = event.delta if hasattr(event, 'delta') else 0
-                logger.debug(message_manager.get_log_message("L424", f"delta={delta}"))
-                
-            # Forward event to mouse handler
-            if self.mouse_handler and self.current_page_index < len(self.base_transform_data):
-                # Call mouse handler's on_mouse_wheel method
-                self.mouse_handler.on_mouse_wheel(event)
-        except Exception as e:
-            logger.error(message_manager.get_log_message("L425", str(e)))
-            import traceback
-            logger.error(traceback.format_exc())
+    def _bind_shortcut_keys(self) -> None:
+        """Bind keyboard shortcuts to functions."""
+        # Bind keyboard shortcuts for PDF navigation
+        self.canvas.bind("<Right>", lambda e: self._on_next_page())
+        self.canvas.bind("<Left>", lambda e: self._on_prev_page())
+        self.canvas.bind("<Up>", lambda e: self._on_first_page())
+        self.canvas.bind("<Down>", lambda e: self._on_last_page())
+        
 
+            
+    def _bind_global_shortcut_keys(self) -> None:
+        """Bind global keyboard shortcuts that should work regardless of focus."""
+        # Get the root window
+        root = self.canvas.winfo_toplevel()
+        
+        # Bind global shortcuts
+        if hasattr(self, 'mouse_handler') and self.mouse_handler:
+            # Toggle shortcut guide with F1 key
+            root.bind_all("<F1>", self.mouse_handler.toggle_shortcut_guide)
+            
+            # Rotation shortcuts
+            root.bind_all("<Control-r>", lambda e: self._on_rotate_clockwise())
+            root.bind_all("<Control-l>", lambda e: self._on_rotate_counterclockwise())
+            
+            # Flip shortcuts
+            root.bind_all("<Control-h>", lambda e: self._on_flip_horizontal())
+            root.bind_all("<Control-v>", lambda e: self._on_flip_vertical())
+            
+            # Log binding of global shortcuts
+            logger.debug(message_manager.get_log_message("L350", "Global shortcut keys bound successfully"))
+    
+    def destroy(self) -> None:
+        """Clean up resources when tab is destroyed."""
+        # Clean up any active timers
+        if hasattr(self, '_update_timer') and self._update_timer:
+            try:
+                self.canvas.after_cancel(self._update_timer)
+                self._update_timer = None
+                logger.debug(message_manager.get_log_message("L351", "Update timer cancelled"))
+            except Exception as e:
+                logger.error(message_manager.get_log_message("L288", str(e)))
+        
+        # Cancel any other timers that might be active
+        for timer_attr in ['_resize_timer', '_load_timer', '_display_timer']:
+            if hasattr(self, timer_attr) and getattr(self, timer_attr):
+                try:
+                    self.canvas.after_cancel(getattr(self, timer_attr))
+                    setattr(self, timer_attr, None)
+                    logger.debug(message_manager.get_log_message("L351", f"{timer_attr} cancelled"))
+                except Exception as e:
+                    logger.error(message_manager.get_log_message("L288", str(e)))
+        
+        # Clean up mouse handler if it exists
+        if hasattr(self, 'mouse_handler') and self.mouse_handler:
+            try:
+                # Fix-5a: Ensure all after timers in mouse handler are cancelled
+                if hasattr(self.mouse_handler, '_hide_after_ids'):
+                    for timer_id in self.mouse_handler._hide_after_ids:
+                        if timer_id:
+                            try:
+                                self.canvas.after_cancel(timer_id)
+                                logger.debug(message_manager.get_log_message("L351", f"Mouse handler timer {timer_id} cancelled"))
+                            except Exception as e_timer:
+                                logger.error(message_manager.get_log_message("L288", f"Error cancelling timer {timer_id}: {str(e_timer)}"))
+                
+                # Fix-5b: Cancel any ctrl check timer
+                if hasattr(self.mouse_handler, '_MouseEventHandler__ctrl_check_timer_id'):
+                    ctrl_timer = self.mouse_handler._MouseEventHandler__ctrl_check_timer_id
+                    if ctrl_timer:
+                        try:
+                            self.canvas.after_cancel(ctrl_timer)
+                            logger.debug(message_manager.get_log_message("L351", "Ctrl check timer cancelled"))
+                        except Exception as e_ctrl:
+                            logger.error(message_manager.get_log_message("L288", f"Error cancelling ctrl timer: {str(e_ctrl)}"))
+                
+                # Call the mouse handler's cleanup method
+                self.mouse_handler.cleanup()
+                logger.debug(message_manager.get_log_message("L352", "Mouse handler cleaned up"))
+            except Exception as e:
+                logger.error(message_manager.get_log_message("L289", str(e)))
+        
+        # Unbind global shortcuts
+        try:
+            root = self.canvas.winfo_toplevel()
+            root.unbind_all("<F1>")
+            root.unbind_all("<Control-r>")
+            root.unbind_all("<Control-l>")
+            root.unbind_all("<Control-h>")
+            root.unbind_all("<Control-v>")
+            logger.debug(message_manager.get_log_message("L539", "Global shortcuts unbound"))
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L290", str(e)))
+        
+        # Call parent destroy method
+        super().destroy()
+        
     def _on_transform_update(self) -> None:
         """Callback when transform data is updated."""
         try:

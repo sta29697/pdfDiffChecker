@@ -1,15 +1,23 @@
 import tkinter as tk
 import time
 import math
+import threading
 from logging import getLogger
-from typing import Dict, List, Tuple, Union, Optional, Callable, TYPE_CHECKING
+from typing import Dict, List, Tuple, Union, Optional, Callable, TYPE_CHECKING, Literal, cast, Any
 
 # Type checking imports
 if TYPE_CHECKING:
-    pass  # Add any type-only imports here when needed
+    from configurations.user_setting_manager import UserSettingManager  # type: ignore
+    from controllers.image_operations import ImageOperations
+
 from configurations.message_manager import get_message_manager
-from configurations.tool_settings import font_family, font_size
+from configurations import tool_settings
 from utils.log_throttle import LogThrottle
+from configurations.user_setting_manager import UserSettingManager  # type: ignore
+from controllers.image_operations import ImageOperations
+
+# Type aliases for canvas anchor positions
+AnchorLiteral = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w", "center"]
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
@@ -30,28 +38,35 @@ class MouseEventHandler:
             current_page_index: int,
             visible_layers: Dict[int, bool],
             on_transform_update: Callable[[], None],
+            user_settings_manager: Optional[Any] = None,
+            image_operations_dict: Optional[Dict[int, Any]] = None,
         ) -> None:
         """Initialize the MouseEventHandler.
 
         Args:
-            layer_transform_data: List of transformation data for each layer
+            layer_transform_data (Dict[int, List[Tuple[float, float, float, float]]]): Transformation data for each layer.
                 Dict[layer_number, List[(rotation, x, y, scale), ...]]
-            current_page_index: Current page index
-            visible_layers: Layer visibility state Dict[layer_number, visibility_state]
-            on_transform_update: Callback after transformation update
+            current_page_index (int): Current page index.
+            visible_layers (Dict[int, bool]): Layer visibility state Dict[layer_number, visibility_state].
+            on_transform_update (Callable[[], None]): Callback function to update the display after transformation.
+            user_settings_manager (Optional[Any]): User settings manager instance. Default is None.
+            image_operations_dict (Optional[Dict[int, Any]]): Dictionary of image operations for each layer. Default is None.
         """
         # Transform data and callbacks
         self.__layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]] = layer_transform_data
         self.__current_page_index: int = current_page_index
         self.__visible_layers: Dict[int, bool] = visible_layers
         self.__on_transform_update: Callable[[], None] = on_transform_update
+        
+        # Store ImageOperations instances by layer ID
+        self.__image_operations_dict: Dict[int, ImageOperations] = {} if image_operations_dict is None else image_operations_dict
 
         # Tracking variables
         self.__dragging: bool = False
         self.__last_mouse_x: float = 0.0
         self.__last_mouse_y: float = 0.0
         
-        # Timer tracking
+        # Timer tracking - after() returns str in tkinter
         self._hide_after_ids: List[Optional[str]] = []
         
         # Rotation parameters
@@ -60,12 +75,24 @@ class MouseEventHandler:
         self.__rotation_center_y: float = 0.0
         self.__rotation_start_time: float = 0.0
         self.__rotation_active: bool = False
+        self.__last_rotation_exit_time: float = 0.0  # Track last rotation exit time for log suppression
+        
+        # Flip flags for each layer and page
+        # Dict[layer_id, List[Tuple[flip_horizontal, flip_vertical], ...]] for each page
+        self.__layer_flip_flags: Dict[int, List[Tuple[bool, bool]]] = {}
+        
+        # Initialize flip flags for all layers
+        self.__initialize_flip_flags()
         
         # Flag to track if shortcut guide was toggled by user
         self.__user_toggled_shortcut_guide: bool = False
         
+        # Flag to track if shortcut guide is currently visible
+        self.__shortcut_guide_visible: bool = False
+        
         # Shortcut guide item IDs
-        self.__shortcut_guide_id: Optional[Tuple[int, int]] = None
+        self.__shortcut_guide_ids: List[Union[int, str]] = []
+        self.__shortcut_guide_timer: Optional[threading.Timer] = None
         
         # Get message manager for localized messages
         self.__msg_mgr = get_message_manager()
@@ -74,17 +101,31 @@ class MouseEventHandler:
         self.__canvas_ref: Optional[tk.Canvas] = None
         
         # Feedback visual elements with improved type annotations
-        self.__feedback_circle_id: Optional[Union[int, str]] = None
+        self.__feedback_circle_id: Optional[Union[int, str, Tuple[int, int], Tuple[str, str]]] = None
         # Type annotation for guidance text ID that can be None, int, str, or tuple of int/str
         self.__guidance_text_id: Optional[Union[int, str, Tuple[int, int], Tuple[str, str]]] = None
         self.__background_id: Optional[Union[int, str]] = None
+        
+        # Initialize user settings manager
+        # Use provided user_settings_manager if available, otherwise create a new instance
+        self.__user_settings_mgr: UserSettingManager = user_settings_manager if user_settings_manager is not None else UserSettingManager()
         # Type annotation for notification text ID that can be None, int, str, or tuple of int/str
         self.__notification_text_id: Optional[Union[int, str, Tuple[int, int], Tuple[str, str]]] = None
         self.__help_display_id: Optional[int] = None
         self.__help_background_id: Optional[int] = None
         
         # UI state
-        self.__shortcut_guide_visible: bool = False
+        # self.__shortcut_guide_visible is already defined at line 67
+        # self.__guidance_text_visible is already defined at line 60
+        # self.__notification_visible is already defined at line 62
+
+        # UI Element Tags
+        self.ROTATION_CENTER_TAG: str = "rotation_center_dot_tag"
+        self.ROTATION_GUIDANCE_TAG: str = "rotation_guidance_text_tag" # Tag for rotation-specific guidance
+        self.GUIDANCE_TEXT_TAG: str = "guidance_text_tag" # Tag for general guidance text
+        self.SHORTCUT_GUIDE_TAG: str = "shortcut_guide_tag" # Tag for shortcut guide elements
+        
+        # UI visibility flags
         self.__guidance_text_visible: bool = False
         self.__notification_visible: bool = False
         
@@ -98,7 +139,7 @@ class MouseEventHandler:
         self.__message_duration: float = 0.5  # Display time in seconds
         
         # Ctrl key check timer
-        self.__ctrl_check_timer_id: Optional[str] = None
+        self.__ctrl_check_timer_id: Optional[int] = None
         self.__ctrl_check_interval: int = 100  # Check every 100ms
         
         # Message manager (for localized text)
@@ -107,6 +148,167 @@ class MouseEventHandler:
         # Log throttles for various events
         self._wheel_log_throttle = LogThrottle(min_interval=0.5)
         self._transform_log_throttle = LogThrottle(min_interval=0.5)
+        
+        # Initialize wheel log time tracking for throttling
+        self._last_wheel_log_time: float = 0.0
+        
+        # Operation throttling to prevent rapid consecutive operations
+        # Last operation timestamp and cooldown period
+        self.__last_operation_time: float = 0.0
+        self.__operation_cooldown: float = 0.3  # 300ms cooldown between operations
+
+    def __initialize_flip_flags(self) -> None:
+        """Initialize flip flags for all layers and pages.
+        
+        This method ensures that flip flags are properly initialized for all layers
+        in the layer_transform_data dictionary.
+        """
+        # Initialize flip flags for each layer that has transform data
+        for layer_id in self.__layer_transform_data.keys():
+            # Create empty list for this layer if it doesn't exist
+            if layer_id not in self.__layer_flip_flags:
+                self.__layer_flip_flags[layer_id] = []
+            
+            # Ensure flip flags exist for all pages in this layer
+            while len(self.__layer_flip_flags[layer_id]) < len(self.__layer_transform_data[layer_id]):
+                # Default is no flipping (False, False) for horizontal and vertical
+                self.__layer_flip_flags[layer_id].append((False, False))
+                
+    def __update_flip_flags_for_layer(self, layer_id: int) -> None:
+        """Update flip flags for a layer, initializing if needed.
+        
+        Args:
+            layer_id (int): Layer ID to update flip flags for
+        """
+        # Initialize flip flags for this layer if not already done
+        if layer_id not in self.__layer_flip_flags:
+            self.__layer_flip_flags[layer_id] = []
+            
+        # Ensure we have enough entries for the current page
+        while len(self.__layer_flip_flags[layer_id]) <= self.__current_page_index:
+            self.__layer_flip_flags[layer_id].append((False, False))  # Default: no flips
+            
+    def get_flip_flags(self, layer_id: int, page_index: int) -> Tuple[bool, bool]:
+        """Get the horizontal and vertical flip flags for a specific layer and page.
+        
+        Args:
+            layer_id (int): Layer ID to get flip flags for
+            page_index (int): Page index to get flip flags for
+            
+        Returns:
+            Tuple[bool, bool]: A tuple containing (horizontal_flip, vertical_flip) flags
+        """
+        # Initialize flip flags for this layer if not already done
+        if layer_id not in self.__layer_flip_flags:
+            return (False, False)  # Default: no flips
+            
+        # Check if we have flip flags for this page
+        if page_index < len(self.__layer_flip_flags[layer_id]):
+            return self.__layer_flip_flags[layer_id][page_index]
+            
+        # If page index is out of range, return default
+        return (False, False)
+
+    def __toggle_flip_flag(self, axis: str) -> None:
+        """Toggle flip flag for the specified axis on all visible layers.
+        
+        Args:
+            axis: The axis to flip, either "x" for horizontal or "y" for vertical
+        """
+        # Apply flip to all visible layers
+        for layer_id, visible in self.__visible_layers.items():
+            if not visible:
+                continue
+                
+            # Check if we have an ImageOperations instance for this layer
+            if layer_id in self.__image_operations_dict:
+                # Use the appropriate flip method from ImageOperations
+                if axis == "x":
+                    # Horizontal flip (mirror across vertical axis)
+                    self.__image_operations_dict[layer_id].flip_horizontal()
+                else:  # axis == "y":
+                    # Vertical flip (mirror across horizontal axis)
+                    self.__image_operations_dict[layer_id].flip_vertical()
+                    
+                # Ensure we update the flip flags to match the operation
+                # Initialize or update flip flags for this layer
+                self.__update_flip_flags_for_layer(layer_id)
+                    
+                # Get current flip flags
+                current_h_flip, current_v_flip = self.__layer_flip_flags[layer_id][self.__current_page_index]
+                
+                # Toggle appropriate flip flag based on axis
+                if axis == "x":
+                    # Toggle horizontal flip flag
+                    self.__layer_flip_flags[layer_id][self.__current_page_index] = (not current_h_flip, current_v_flip)
+                else:  # axis == "y"
+                    # Toggle vertical flip flag
+                    self.__layer_flip_flags[layer_id][self.__current_page_index] = (current_h_flip, not current_v_flip)
+                continue
+                
+            # Fall back to coordinate-based flipping if no ImageOperations instance
+            # Initialize or update flip flags for this layer
+            self.__update_flip_flags_for_layer(layer_id)
+            
+            # Get current flip flags
+            current_h_flip, current_v_flip = self.__layer_flip_flags[layer_id][self.__current_page_index]
+            
+            # Toggle appropriate flip flag based on axis
+            if axis == "x":
+                # Toggle horizontal flip flag
+                self.__layer_flip_flags[layer_id][self.__current_page_index] = (not current_h_flip, current_v_flip)
+            else:  # axis == "y"
+                # Toggle vertical flip flag
+                self.__layer_flip_flags[layer_id][self.__current_page_index] = (current_h_flip, not current_v_flip)
+                
+            # Update transformation data based on new flip flags
+            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                # Get current transformation data
+                r, tx, ty, s = self.__layer_transform_data[layer_id][self.__current_page_index]
+                
+                # Get updated flip flags
+                h_flip, v_flip = self.__layer_flip_flags[layer_id][self.__current_page_index]
+                
+                # Apply scale sign changes based on flip flags
+                # For horizontal flip, negate the scale
+                # For vertical flip, negate the scale
+                # If both flips are active, scale remains positive
+                scale_sign = 1
+                if h_flip != v_flip:  # If only one flip is active, negate scale
+                    scale_sign = -1
+                
+                # Update transformation with correct scale sign
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (r, tx, ty, abs(s) * scale_sign)
+                
+                # Trigger transform update callback
+                # Direct call without unnecessary check as function is always truthy
+                self.__on_transform_update()
+    
+    def __is_other_key_pressed(self, event: tk.Event) -> bool:
+        """Check if any key other than Ctrl is effectively pressed along with Ctrl.
+        This is a helper to distinguish Ctrl-only from Ctrl+Key combinations.
+
+        Args:
+            event: The key event.
+
+        Returns:
+            True if another key (modifier or regular) seems to be part of the event, False otherwise.
+        """
+        # This is a simplified check. Tkinter's event.keysym for modifier-only presses
+        # usually gives the modifier itself (e.g., "Control_L").
+        # If event.keysym is something else (like "r", "L", "Shift_L", etc.) while Ctrl is held,
+        # it means it's a Ctrl+Key combination.
+        if event.keysym not in ("Control_L", "Control_R"):
+            return True
+        
+        # Further check: if event.state has bits other than the Ctrl bit (0x4),
+        # it implies other modifiers like Shift (0x1), Alt, etc., are also pressed.
+        # Ctrl state is 0x4. If event.state is, for example, 0x5 (Ctrl+Shift),
+        # then (event.state & ~0x4) would be non-zero.
+        if isinstance(event.state, int) and (event.state & ~0x4) != 0: # Check if other modifier bits are set
+            return True
+            
+        return False
         
         # List to store after IDs for cancellation is already defined at line 55
 
@@ -119,6 +321,12 @@ class MouseEventHandler:
         Returns:
             String to prevent default handling or None
         """
+        # Cancel any existing timers to prevent UI conflicts
+        self.__cancel_all_timers()
+        
+        # Hide any existing feedback circles
+        self.hide_feedback_circle()
+        
         # Check if Ctrl key is pressed
         ctrl_pressed = False
         if event and hasattr(event, 'state'):
@@ -132,32 +340,80 @@ class MouseEventHandler:
         rotation_center_x = self.__rotation_center_x
         rotation_center_y = self.__rotation_center_y
         
-        # Set default rotation center if not already set
+        # Set default rotation center if not already set(rotate right)
         if not was_in_rotation_mode:
-            # Use canvas center as default rotation center
-            if self.__canvas_ref:
-                canvas_width = self.__canvas_ref.winfo_width()
-                canvas_height = self.__canvas_ref.winfo_height()
-                self.__rotation_center_x = canvas_width / 2
-                self.__rotation_center_y = canvas_height / 2
-                
-                # Temporarily activate rotation mode to show feedback
-                self.__rotation_mode = True
-                self.__rotation_active = False
-                self.__rotation_start_time = time.time()
-                
-                # Show rotation center immediately
-                self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+            # Calculate image center based on visible layers' positions and dimensions
+            # instead of using canvas center
+            image_center_x = None
+            image_center_y = None
+            
+            # Try to find the center of the first visible layer
+            for layer_id, visible in self.__visible_layers.items():
+                if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                    # Get current transformation data
+                    transform_data = self.__layer_transform_data[layer_id][self.__current_page_index]
+                    _, x, y, s = transform_data[:4]
+                    
+                    # Calculate image center based on transformation data
+                    # Estimate image dimensions (typical PDF page size)
+                    estimated_width = 800
+                    estimated_height = 1100
+                    
+                    # Calculate center position based on position and scale
+                    image_center_x = x + (estimated_width * abs(s)) / 2
+                    image_center_y = y + (estimated_height * abs(s)) / 2
+                    break
+            
+            # If we couldn't find an image center, fall back to canvas center
+            if image_center_x is None or image_center_y is None:
+                if self.__canvas_ref:
+                    canvas_width = self.__canvas_ref.winfo_width()
+                    canvas_height = self.__canvas_ref.winfo_height()
+                    image_center_x = canvas_width / 2
+                    image_center_y = canvas_height / 2
+                else:
+                    # Default values if canvas reference is not available
+                    image_center_x = 0
+                    image_center_y = 0
+            
+            # Set rotation center to image center
+            self.__rotation_center_x = image_center_x
+            self.__rotation_center_y = image_center_y
+            
+            # Temporarily activate rotation mode to show feedback
+            self.__rotation_mode = True
+            self.__rotation_active = False
+            self.__rotation_start_time = time.time()
+            
+            # Only show feedback circle if already in rotation mode to prevent unwanted red dots
+            if was_in_rotation_mode:
+                # Do not show feedback circle for shortcut operations - prevent unwanted red dots
                 self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation mode
         
         # Rotate visible layers 90 degrees clockwise
         self.__rotate_by_angle(90)
+        
+        # Reset translation to prevent image from moving off-screen after multiple rotations
+        for layer_id, visible in self.__visible_layers.items():
+            if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                # Get current transform data
+                rotation, tx, ty, scale = self.__layer_transform_data[layer_id][self.__current_page_index]
+                # Reset translation while keeping rotation and scale
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (rotation, 0.0, 0.0, scale)
                 
         # Update display
         self.__on_transform_update()
         
-        # Show notification with warning style
+        # First draw shortcut guide (fixed position in viewport)
+        self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+        
+        # Then show notification and raise it to the top
         self.show_notification(self.__msg_mgr.get_message('M044'), 0.5, warning=True)  # Rotated 90° right
+        # Ensure notification is always on top
+        if self.__notification_text_id and self.__canvas_ref:
+            self.__canvas_ref.tag_raise("notification_tag")
+        if self.__notification_text_id and self.__canvas_ref and isinstance(self.__notification_text_id, (str, int)):
+            self.__canvas_ref.tag_raise(self.__notification_text_id)  # Ensure notification is on top
         
         # Restore rotation mode state if it was active or Ctrl is pressed
         if was_in_rotation_mode or ctrl_pressed:
@@ -168,21 +424,22 @@ class MouseEventHandler:
             
             # Only show feedback and guidance if in rotation mode or Ctrl is pressed
             if self.__rotation_mode or ctrl_pressed:
-                self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                # Do not show feedback circle for shortcut operations - prevent unwanted red dots
                 self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
         else:
             # If we weren't in rotation mode before and Ctrl is not pressed, exit it after the rotation
             self.__rotation_mode = False
             self.__rotation_active = False
             
-            # Hide the feedback after a short delay
-            if self.__canvas_ref:
+            # Hide the feedback after a short delay, but only if we were in rotation mode
+            # This prevents showing feedback circle when not in rotation mode
+            if self.__canvas_ref and was_in_rotation_mode:
                 # Use longer delay (2000ms) for better visibility after rotation
                 # Store the after_id for later cancellation
-                aid1 = self.__canvas_ref.after(2000, self.hide_feedback_circle)
+                # Only hide guidance text after a delay
+                # No need to hide feedback circle as it's not shown for shortcuts
                 aid2 = self.__canvas_ref.after(2000, self.hide_guidance_text)
-                # Add after IDs to the list for possible cancellation
-                self._hide_after_ids.append(aid1)
+                # Add after ID to the list for possible cancellation
                 self._hide_after_ids.append(aid2)
         
         # Log rotation with proper multilingual message
@@ -194,11 +451,18 @@ class MouseEventHandler:
         """Handle Ctrl+L keyboard shortcut for 90-degree counterclockwise rotation.
         
         Args:
-            event: Keyboard event (optional)
+            event (tk.Event | None): Keyboard event that triggered this action. Default is None.
             
         Returns:
-            String to prevent default handling or None
+            str | None: String to prevent default handling or None.
         """
+        # Cancel any existing timers to prevent UI conflicts
+        self.__cancel_all_timers()
+        
+        # Always hide any existing feedback circles to prevent red dot display
+        # This is critical to fix the issue with red dots appearing when switching between rotation modes
+        self.hide_feedback_circle()
+        
         # Check if Ctrl key is pressed
         ctrl_pressed = False
         if event and hasattr(event, 'state'):
@@ -212,32 +476,80 @@ class MouseEventHandler:
         rotation_center_x = self.__rotation_center_x
         rotation_center_y = self.__rotation_center_y
         
-        # Set default rotation center if not already set
+        # Set default rotation center if not already set(rotate left)
         if not was_in_rotation_mode:
-            # Use canvas center as default rotation center
-            if self.__canvas_ref:
-                canvas_width = self.__canvas_ref.winfo_width()
-                canvas_height = self.__canvas_ref.winfo_height()
-                self.__rotation_center_x = canvas_width / 2
-                self.__rotation_center_y = canvas_height / 2
-                
-                # Temporarily activate rotation mode to show feedback
-                self.__rotation_mode = True
-                self.__rotation_active = False
-                self.__rotation_start_time = time.time()
-                
-                # Show rotation center immediately
-                self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+            # Calculate image center based on visible layers' positions and dimensions
+            # instead of using canvas center
+            image_center_x = None
+            image_center_y = None
+            
+            # Try to find the center of the first visible layer
+            for layer_id, visible in self.__visible_layers.items():
+                if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                    # Get current transformation data
+                    transform_data = self.__layer_transform_data[layer_id][self.__current_page_index]
+                    _, x, y, s = transform_data[:4]
+                    
+                    # Calculate image center based on transformation data
+                    # Estimate image dimensions (typical PDF page size)
+                    estimated_width = 800
+                    estimated_height = 1100
+                    
+                    # Calculate center position based on position and scale
+                    image_center_x = x + (estimated_width * abs(s)) / 2
+                    image_center_y = y + (estimated_height * abs(s)) / 2
+                    break
+            
+            # If we couldn't find an image center, fall back to canvas center
+            if image_center_x is None or image_center_y is None:
+                if self.__canvas_ref:
+                    canvas_width = self.__canvas_ref.winfo_width()
+                    canvas_height = self.__canvas_ref.winfo_height()
+                    image_center_x = canvas_width / 2
+                    image_center_y = canvas_height / 2
+                else:
+                    # Default values if canvas reference is not available
+                    image_center_x = 0
+                    image_center_y = 0
+            
+            # Set rotation center to image center
+            self.__rotation_center_x = image_center_x
+            self.__rotation_center_y = image_center_y
+            
+            # Temporarily activate rotation mode to show feedback
+            self.__rotation_mode = True
+            self.__rotation_active = False
+            self.__rotation_start_time = time.time()
+            
+            # Only show feedback circle if already in rotation mode to prevent unwanted red dots
+            if was_in_rotation_mode:
+                # Do not show feedback circle for shortcut operations - prevent unwanted red dots
                 self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation mode
         
         # Rotate visible layers 90 degrees counterclockwise
         self.__rotate_by_angle(-90)
+        
+        # Reset translation to prevent image from moving off-screen after multiple rotations
+        for layer_id, visible in self.__visible_layers.items():
+            if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                # Get current transform data
+                rotation, tx, ty, scale = self.__layer_transform_data[layer_id][self.__current_page_index]
+                # Reset translation while keeping rotation and scale
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (rotation, 0.0, 0.0, scale)
                 
         # Update display
         self.__on_transform_update()
         
-        # Show notification with warning style
+        # Draw shortcut guide first (fixed position in viewport)
+        self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+        
+        # Then show notification and raise it to the top
         self.show_notification(self.__msg_mgr.get_message('M045'), 0.5, warning=True)  # Rotated 90° left
+        # Ensure notification is always on top
+        if self.__notification_text_id and self.__canvas_ref:
+            self.__canvas_ref.tag_raise("notification_tag")
+        if self.__notification_text_id and self.__canvas_ref and isinstance(self.__notification_text_id, (str, int)):
+            self.__canvas_ref.tag_raise(self.__notification_text_id)  # Ensure notification is on top
         
         # Restore rotation mode state if it was active or Ctrl is pressed
         if was_in_rotation_mode or ctrl_pressed:
@@ -248,21 +560,21 @@ class MouseEventHandler:
             
             # Only show feedback and guidance if in rotation mode or Ctrl is pressed
             if self.__rotation_mode or ctrl_pressed:
-                self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                # Do not show feedback circle for shortcut operations - prevent unwanted red dots
                 self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
         else:
             # If we weren't in rotation mode before and Ctrl is not pressed, exit it after the rotation
             self.__rotation_mode = False
             self.__rotation_active = False
-            
-            # Hide the feedback after a short delay
-            if self.__canvas_ref:
+            # Hide the feedback after a short delay, but only if we were in rotation mode
+            # This prevents showing feedback circle when not in rotation mode
+            if self.__canvas_ref and was_in_rotation_mode:
                 # Use longer delay (2000ms) for better visibility after rotation
                 # Store the after_id for later cancellation
-                aid1 = self.__canvas_ref.after(2000, self.hide_feedback_circle)
+                # Only hide guidance text after a delay
+                # No need to hide feedback circle as it's not shown for shortcuts
                 aid2 = self.__canvas_ref.after(2000, self.hide_guidance_text)
-                # Add after IDs to the list for possible cancellation
-                self._hide_after_ids.append(aid1)
+                # Add after ID to the list for possible cancellation
                 self._hide_after_ids.append(aid2)
         
         # Log rotation with proper multilingual message
@@ -275,16 +587,11 @@ class MouseEventHandler:
         
         Args:
             event: Keyboard event (optional)
+            
+        Returns:
+            String to prevent default handling or None
         """
-        # Check if Ctrl key is pressed
-        ctrl_pressed = False
-        if event and hasattr(event, 'state'):
-            # Ensure state is an integer before performing bitwise operation
-            if isinstance(event.state, int):
-                ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
-        
-        # Save rotation mode state
-        was_in_rotation_mode = self.__rotation_mode
+        self.__cancel_all_timers() # Cancel previous timers
         
         # Clear existing UI elements to prevent duplication
         if self.__canvas_ref:
@@ -296,44 +603,33 @@ class MouseEventHandler:
         # Log the vertical flip operation
         logger.debug(self.__msg_mgr.get_message("L418"))
         
+        # Use the common toggle flip flag method for vertical flip (y-axis)
+        self.__toggle_flip_flag("y")
+        
+        # Reset translation to prevent image from moving off-screen after multiple flips
         for layer_id, visible in self.__visible_layers.items():
-            if not visible:
-                continue
-                
-            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                
-                # Vertical flip: Invert the Y-scale by changing sign
-                # Keep the same rotation angle and X-position
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (r, x, y, -s)
+            if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                # Get current transform data
+                rotation, tx, ty, scale = self.__layer_transform_data[layer_id][self.__current_page_index]
+                # Reset translation while keeping rotation and scale
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (rotation, 0.0, 0.0, scale)
         
         # Update display
         self.__on_transform_update()
         
-        # Show notification with warning style
-        self.show_notification(self.__msg_mgr.get_message('M046'), 0.5, warning=True)  # Flipped vertically
+        # Draw shortcut guide first (fixed position in viewport)
+        self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
         
-        # Show feedback and handle rotation mode
-        if self.__canvas_ref:
-            canvas_width = self.__canvas_ref.winfo_width()
-            canvas_height = self.__canvas_ref.winfo_height()
-            
-            # If in rotation mode or Ctrl is pressed, maintain rotation mode
-            if was_in_rotation_mode or ctrl_pressed:
-                self.__rotation_mode = True
-                # Show center point immediately and keep it visible
-                self.show_feedback_circle(canvas_width/2, canvas_height/2, is_rotating=True)
-                self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
-            else:
-                # Show center point briefly and hide after delay
-                self.show_feedback_circle(canvas_width/2, canvas_height/2, is_rotating=True)
-                # Use longer delay (2000ms) for better visibility after rotation
-                # Store the after_id for later cancellation
-                aid1 = self.__canvas_ref.after(2000, self.hide_feedback_circle)
-                aid2 = self.__canvas_ref.after(2000, self.hide_guidance_text)
-                # Add after IDs to the list for possible cancellation
-                self._hide_after_ids.append(aid1)
-                self._hide_after_ids.append(aid2)
+        # Then show notification and raise it to the top
+        self.show_notification(self.__msg_mgr.get_message('M046'), 0.5, warning=True)  # Flipped vertically
+        # Ensure notification is always on top
+        if self.__notification_text_id and self.__canvas_ref:
+            self.__canvas_ref.tag_raise("notification_tag")
+            # Only hide guidance text after a delay
+            # No need to hide feedback circle as it's not shown for shortcuts
+            aid2 = self.__canvas_ref.after(2000, self.hide_guidance_text)
+            # Add after ID to the list for possible cancellation
+            self._hide_after_ids.append(aid2)
         
         return "break"  # Prevent default handling
         
@@ -342,15 +638,12 @@ class MouseEventHandler:
         
         Args:
             event: Keyboard event (optional)
+            
+        Returns:
+            String to prevent default handling or None
         """
-        # Check if Ctrl key is pressed
-        ctrl_pressed = False
-        if event and hasattr(event, 'state'):
-            # Ensure state is an integer before performing bitwise operation
-            if isinstance(event.state, int):
-                ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
-        
-        # Save rotation mode state
+        self.__cancel_all_timers() # Cancel previous timers
+        # Save rotation mode state before operations
         was_in_rotation_mode = self.__rotation_mode
         
         # Clear existing UI elements to prevent duplication
@@ -363,444 +656,402 @@ class MouseEventHandler:
         # Log the horizontal flip operation
         logger.debug(self.__msg_mgr.get_message("L419"))
         
-        # Apply horizontal flip to all visible layers
+        # Use the common toggle flip flag method for horizontal flip (x-axis)
+        self.__toggle_flip_flag("x")
+        
+        # Reset translation to prevent image from moving off-screen after multiple flips
         for layer_id, visible in self.__visible_layers.items():
-            if not visible:
-                continue
-                
-            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                
-                # Horizontal flip: Apply 180 degree rotation
-                # This effectively flips the image horizontally
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (r + 180, x, y, s)
+            if visible and layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                # Get current transform data
+                rotation, tx, ty, scale = self.__layer_transform_data[layer_id][self.__current_page_index]
+                # Reset translation while keeping rotation and scale
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (rotation, 0.0, 0.0, scale)
         
         # Update display
         self.__on_transform_update()
         
-        # Show notification with warning style
+        # Draw shortcut guide first (fixed position in viewport)
+        self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+        
+        # Then show notification and raise it to the top
         self.show_notification(self.__msg_mgr.get_message('M047'), 0.5, warning=True)  # Flipped horizontally
+        # Ensure notification is always on top
+        if self.__notification_text_id and self.__canvas_ref:
+            self.__canvas_ref.tag_raise("notification_tag")
+        if self.__notification_text_id and self.__canvas_ref and isinstance(self.__notification_text_id, (str, int)):
+            self.__canvas_ref.tag_raise(self.__notification_text_id)  # Ensure notification is on top
         
         # Show feedback and handle rotation mode
         if self.__canvas_ref:
-            canvas_width = self.__canvas_ref.winfo_width()
-            canvas_height = self.__canvas_ref.winfo_height()
-            
+            # Check if Ctrl key is pressed
+            ctrl_pressed = False
+            if event and hasattr(event, 'state') and isinstance(event.state, int):
+                ctrl_pressed = (event.state & 0x4) != 0
+                
             # If in rotation mode or Ctrl is pressed, maintain rotation mode
             if was_in_rotation_mode or ctrl_pressed:
                 self.__rotation_mode = True
-                # Show center point immediately and keep it visible
-                self.show_feedback_circle(canvas_width/2, canvas_height/2, is_rotating=True)
+                # Do not show feedback circle for shortcut operations - prevent unwanted red dots
                 self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
             else:
-                # Show center point briefly and hide after delay
-                self.show_feedback_circle(canvas_width/2, canvas_height/2, is_rotating=True)
-                # Use longer delay (2000ms) for better visibility after rotation
-                # Store the after_id for later cancellation
-                aid1 = self.__canvas_ref.after(2000, self.hide_feedback_circle)
+                # Only hide guidance text after a delay
+                # No need to hide feedback circle as it's not shown for shortcuts
                 aid2 = self.__canvas_ref.after(2000, self.hide_guidance_text)
-                # Add after IDs to the list for possible cancellation
-                self._hide_after_ids.append(aid1)
+                # Add after ID to the list for possible cancellation
                 self._hide_after_ids.append(aid2)
         
         return "break"  # Prevent default handling
         
-    def show_feedback_circle(self, x: float, y: float, is_rotating: bool = False) -> None:
-        """Show a feedback circle at the specified coordinates.
+    def draw_feedback_circle(self, x: float, y: float, is_rotating: bool = False) -> None:
+        """Draw a feedback circle at the specified coordinates.
         
         Args:
-            x: X-coordinate for the feedback circle
-            y: Y-coordinate for the feedback circle
-            is_rotating: Whether the circle is for rotation feedback
+            x (float): X-coordinate for the feedback circle.
+            y (float): Y-coordinate for the feedback circle.
+            is_rotating (bool): If True, indicates this is for rotation mode which may affect styling.
+                Default is False.
         """
-        # Cancel any existing hide timers before showing new feedback
-        self.__cancel_all_timers()
+        # Ensure canvas reference is available
+        if self.__canvas_ref is None:
+            # Log missing canvas reference if attempting to draw
+            logger.warning(self.__msg_mgr.get_message("L527")) # L527: Canvas reference is not set.
+            return
+
+        # Delete the old dot if it exists by its specific tag to prevent duplicates
+        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+        self.__canvas_ref.delete(self.ROTATION_CENTER_TAG)
+
+        # Get user settings for feedback circle appearance
+        radius = int(self.__user_settings_mgr.get_setting("feedback_circle_radius", 4))
         
-        # Clear any existing feedback circle
-        self.hide_feedback_circle()
+        # Get colors from user settings
+        fill_color = self.__user_settings_mgr.get_setting("feedback_circle_fill", "#ff0000") # Default: red
+        outline_color = self.__user_settings_mgr.get_setting("feedback_circle_outline", "#ffffff") # Default: white
+        outline_width = int(self.__user_settings_mgr.get_setting("feedback_circle_outline_width", 1))
         
-        # Store the rotation center coordinates to prevent them from changing
-        if is_rotating:
-            self.__rotation_center_x = x
-            self.__rotation_center_y = y
-        
-        if self.__canvas_ref:
-            # Create a background circle for better visibility
-            # Smaller background for less visual interference
-            background_radius = 10
-            background_color = "#FFFFFF" if is_rotating else "#555555"
-            
-            # Create the background circle with transparency
-            self.__background_id = self.__canvas_ref.create_oval(
-                x - background_radius, y - background_radius,
-                x + background_radius, y + background_radius,
-                fill=background_color, outline="", stipple="gray50"
+        # Create the outer circle (white outline for better visibility)
+        if outline_width > 0:
+            outer_circle_id = self.__canvas_ref.create_oval(
+                x - (radius + outline_width), 
+                y - (radius + outline_width), 
+                x + (radius + outline_width), 
+                y + (radius + outline_width),
+                fill=outline_color,
+                outline="",
+                tags=(self.ROTATION_CENTER_TAG,)
             )
+        
+        # Create the inner circle (red fill)
+        inner_circle_id = self.__canvas_ref.create_oval(
+            x - radius, y - radius, x + radius, y + radius,
+            fill=fill_color,
+            outline="",
+            tags=(self.ROTATION_CENTER_TAG,)
+        )
+        
+        # Store the IDs for later reference
+        if outline_width > 0:
+            self.__feedback_circle_id = (outer_circle_id, inner_circle_id)
+        else:
+            self.__feedback_circle_id = inner_circle_id
             
-            # Create the main feedback circle
-            # Smaller circle for more precise indication
-            circle_radius = 4
-            # Use red color for rotation mode as requested
-            circle_color = "#FF0000" if is_rotating else "#FFFFFF"
-            self.__feedback_circle_id = self.__canvas_ref.create_oval(
-                x - circle_radius, y - circle_radius,
-                x + circle_radius, y + circle_radius,
-                fill=circle_color, outline="#000000", width=1
-            )
+        # Add a pulsing effect if supported and enabled in user settings
+        pulse_effect = self.__user_settings_mgr.get_setting("feedback_circle_pulse", False)
+        if pulse_effect and hasattr(self.__canvas_ref, "after"):
+            # Create a simple pulse effect by alternating opacity
+            def pulse_animation(count=0):
+                if not self.__feedback_circle_id or count >= 6:  # Limit to prevent infinite animation
+                    return
+                    
+                # Toggle between normal and slightly larger size
+                if count % 2 == 0:
+                    self.__canvas_ref.itemconfig(inner_circle_id, fill=fill_color)
+                    if outline_width > 0:
+                        self.__canvas_ref.itemconfig(outer_circle_id, fill=outline_color)
+                else:
+                    # Use a slightly lighter color for the pulse effect
+                    lighter_fill = self.__lighten_color(fill_color, 0.3)
+                    lighter_outline = self.__lighten_color(outline_color, 0.3)
+                    self.__canvas_ref.itemconfig(inner_circle_id, fill=lighter_fill)
+                    if outline_width > 0:
+                        self.__canvas_ref.itemconfig(outer_circle_id, fill=lighter_outline)
+                
+                # Schedule next pulse
+                after_id = self.__canvas_ref.after(300, lambda: pulse_animation(count + 1))
+                self._hide_after_ids.append(after_id)
             
-            # Store the center point coordinates for rotation
-            self.__rotation_center_x = x
-            self.__rotation_center_y = y
+            # Start the pulse animation
+            pulse_animation()
+        
+        # Log the creation of the feedback circle
+        logger.debug(self.__msg_mgr.get_message("L518").format(x, y))
+        
+    def __lighten_color(self, color_hex: str, factor: float = 0.3) -> str:
+        """Lighten a hex color by the specified factor.
+        
+        Args:
+            color_hex: Hex color string (e.g., "#ff0000")
+            factor: Factor by which to lighten (0.0-1.0)
             
-            # Log the creation of the feedback circle
-            logger.debug(self.__msg_mgr.get_message("L504").format(x, y, is_rotating))
-    
+        Returns:
+            Lightened hex color string
+        """
+        try:
+            # Remove '#' if present
+            color = color_hex.lstrip('#')
+            
+            # Convert to RGB
+            r = int(color[0:2], 16)
+            g = int(color[2:4], 16)
+            b = int(color[4:6], 16)
+            
+            # Lighten each component
+            r = min(255, int(r + (255 - r) * factor))
+            g = min(255, int(g + (255 - g) * factor))
+            b = min(255, int(b + (255 - b) * factor))
+            
+            # Convert back to hex
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except Exception:
+            # Return original color if any error occurs
+            return color_hex
+
     def hide_feedback_circle(self) -> None:
         """Hide the feedback circle if it exists."""
         # Remove the feedback circle from the canvas
         if self.__canvas_ref:
+            # Delete all items tagged with ROTATION_CENTER_TAG
+            assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+            self.__canvas_ref.delete(self.ROTATION_CENTER_TAG)
+            
+            # Reset the stored ID if any, as it's no longer valid
             if self.__feedback_circle_id is not None:
                 try:
-                    self.__canvas_ref.delete(self.__feedback_circle_id)
-                    self.__feedback_circle_id = None
+                    # Handle both single ID and tuple of IDs
+                    if isinstance(self.__feedback_circle_id, tuple):
+                        # Delete each ID in the tuple separately
+                        for circle_id in self.__feedback_circle_id:
+                            self.__canvas_ref.delete(circle_id)
+                    else:
+                        # Delete single ID
+                        self.__canvas_ref.delete(self.__feedback_circle_id)
                 except Exception as e:
                     # Log error when deleting feedback circle
                     logger.error(self.__msg_mgr.get_message("L505").format(str(e)))
+                self.__feedback_circle_id = None
             
             if self.__background_id is not None:
-                try:
-                    self.__canvas_ref.delete(self.__background_id)
-                    self.__background_id = None
-                except Exception as e:
-                    # Log error when deleting background
-                    logger.error(self.__msg_mgr.get_message("L506").format(str(e)))
+                self.__background_id = None # Also reset this if it was used
+        
+        # Log the action of hiding the feedback circle
+        logger.debug(self.__msg_mgr.get_message("L519", "Feedback circle (red dot) hidden.")) # L519: Feedback circle (red dot) hidden.
     
-    def __cancel_all_timers(self) -> None:
-        """Cancel all pending after callbacks to prevent overlapping timers."""
-        if self.__canvas_ref:
-            for after_id in self._hide_after_ids:
-                try:
-                    # Convert to string for type compatibility with tkinter
-                    after_id_str = str(after_id) if after_id is not None else ""
-                    self.__canvas_ref.after_cancel(after_id_str)
-                except Exception:
-                    pass  # Ignore if already cancelled
-            
-            # Clear the list
-            self._hide_after_ids.clear()
-    
+    # __cancel_all_timers method has been moved to line 954
+    # with improved implementation including Ctrl check timer cancellation
+
     def show_guidance_text(self, message: str, is_rotation: bool = False) -> None:
-        """Show guidance text at the bottom left of the canvas.
+        """Show guidance text on the canvas with a styled background.
         
         Args:
             message: The message to display
-            is_rotation: Whether the guidance is for rotation mode
+            is_rotation: Whether this is rotation-specific guidance
         """
-        # Cancel any existing hide timers before showing new guidance
-        self.__cancel_all_timers()
+        if not self.__canvas_ref:
+            logger.warning(self.__msg_mgr.get_message("L527"))
+            return
         
-        # Clear any existing guidance text
+        # Log the request to show guidance text
+        logger.debug(self.__msg_mgr.get_message("L540").format(f"Showing guidance text: {message}, is_rotation: {is_rotation}"))
+        
+        # Hide any existing guidance text first
         self.hide_guidance_text()
         
-        if self.__canvas_ref and message:
-            try:
-                # Set the current message and mark as visible
-                self.__current_message = message
-                self.__guidance_text_visible = True
-                
-                # Position at the bottom left of the canvas as requested
-                canvas_height = self.__canvas_ref.winfo_height()
-                
-                # Use smaller font size for less intrusive display
-                guidance_font_size = font_size - 2
-                
-                # Position in the bottom left corner with some padding
-                text_x = 20
-                text_y = canvas_height - 20
-                
-                # Create text with background for better visibility
-                # Use red for rotation mode as requested
-                background_color = "#FFFFFF" if is_rotation else "#555555"
-                text_color = "#FF0000" if is_rotation else "#FFFFFF"
-                
-                # Create the main guidance text first at temporary position (0,0) to measure its size
-                text_id = self.__canvas_ref.create_text(
-                    0, 0,
-                    text=message,
-                    fill=text_color,
-                    font=(font_family, guidance_font_size, "bold"),
-                    anchor="nw"  # Northwest anchor for left alignment
-                )
-                
-                # Get the actual text dimensions after drawing
-                x1, y1, x2, y2 = self.__canvas_ref.bbox(text_id)
-                text_width = x2 - x1
-                text_height = y2 - y1
-                
-                # Move text to the correct position
-                self.__canvas_ref.coords(text_id, text_x, text_y - 5)
-                
-                # Create text background with red border for rotation mode based on actual text size
-                text_bg = self.__canvas_ref.create_rectangle(
-                    text_x - 6, text_y - 5 - 2, 
-                    text_x + text_width + 6, text_y - 5 + text_height + 2,
-                    fill=background_color, 
-                    outline="#FF0000" if is_rotation else "", 
-                    width=2 if is_rotation else 0
-                )
-                
-                # Raise text above background to ensure visibility
-                self.__canvas_ref.tag_raise(text_id, text_bg)
-                
-                # Store IDs as a tuple
-                self.__guidance_text_id = (text_bg, text_id)
-                self.__guidance_text_visible = True
-                
-                # Log guidance text display
-                logger.debug(self.__msg_mgr.get_message("L510").format(message))
-            except Exception as e:
-                # Log error when creating guidance text
-                logger.error(self.__msg_mgr.get_message("L521").format(str(e)))
-    
-    def hide_guidance_text(self) -> None:
-        """Hide the guidance text if it exists."""
-        if self.__canvas_ref and self.__guidance_text_id is not None:
-            try:
-                # Check if guidance_text_id is a tuple before unpacking
-                if isinstance(self.__guidance_text_id, tuple) and len(self.__guidance_text_id) == 2:
-                    bg_id, text_id = self.__guidance_text_id
-                else:
-                    # If not a tuple, handle as a single ID
-                    bg_id = self.__guidance_text_id
-                    text_id = None
-                
-                # Delete both background and text
-                self.__canvas_ref.delete(bg_id)
-                if text_id is not None: self.__canvas_ref.delete(text_id)
-                
-                # Reset tracking variables
-                self.__guidance_text_id = None
-                self.__guidance_text_visible = False
-                
-                # Log guidance text hiding
-                logger.debug(self.__msg_mgr.get_message("L511"))
-            except Exception as e:
-                # Log error when hiding guidance text
-                logger.error(self.__msg_mgr.get_message("L522").format(str(e)))
-    
-    def hide_notification(self) -> None:
-        """Hide the notification if it exists."""
-        if self.__canvas_ref and self.__notification_text_id is not None:
-            try:
-                # Check if notification_text_id is a tuple before unpacking
-                if isinstance(self.__notification_text_id, tuple) and len(self.__notification_text_id) == 2:
-                    bg_id, text_id = self.__notification_text_id
-                else:
-                    # If not a tuple, handle as a single ID
-                    bg_id = self.__notification_text_id
-                    text_id = None
-                
-                # Delete both background and text
-                self.__canvas_ref.delete(bg_id)
-                if text_id is not None: self.__canvas_ref.delete(text_id)
-                
-                # Reset tracking variables
-                self.__notification_text_id = None
-                self.__notification_visible = False
-                
-                # Log notification hiding
-                logger.debug(self.__msg_mgr.get_message("L511"))
-            except Exception as e:
-                # Log error when hiding notification
-                logger.error(self.__msg_mgr.get_message("L522").format(str(e)))
-    
-    def cleanup(self) -> None:
-        """This method should be called when the application is closing
-        to ensure all timers are cancelled and resources are released.
-        """
-        # Cancel all pending after callbacks
-        if self.__canvas_ref:
-            for after_id in self._hide_after_ids:
-                try:
-                    # Convert to string for type compatibility with tkinter
-                    after_id_str = str(after_id) if after_id is not None else ""
-                    self.__canvas_ref.after_cancel(after_id_str)
-                except Exception:
-                    pass  # Ignore if already cancelled
-            
-            # Clear the list
-            self._hide_after_ids.clear()
-            
-            # Hide any visible UI elements
-            self.hide_feedback_circle()
-            self.hide_guidance_text()
-            self.hide_notification()
-            self.__hide_shortcut_guide()
-            
-            # Reset rotation mode
-            if self.__rotation_mode:
-                self.__exit_rotation_mode()
+        # Force canvas update to ensure previous text is cleared
+        self.__canvas_ref.update_idletasks()
         
-        # Log cleanup
-        logger.debug(self.__msg_mgr.get_message("L517"))
+        # Delete any existing guidance text tags to ensure clean slate
+        tag_to_delete = self.ROTATION_GUIDANCE_TAG if is_rotation else self.GUIDANCE_TEXT_TAG
+        self.__canvas_ref.delete(tag_to_delete)
         
+        # For rotation mode, ensure rotation mode flag is set
+        if is_rotation:
+            self.__rotation_mode = True
+            self.__keep_rotation_elements_visible = True
+        
+        if not self.__canvas_ref or not message:
+            if not self.__canvas_ref:
+                # Log missing canvas reference if attempting to draw
+                logger.warning(self.__msg_mgr.get_message("L527")) # L527: Canvas reference is not set.
+            elif not message:
+                logger.debug("Empty message provided to show_guidance_text")
+            return
 
-    
-    def __show_shortcut_guide(self, message: str) -> None:
-        """Show shortcut guide in the top-right corner of the canvas.
-        
-        Args:
-            message: The shortcut guide message to display
-        """
-        if self.__canvas_ref and message:
-            try:
-                # Hide any existing shortcut guide
-                self.__hide_shortcut_guide()
-                
-                # Call update_idletasks to ensure canvas dimensions are up-to-date
-                # This is needed when Canvas size is 1x1 at initial call
-                try:
-                    self.__canvas_ref.update_idletasks()
-                except Exception as e:
-                    # Log error but continue with best effort
-                    logger.debug(self.__msg_mgr.get_message("L526").format(str(e)))
-                
-                # Position at the top right of the canvas
-                canvas_width = self.__canvas_ref.winfo_width()
-                
-                # Ensure we have a reasonable canvas width
-                # If canvas is not yet properly sized, use a default value
-                if canvas_width <= 1:
-                    canvas_width = 800  # Default fallback width
-                    logger.debug(self.__msg_mgr.get_message("L527").format(canvas_width))
-                
-                text_x = canvas_width - 20
-                text_y = 20
-                
-                # Create text with background for better visibility
-                guide_font_size = font_size - 2
-                
-                # Create the text first at temporary position to measure its size
-                text_id = self.__canvas_ref.create_text(
-                    0, 0,
-                    text=message,
-                    fill="#FFFFFF",
-                    font=(font_family, guide_font_size),
-                    anchor="ne"  # Northeast anchor for right alignment
-                )
-                
-                # Get the actual text dimensions
-                x1, y1, x2, y2 = self.__canvas_ref.bbox(text_id)
-                text_width = x2 - x1
-                text_height = y2 - y1
-                
-                # Move text to the correct position
-                self.__canvas_ref.coords(text_id, text_x, text_y)
-                
-                # Create background with padding
-                bg_id = self.__canvas_ref.create_rectangle(
-                    text_x - text_width - 10, text_y - 5,
-                    text_x + 5, text_y + text_height + 5,
-                    fill="#333333",
-                    outline="#555555",
-                    width=1
-                )
-                
-                # Raise text above background
-                self.__canvas_ref.tag_raise(text_id, bg_id)
-                
-                # Store IDs and mark as visible
-                self.__shortcut_guide_id = (bg_id, text_id)
-                self.__shortcut_guide_visible = True
-                
-                # Log shortcut guide display
-                logger.debug(self.__msg_mgr.get_message("L513").format(message))
-            except Exception as e:
-                # Log error when creating shortcut guide
-                logger.error(self.__msg_mgr.get_message("L523").format(str(e)))
-    
-    def __hide_shortcut_guide(self) -> None:
-        """Hide the shortcut guide if it exists."""
-        if self.__canvas_ref and self.__shortcut_guide_id is not None:
-            try:
-                # Unpack the tuple of canvas item IDs
-                bg_id, text_id = self.__shortcut_guide_id
-                
-                # Delete both background and text
-                self.__canvas_ref.delete(bg_id)
-                if text_id is not None: self.__canvas_ref.delete(text_id)
-                
-                # Reset tracking variables
-                self.__shortcut_guide_id = None
-                self.__shortcut_guide_visible = False
-                
-                # Log shortcut guide hiding
-                logger.debug(self.__msg_mgr.get_message("L514"))
-            except Exception as e:
-                # Log error when hiding shortcut guide
-                logger.error(self.__msg_mgr.get_message("L524").format(str(e)))
-                
-    def __exit_rotation_mode(self, event: Optional[tk.Event] = None) -> None:
-        """Exit rotation mode and clean up all related UI elements.
-        
-        This method resets all rotation-related flags and hides UI feedback elements.
-        It should be called when rotation mode is exited (Ctrl key released or page changed).
-        """
+        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
         try:
-            # First cancel all timers to prevent UI elements from reappearing
-            self.__cancel_all_timers()
+            self.__canvas_ref.update_idletasks()
+            canvas_height = self.__canvas_ref.winfo_height()
+            canvas_width = self.__canvas_ref.winfo_width()
+
+            # Font settings from UserSettingManager, with fallback from tool_settings
+            font_family_val = self.__user_settings_mgr.get_setting("font_family", tool_settings.DEFAULT_FONT_FAMILY)
             
-            # Reset rotation mode flags
-            self.__rotation_mode = False
-            self.__rotation_active = False
-            
-            # Hide all rotation-related UI elements
-            self.hide_feedback_circle()
-            self.hide_guidance_text()
-            
-            # Keep shortcut guide visible if it was explicitly toggled by the user
-            # Otherwise hide it if it was only shown as part of rotation mode
-            if not self.__user_toggled_shortcut_guide and self.__shortcut_guide_visible:
-                self.__hide_shortcut_guide()
-            
-            # Log exit from rotation mode
-            logger.debug(self.__msg_mgr.get_message("L516"))
-        except Exception as e:
-            # Log error when exiting rotation mode
-            logger.error(self.__msg_mgr.get_message("L525").format(str(e)))
+            # Get font size with proper error handling to prevent conversion errors
+            try:
+                font_size_val = self.__user_settings_mgr.get_setting("font_size", 10)
+                # Ensure font_size is an integer
+                guidance_font_size = int(font_size_val) if isinstance(font_size_val, (int, str)) else 10
+            except (ValueError, TypeError) as e:
+                # Log the error and use default font size
+                logger.warning(self.__msg_mgr.get_log_message("L540", f"Invalid font size value: {e}"))
+                guidance_font_size = 10
                 
-    def toggle_shortcut_guide(self, event: Optional[tk.Event] = None) -> str:
-        """Toggle the display of keyboard shortcut guide.
-        
-        This function can be called from any mode to show or hide the shortcut guide.
-        
-        Args:
-            event: The event that triggered this action (optional)
+            font_style = "bold"  # Default font style for guidance text
             
-        Returns:
-            str: 'break' to prevent default event handling
-        """
-        try:
-            # Mark this as a user-initiated toggle
-            self.__user_toggled_shortcut_guide = True
+            # Position settings - allow customization of position through user settings
+            position = self.__user_settings_mgr.get_setting("guidance_position", "bottom-left")
             
-            # Toggle the shortcut guide visibility
-            if self.__shortcut_guide_visible:
-                # Hide the shortcut guide if it's currently visible
-                self.__hide_shortcut_guide()
-                logger.debug(self.__msg_mgr.get_message("L514"))
+            # Set position based on user preference or default to bottom-left
+            if position == "bottom-right":
+                text_x_val = float(canvas_width - 10)
+                text_y_val = float(canvas_height - 10)
+                anchor_val = "se"  # southeast anchor
+            elif position == "top-left":
+                text_x_val = 10.0
+                text_y_val = 10.0
+                anchor_val = "nw"  # northwest anchor
+            elif position == "top-right":
+                text_x_val = float(canvas_width - 10)
+                text_y_val = 10.0
+                anchor_val = "ne"  # northeast anchor
+            else:  # Default to bottom-left
+                text_x_val = 10.0
+                text_y_val = float(canvas_height - 10)
+                anchor_val = "sw"  # southwest anchor
+
+            # Style settings from user settings with fallbacks
+            if is_rotation:
+                # Rotation guidance has special styling (typically red)
+                text_color = self.__user_settings_mgr.get_setting("rotation_guidance_text_color", "#FF0000") # Red text
+                # Use semi-transparent red border only
+                bg_fill = ""          # No fill - transparent background
+                border_color = "#FF0000"  # Red border
+                stipple_option = "gray25"  # Semi-transparent pattern
             else:
-                # Show the shortcut guide if it's currently hidden
-                shortcut_guide = self.__msg_mgr.get_message('M049')
-                self.__show_shortcut_guide(shortcut_guide)
-                logger.debug(self.__msg_mgr.get_message("L513").format("Shortcut guide toggled"))
+                # Normal guidance uses standard styling (typically blue)
+                text_color = self.__user_settings_mgr.get_setting("guidance_text_color", "#0000FF") # Blue text
+                # Tkinter doesn't support RGBA 8-digit hex color codes like "#0000FF00" for transparency
+                # Use empty background with stipple pattern instead for semi-transparency
+                bg_fill = ""  # No fill - transparent background
+                border_color = self.__user_settings_mgr.get_setting("guidance_border_color", "#0000FF") # Blue border
             
-            return "break"  # Prevent default event handling
+            # Get stipple pattern for semi-transparency
+            stipple_option = self.__user_settings_mgr.get_setting("guidance_stipple", "gray25")
+
+            # Ensure font components have explicit types for Mypy
+            font_family_str = cast(str, font_family_val)
+            font_size_int = cast(int, guidance_font_size)
+            font_style_str = cast(str, font_style)
+            
+            # Handle font names with spaces by properly formatting the font definition
+            # If font name contains spaces, wrap it in braces to ensure proper Tkinter font format
+            if " " in font_family_str:
+                font_definition = f"{{{font_family_str}}} {font_size_int} {font_style_str}"
+            else:
+                font_definition = f"{font_family_str} {font_size_int} {font_style_str}"
+
+            # Create temporary text item to calculate dimensions
+            temp_text_id = self.__canvas_ref.create_text(
+                text_x_val,
+                text_y_val,
+                text=message,
+                fill=text_color,
+                font=font_definition,
+                anchor=cast(AnchorLiteral, anchor_val),
+                tags="_temp_guidance_tag"
+            )
+
+            text_bbox = self.__canvas_ref.bbox(temp_text_id)
+            if not text_bbox:
+                # Log warning if bounding box is not found
+                logger.warning(self.__msg_mgr.get_message("L528").format(temp_text_id))
+                self.__canvas_ref.delete(temp_text_id)
+                return
+
+            # Calculate background dimensions with proper padding
+            x1_text, y1_text, x2_text, y2_text = text_bbox
+            horizontal_padding = 8  # Increased padding for better readability
+            vertical_padding = 4
+
+            bg_x1 = float(x1_text - horizontal_padding)
+            bg_y1 = float(y1_text - vertical_padding)
+            bg_x2 = float(x2_text + horizontal_padding)
+            bg_y2 = float(y2_text + vertical_padding)
+            
+            # Delete temporary text
+            self.__canvas_ref.delete(temp_text_id)
+
+            # Create background rectangle with stipple for semi-transparency
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Creating guidance background rectangle with tag: {self.ROTATION_GUIDANCE_TAG if is_rotation else self.GUIDANCE_TEXT_TAG}"))
+            bg_id = self.__canvas_ref.create_rectangle(
+                bg_x1, bg_y1, bg_x2, bg_y2,
+                fill=bg_fill,
+                outline=border_color,
+                width=2,  # Thicker border for better visibility
+                stipple=stipple_option, 
+                tags=(self.ROTATION_GUIDANCE_TAG if is_rotation else self.GUIDANCE_TEXT_TAG,)
+            )
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Created background rectangle with ID: {bg_id}"))
+            
+            # Create actual text on top of background
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Creating guidance text with message: '{message}'"))
+            text_id = self.__canvas_ref.create_text(
+                text_x_val,
+                text_y_val,
+                text=message,
+                fill=text_color,
+                font=font_definition,
+                anchor=cast(AnchorLiteral, anchor_val),
+                tags=(self.ROTATION_GUIDANCE_TAG if is_rotation else self.GUIDANCE_TEXT_TAG,)
+            )
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Created text with ID: {text_id}"))
+            
+            # Ensure text is on top of the background
+            self.__canvas_ref.tag_raise(text_id, bg_id)
+            
+            # Store IDs of both background and text
+            self.__guidance_text_id = (bg_id, text_id)
+            self.__guidance_text_visible = True
+            
+            # For rotation mode, ensure the elements stay visible
+            if is_rotation:
+                self.__keep_rotation_elements_visible = True
+                # Force canvas update to ensure immediate visibility
+                self.__canvas_ref.update_idletasks()
+            else:
+                # For non-rotation guidance, set up auto-hide timer if needed
+                hide_ms = int(3000)  # 3 seconds default display time
+                try:
+                    # Tkinter's after() should always return an integer timer ID
+                    after_id = self.__canvas_ref.after(hide_ms, self.hide_guidance_text)
+                    
+                    # Strict type checking to ensure after_id is an integer
+                    if isinstance(after_id, int):
+                        self._hide_after_ids.append(after_id)
+                        logger.debug(self.__msg_mgr.get_message("L540").format(f"Auto-hide timer set for guidance text: {after_id}"))
+                    else:
+                        # Log warning if after_id is not an integer
+                        logger.debug(self.__msg_mgr.get_message("L552", "Invalid timer ID not added to active timers: {0}").format(after_id))
+                except Exception as e:
+                    # Log error if setting timer fails
+                    logger.error(self.__msg_mgr.get_message("L553", "Error setting guidance text timer: {0}").format(e))
+            
+            # Log successful display of guidance text
+            logger.debug(self.__msg_mgr.get_message("L510").format(message))
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Guidance text displayed successfully with IDs: {self.__guidance_text_id}, is_rotation: {is_rotation}"))
         except Exception as e:
-            # Log error when toggling shortcut guide
-            logger.error(self.__msg_mgr.get_message("L524").format(str(e)))
-            return "break"
-    
+            # Log error if showing guidance text fails
+            logger.error(self.__msg_mgr.get_message("L521").format(str(e)))
+
     def show_notification(self, message: str, duration: float = 0.5, warning: bool = False) -> None:
         """Show a temporary notification message on the canvas.
         
@@ -809,125 +1060,763 @@ class MouseEventHandler:
             duration: How long to display the message (in seconds)
             warning: Whether to show as a warning (red text on white background)
         """
-        # Cancel any existing hide timers before showing new notification
         self.__cancel_all_timers()
         
-        # Clear any existing notification
         self.hide_notification()
-        
-        if self.__canvas_ref and message:
+
+        if self.__canvas_ref and message: # Check if canvas_ref is not None and message is not empty
+            assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
             try:
-                # Position at the top center of the canvas
+                self.__canvas_ref.update_idletasks()
                 canvas_width = self.__canvas_ref.winfo_width()
-                text_x = canvas_width / 2
-                text_y = 30
-                
-                # Set colors based on warning mode
+
+                # Get font settings from user settings or use defaults
+                font_family_val = self.__user_settings_mgr.get_setting("font_family", tool_settings.DEFAULT_FONT_FAMILY)
+                font_size_val = self.__user_settings_mgr.get_setting("font_size", tool_settings.font_size)
+                font_weight = "bold"  # Default font weight for notifications
+
+                # Get colors from user settings or use defaults
                 if warning:
-                    bg, txt, border = "#FFFFFF", "#FF0000", "#FF0000"
+                    text_color = self.__user_settings_mgr.get_setting("warning_text_color", "#FF0000") # Red for warnings
+                    bg_fill = self.__user_settings_mgr.get_setting("warning_bg_color", "#FFFFCC") # Light yellow for warnings
+                    border_color = self.__user_settings_mgr.get_setting("warning_border_color", "#FF0000") # Red border
                 else:
-                    bg, txt, border = "#333333", "#FFFFFF", "#555555"
+                    text_color = self.__user_settings_mgr.get_setting("notification_text_color", "#000000") # Black for normal
+                    bg_fill = self.__user_settings_mgr.get_setting("notification_bg_color", "#E6F2FF") # Light blue for normal
+                    border_color = self.__user_settings_mgr.get_setting("notification_border_color", "#0066CC") # Blue border
+
+                # Position notification at the top center of the canvas
+                # Use viewport coordinates without scroll adjustment for fixed positioning
                 
-                # Create notification with background
-                notification_font_size = font_size - 1
+                # Calculate position in viewport coordinates
+                text_x_val: float = float(canvas_width / 2)
+                text_y_val: float = 30.0
+                anchor = "n"
                 
-                # Create the text first to measure its size
-                text_id = self.__canvas_ref.create_text(
-                    text_x, text_y,
+                # Ensure font components have explicit types for Mypy using cast
+                font_family_str_notify = cast(str, font_family_val)
+                font_size_int_notify = cast(int, font_size_val)
+                font_weight_str_notify = cast(str, font_weight)
+
+                # Define font as a string: "Family Size Style"
+                font_definition_notify: str = f"{font_family_str_notify} {font_size_int_notify} {font_weight_str_notify}"
+                
+                # Create background first for proper layering
+                # We'll adjust its size after creating the text
+                temp_text_id = self.__canvas_ref.create_text(
+                    text_x_val, 
+                    text_y_val, 
                     text=message,
-                    fill=txt,
-                    font=(font_family, notification_font_size, "bold"),
-                    anchor="n"  # North anchor for center alignment
+                    fill=text_color,
+                    font=font_definition_notify,
+                    anchor=cast(AnchorLiteral, anchor),
+                    tags="_temp_notification_tag"
                 )
                 
-                # Get the actual text dimensions
-                x1, y1, x2, y2 = self.__canvas_ref.bbox(text_id)
-                text_width = x2 - x1
-                text_height = y2 - y1
+                text_bbox = self.__canvas_ref.bbox(temp_text_id)
+                if not text_bbox:
+                    logger.warning(self.__msg_mgr.get_message("L529").format(temp_text_id))
+                    self.__canvas_ref.delete(temp_text_id)
+                    return
+                    
+                # Calculate background dimensions with proper padding
+                x1_text, y1_text, x2_text, y2_text = text_bbox
+                horizontal_padding = 10 # Increased padding for better readability
+                vertical_padding = 6
                 
-                # Create background with padding
+                bg_x1: float = float(x1_text - horizontal_padding)
+                bg_y1: float = float(y1_text - vertical_padding)
+                bg_x2: float = float(x2_text + horizontal_padding)
+                bg_y2: float = float(y2_text + vertical_padding)
+
+                # Delete temporary text
+                self.__canvas_ref.delete(temp_text_id)
+                
+                # Create actual background with rounded corners if supported
                 bg_id = self.__canvas_ref.create_rectangle(
-                    text_x - text_width/2 - 10, text_y - 5,
-                    text_x + text_width/2 + 10, text_y + text_height + 5,
-                    fill=bg,
-                    outline=border,
-                    width=1
+                    bg_x1, bg_y1, bg_x2, bg_y2,
+                    fill=bg_fill,
+                    outline=border_color,
+                    width=2, # Thicker border for better visibility
+                    tags="notification_tag"
                 )
                 
-                # Raise text above background
+                # Create actual text on top of background
+                text_id = self.__canvas_ref.create_text(
+                    text_x_val, 
+                    text_y_val, 
+                    text=message,
+                    fill=text_color,
+                    font=font_definition_notify,
+                    anchor=cast(AnchorLiteral, anchor),
+                    tags="notification_tag"
+                )
+                
+                # Ensure text is above background
                 self.__canvas_ref.tag_raise(text_id, bg_id)
                 
-                # Store IDs
+                # Ensure notification is always on top of all other elements
+                self.__canvas_ref.tag_raise("notification_tag")
+                
+                # Store IDs for later reference
                 self.__notification_text_id = (bg_id, text_id)
                 self.__notification_visible = True
-                
-                # Set auto-hide timer
-                hide_ms = int(duration * 1000)  # Convert seconds to milliseconds
+
+                # Set up auto-hide timer
+                hide_ms = int(duration * 1000)
                 after_id = self.__canvas_ref.after(hide_ms, self.hide_notification)
-                # Add after ID to the list for possible cancellation
-                self._hide_after_ids.append(after_id)
-                
-                # Log notification
-                logger.debug(self.__msg_mgr.get_message("L509").format(message, duration))
+                # Ensure after_id is a valid integer before adding to the list
+                if isinstance(after_id, int):
+                    self._hide_after_ids.append(after_id)
+                    logger.debug(self.__msg_mgr.get_message("L509").format(message, duration))
+                else:
+                    # Log warning if after_id is not an integer
+                    logger.debug(self.__msg_mgr.get_message("L552", "Invalid timer ID not added to active timers: {0}").format(after_id))
+
             except Exception as e:
-                # Log error when creating notification
-                logger.error(self.__msg_mgr.get_message("L520").format(str(e)))
-    
-    def on_mouse_down(self, event: tk.Event) -> str:
-        """Handle mouse button press event.
+                # Log error when showing notification
+                logger.error(self.__msg_mgr.get_message("L522").format(str(e)))
+
+    def hide_guidance_text(self) -> None:
+        """Hide the guidance text and its background from the canvas."""
+        # Single log entry at the start with detailed information
+        if self.__guidance_text_id:
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Hiding guidance text with ID: {self.__guidance_text_id}"))
+        else:
+            # If there's no guidance text ID, it might be already hidden or never shown
+            logger.debug(self.__msg_mgr.get_message("L540").format("Hiding guidance text (no active ID)"))
+            return
+        
+        if self.__canvas_ref:
+            assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+            
+            # Track deletion results for summary logging
+            deleted_ids = []
+            errors = []
+            
+            if isinstance(self.__guidance_text_id, tuple):
+                for item_id in self.__guidance_text_id:
+                    if item_id: # Ensure item_id is not None
+                        try:
+                            self.__canvas_ref.delete(item_id)
+                            deleted_ids.append(item_id)
+                        except Exception as e:
+                            errors.append(f"Error with ID {item_id}: {str(e)}")
+                            logger.error(self.__msg_mgr.get_message("L521").format(f"Error deleting guidance text item {item_id}: {str(e)}"))
+            elif isinstance(self.__guidance_text_id, int): # Check if it's a single int ID
+                try:
+                    self.__canvas_ref.delete(self.__guidance_text_id)
+                    deleted_ids.append(self.__guidance_text_id)
+                except Exception as e:
+                    errors.append(f"Error with ID {self.__guidance_text_id}: {str(e)}")
+                    logger.error(self.__msg_mgr.get_message("L521").format(f"Error deleting guidance text item {self.__guidance_text_id}: {str(e)}"))
+            else:
+                logger.warning(f"Unexpected type for __guidance_text_id: {type(self.__guidance_text_id)}")
+            
+            # Single summary log instead of multiple individual logs
+            if deleted_ids:
+                logger.debug(self.__msg_mgr.get_message("L540").format(f"Deleted guidance text items: {deleted_ids}"))
+
+        # Reset state variables
+        self.__guidance_text_id = None
+        self.__guidance_text_visible = False
+
+    def hide_notification(self) -> None:
+        """Hide the notification message and its background from the canvas."""
+        for after_id in self._hide_after_ids:
+            if self.__canvas_ref and after_id is not None: 
+                assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+                # Check if after_id is a valid integer for after_cancel
+                if not isinstance(after_id, int):
+                    # Log warning for invalid timer ID type
+                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID in hide_notification: {0}").format(after_id))
+                    continue
+                    
+                # Cast to int for internal use, but convert to string for after_cancel
+                timer_id = cast(int, after_id)
+                self.__canvas_ref.after_cancel(str(timer_id))
+        self._hide_after_ids.clear()
+
+        if self.__canvas_ref and self.__notification_text_id:
+            assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+            if isinstance(self.__notification_text_id, tuple):
+                for item_id in self.__notification_text_id:
+                    if item_id: 
+                        self.__canvas_ref.delete(item_id)
+            elif isinstance(self.__notification_text_id, int):
+                self.__canvas_ref.delete(self.__notification_text_id)
+            # else: logger.warning(f"Unexpected type for __notification_text_id: {type(self.__notification_text_id)}")
+
+        self.__notification_text_id = None
+        self.__notification_visible = False
+
+    def _remove_shortcut_guide_from_canvas(self) -> None:
+        """Remove the shortcut guide from the canvas."""
+        if not self.__canvas_ref:
+            logger.warning("Canvas reference is not set. Cannot remove shortcut guide.")
+            return
+
+        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+        # Delete all items with the shortcut guide tag at once
+        # This is more efficient and ensures no items are left behind
+        self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
+        self.__shortcut_guide_ids.clear()
+        logger.debug("Shortcut guide items removed from canvas by tag.")
+
+        self.__shortcut_guide_visible = False
+        # No need to log "Shortcut guide hidden" here as toggle_shortcut_guide handles user-facing logs.
+        # This method is an internal cleanup/drawing helper.
+
+    def _draw_shortcut_guide_on_canvas(self, title: str, content: str, auto_hide_delay: float = 5.0) -> None:
+        """Show shortcut guide in the top-right corner of the canvas.
+
+        Args:
+            title: The title of the shortcut guide.
+            content: The content of the shortcut guide (can be multi-line).
+            auto_hide_delay: Time in seconds after which the guide will auto-hide (default: 5.0).
+                             Set to 0 to disable auto-hide.
+        """
+        # Always delete existing shortcut guide first to prevent duplication
+        if self.__canvas_ref:
+            self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
+        self._remove_shortcut_guide_from_canvas() # Clear existing guide first
+
+        if not self.__canvas_ref:
+            logger.warning("Canvas reference not set. Cannot draw shortcut guide.") # Add log
+            return
+
+        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+        # NOTE: The blank line above the 'try' is preserved from the original structure.
+        try:
+            canvas_width = self.__canvas_ref.winfo_width()
+
+            # Get user settings for shortcut guide appearance
+            padding = int(self.__user_settings_mgr.get_setting("shortcut_guide_padding", 10))
+            guide_width = int(self.__user_settings_mgr.get_setting("shortcut_guide_width", 250))
+            line_spacing = int(self.__user_settings_mgr.get_setting("shortcut_guide_line_spacing", 4))
+            font_family = self.__user_settings_mgr.get_setting("font_family", tool_settings.DEFAULT_FONT_FAMILY)
+            base_font_size = int(self.__user_settings_mgr.get_setting("font_size", 12))
+            title_font_size = base_font_size + 2  # Title font is slightly larger than base font
+            content_font_size = base_font_size - 2  # Content font is slightly smaller than base font
+            title_color = self.__user_settings_mgr.get_setting("shortcut_guide_title_color", "#0000FF")
+            content_color = self.__user_settings_mgr.get_setting("shortcut_guide_content_color", "#0000FF")
+            bg_color = self.__user_settings_mgr.get_setting("shortcut_guide_bg_color", "")
+            outline_color = self.__user_settings_mgr.get_setting("shortcut_guide_outline_color", title_color)
+            outline_width = int(self.__user_settings_mgr.get_setting("shortcut_guide_outline_width", 2))
+            use_animation = self.__user_settings_mgr.get_setting("shortcut_guide_animation", True)
+
+            # Calculate position for the guide (top-right corner with padding)
+            # Use window coordinates that are fixed relative to the canvas viewport, not the content
+            # This ensures the guide stays in the same position regardless of content movement
+            # Get viewport edge positions to account for scrolling in both directions
+            vx0 = self.__canvas_ref.canvasx(0)   # viewport left edge
+            vy0 = self.__canvas_ref.canvasy(0)   # viewport top edge
+            bg_x1 = float(vx0 + canvas_width - guide_width - padding)
+            bg_y1 = float(vy0 + padding)
+            bg_x2 = float(vx0 + canvas_width - padding)
+            
+            # Calculate total height needed for all text elements
+            total_text_height = 0
+
+            # Create temporary title text to calculate its height
+            temp_title_id = self.__canvas_ref.create_text(
+                0, 0, 
+                text=title,
+                font=(font_family, title_font_size, "bold"),
+                anchor="nw",
+                width=guide_width - (2 * padding),
+                tags="_temp_calc"
+            )
+            title_bbox = self.__canvas_ref.bbox(temp_title_id)
+            self.__canvas_ref.delete(temp_title_id)
+            if title_bbox:
+                total_text_height += (title_bbox[3] - title_bbox[1])
+
+            # Calculate height for each content line
+            content_lines = content.split('\n')
+            for line_idx, line_text in enumerate(content_lines):
+                if line_idx > 0:
+                    total_text_height += line_spacing
+                temp_content_id = self.__canvas_ref.create_text(
+                    0, 0, 
+                    text=line_text,
+                    font=(font_family, content_font_size, "normal"),
+                    anchor="nw",
+                    width=guide_width - (2 * padding),
+                    tags="_temp_calc"
+                )
+                line_bbox = self.__canvas_ref.bbox(temp_content_id)
+                self.__canvas_ref.delete(temp_content_id)
+                if line_bbox:
+                    total_text_height += (line_bbox[3] - line_bbox[1])
+        
+            # Calculate final background height
+            # Use fixed viewport coordinates without scroll adjustment for consistent positioning
+            bg_y2 = bg_y1 + total_text_height + (2 * padding)
+            
+            # Create background rectangle with styled border
+            bg_id = self.__canvas_ref.create_rectangle(
+                bg_x1, bg_y1, bg_x2, bg_y2,
+                fill=bg_color,
+                outline=outline_color,
+                width=outline_width,
+                tags=self.SHORTCUT_GUIDE_TAG
+            )
+            self.__shortcut_guide_ids.insert(0, bg_id)
+
+            # Position title at the top-right with padding
+            title_actual_x = bg_x2 - padding
+            title_actual_y = bg_y1 + padding
+            title_id = self.__canvas_ref.create_text(
+                title_actual_x,
+                title_actual_y,
+                text=title,
+                font=(font_family, title_font_size, "bold"),
+                fill=title_color,
+                anchor="ne",  # Anchor to northeast (top-right) for right alignment
+                tags=self.SHORTCUT_GUIDE_TAG,
+                width=guide_width - (2 * padding)
+            )
+            self.__shortcut_guide_ids.append(title_id)
+            title_bbox_actual = self.__canvas_ref.bbox(title_id)
+            current_y_offset = (title_bbox_actual[3] + (padding / 2)) if title_bbox_actual else (title_actual_y + 30.0)
+
+            # Add content lines
+            content_ids = []
+            for line_text in content_lines:
+                # Position content lines with right alignment
+                # Position content lines with left alignment instead of right alignment
+                line_id = self.__canvas_ref.create_text(
+                    bg_x1 + padding,
+                    current_y_offset,
+                    text=line_text,
+                    font=(font_family, content_font_size, "normal"),
+                    fill=content_color,
+                    anchor="nw",  # Anchor to northwest for left alignment
+                    tags=self.SHORTCUT_GUIDE_TAG,
+                    width=guide_width - (2 * padding)
+                )
+                content_ids.append(line_id)
+                self.__shortcut_guide_ids.append(line_id)
+                line_bbox_actual = self.__canvas_ref.bbox(line_id)
+                current_y_offset = (line_bbox_actual[3] + line_spacing) if line_bbox_actual else (current_y_offset + 20.0 + line_spacing)
+
+            # Ensure proper layering (text above background)
+            self.__canvas_ref.tag_raise(title_id, bg_id)
+            for item_id in content_ids:
+                self.__canvas_ref.tag_raise(item_id, bg_id)
+
+            self.__shortcut_guide_visible = True
+            logger.debug("Shortcut guide shown.")
+            
+            # Add fade-in animation effect if enabled
+            if use_animation and hasattr(self.__canvas_ref, "after"):
+                # Initially set all elements to transparent
+                initial_alpha = 0.0
+                target_alpha = 1.0
+                steps = 5
+                step_duration = 50  # milliseconds
+                
+                # Create animation function
+                def animate_fade_in(step=0):
+                    if step > steps:
+                        return
+                        
+                    # Calculate current alpha
+                    current_alpha = initial_alpha + (target_alpha - initial_alpha) * (step / steps)
+                    
+                    # Apply alpha to all elements
+                    if bg_color:
+                        # If background has a color, adjust its transparency using stipple pattern
+                        # Tkinter doesn't support RGBA hex codes, so we use stipple for transparency
+                        if current_alpha < 1.0:
+                            # Use stipple pattern based on alpha value
+                            if current_alpha < 0.3:
+                                stipple_pattern = "gray12"
+                            elif current_alpha < 0.6:
+                                stipple_pattern = "gray25"
+                            else:
+                                stipple_pattern = "gray50"
+                            self.__canvas_ref.itemconfig(bg_id, fill=bg_color, stipple=stipple_pattern)
+                        else:
+                            # Fully opaque
+                            self.__canvas_ref.itemconfig(bg_id, fill=bg_color, stipple="")
+                    
+                    # Adjust text opacity using fill color and stipple pattern
+                    # For text, we can only control visibility, not true transparency
+                    if current_alpha < 0.1:
+                        # Almost invisible - hide text completely
+                        self.__canvas_ref.itemconfig(title_id, state="hidden")
+                        for content_id in content_ids:
+                            self.__canvas_ref.itemconfig(content_id, state="hidden")
+                    else:
+                        # Show text with normal color
+                        self.__canvas_ref.itemconfig(title_id, fill=title_color, state="normal")
+                        for content_id in content_ids:
+                            self.__canvas_ref.itemconfig(content_id, fill=content_color, state="normal")
+                            
+                        # Adjust text color brightness based on alpha for a fade-in effect
+                        if current_alpha < 1.0:
+                            brightness = int(current_alpha * 255)
+                            # Create darker version of colors for partial visibility
+                            adjusted_title_color = self.__adjust_color_brightness(title_color, brightness)
+                            adjusted_content_color = self.__adjust_color_brightness(content_color, brightness)
+                            
+                            self.__canvas_ref.itemconfig(title_id, fill=adjusted_title_color)
+                            for content_id in content_ids:
+                                self.__canvas_ref.itemconfig(content_id, fill=adjusted_content_color)
+                    
+                    # Schedule next animation step
+                    if step < steps:
+                        after_id = self.__canvas_ref.after(step_duration, lambda: animate_fade_in(step + 1))
+                        self._hide_after_ids.append(after_id)
+                
+                # Start animation
+                animate_fade_in()
+            
+            # Set up auto-hide timer if delay is specified
+            if auto_hide_delay > 0:
+                # Cancel any existing auto-hide timer to prevent multiple timers
+                if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
+                    self.__shortcut_guide_timer.cancel()
+                    self.__shortcut_guide_timer = None
+                
+                # Create new timer to auto-hide the shortcut guide after specified delay
+                self.__shortcut_guide_timer = threading.Timer(
+                    auto_hide_delay,
+                    lambda: self.toggle_shortcut_guide(force_show=False)
+                )
+                self.__shortcut_guide_timer.daemon = True  # Make timer a daemon thread
+                self.__shortcut_guide_timer.start()
+                logger.debug(f"Shortcut guide auto-hide timer set for {auto_hide_delay} seconds.")
+
+        except Exception as e:
+            import traceback # Import traceback for detailed error logging
+            logger.error(self.__msg_mgr.get_message("L523").format(e, traceback.format_exc())) # L523: Error showing shortcut guide: {}\n{}
+            # Ensure timer is canceled in case of error
+            if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
+                self.__shortcut_guide_timer.cancel()
+                self.__shortcut_guide_timer = None
+
+    def toggle_shortcut_guide(self, event: Optional[tk.Event] = None, force_show: Optional[bool] = None) -> str | None:
+        """Toggle the visibility of the shortcut guide.
+
+        Args:
+            event (Optional[tk.Event]): The event that triggered the toggle. Default is None.
+            force_show (Optional[bool]): If True, show the guide. If False, hide it.
+                If None, toggle current state. Default is None.
+                
+        Returns:
+            str | None: String to prevent default handling or None.
+        """
+        self.__cancel_all_timers()
+
+        # Save rotation mode state to restore it after toggling
+        was_in_rotation_mode = self.__rotation_mode
+
+        if force_show is True:
+            if not self.__shortcut_guide_visible:
+                title = self.__msg_mgr.get_message("M050") # Shortcut Guide Title
+                content = self.__msg_mgr.get_message("M049") # Shortcut Guide Content
+                # Draw shortcut guide directly on canvas to ensure it's visible
+                # Set auto-hide delay to 5 seconds for forced show
+                self._draw_shortcut_guide_on_canvas(title, content, auto_hide_delay=5.0)
+                # Update visibility flag to track state correctly
+                self.__shortcut_guide_visible = True
+                # When force_show is used, we don't update __user_toggled_shortcut_guide
+                # as this is not a direct user toggle action but a programmatic state restoration.
+                logger.debug("Shortcut guide forced ON with 5-second auto-hide.")
+        elif force_show is False:
+            if self.__shortcut_guide_visible:
+                self._remove_shortcut_guide_from_canvas()
+                # Update visibility flag to track state correctly
+                self.__shortcut_guide_visible = False
+                # Similarly, don't update __user_toggled_shortcut_guide for forced actions.
+                logger.debug("Shortcut guide forced OFF.")
+        else: # Toggle behavior (force_show is None) - This is a direct user action
+            if self.__shortcut_guide_visible:
+                self._remove_shortcut_guide_from_canvas()
+                # Update visibility flag to track state correctly
+                self.__shortcut_guide_visible = False
+                self.__user_toggled_shortcut_guide = True # User explicitly hid it
+                logger.debug("Shortcut guide toggled OFF by user.")
+            else:
+                title = self.__msg_mgr.get_message("M050") # Shortcut Guide Title
+                content = self.__msg_mgr.get_message("M049") # Shortcut Guide Content
+                # Draw shortcut guide directly on canvas to ensure it's visible
+                # For user-toggled guide, set auto-hide delay to 10 seconds
+                self._draw_shortcut_guide_on_canvas(title, content, auto_hide_delay=10.0)
+                # Update visibility flag to track state correctly
+                self.__shortcut_guide_visible = True
+                self.__user_toggled_shortcut_guide = True # User explicitly showed it
+                logger.debug("Shortcut guide toggled ON by user with 10-second auto-hide.")
+                
+        # Restore rotation mode guidance if needed
+        if was_in_rotation_mode and self.__canvas_ref:
+            self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation Mode: Drag to rotate.
+            
+        return "break"
+
+    def __cancel_all_timers(self) -> None:
+        """Cancel all pending timers to prevent UI flicker and memory leaks.
+        
+        This method cancels all timers stored in _hide_after_ids list and the Ctrl check timer
+        to prevent UI conflicts when multiple shortcuts are used in rapid succession.
+        """
+        # Track if any timers were actually cancelled to avoid excessive logging
+        timers_cancelled = False
+        
+        # Cancel all after IDs stored in _hide_after_ids list
+        if self._hide_after_ids:
+            # Create a copy of the list to avoid modification during iteration
+            hide_after_ids_copy = self._hide_after_ids.copy()
+            # Clear the original list first to prevent any new timers from being added during cancellation
+            self._hide_after_ids.clear()
+            
+            for after_id in hide_after_ids_copy:
+                if self.__canvas_ref and after_id is not None: 
+                    try:
+                        # Skip if after_id is not a valid integer for after_cancel
+                        # Tkinter's after_cancel requires an integer ID
+                        if not isinstance(after_id, int):
+                            # Use L552 message code for invalid timer ID
+                            logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID: {0}").format(after_id))
+                            continue
+                            
+                        # Convert timer ID to string as after_cancel expects a string
+                        self.__canvas_ref.after_cancel(str(after_id))
+                        timers_cancelled = True
+                    except Exception as e:
+                        # Use L553 message code for timer cancellation errors
+                        logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling timer {0}: {1}").format(after_id, e))
+        
+        # Cancel Ctrl check timer if it exists
+        if self.__ctrl_check_timer_id is not None and self.__canvas_ref:
+            try:
+                # Check if timer ID is valid for after_cancel (must be int)
+                if not isinstance(self.__ctrl_check_timer_id, int):
+                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid Ctrl check timer ID: {0}").format(self.__ctrl_check_timer_id))
+                else:
+                    # Convert timer ID to string as after_cancel expects a string
+                    self.__canvas_ref.after_cancel(str(self.__ctrl_check_timer_id))
+                    self.__ctrl_check_timer_id = None
+                    timers_cancelled = True
+            except Exception as e:
+                logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling Ctrl check timer: {0}").format(e))
+        
+        # Cancel shortcut guide auto-hide timer if it exists
+        if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
+            try:
+                self.__shortcut_guide_timer.cancel()
+                self.__shortcut_guide_timer = None
+                timers_cancelled = True
+                logger.debug(self.__msg_mgr.get_message("L554", "Shortcut guide auto-hide timer cancelled."))
+            except Exception as e:
+                logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling shortcut guide timer: {0}").format(e))
+        
+        # Only log if we actually cancelled something and it's a shortcut guide timer
+        # This reduces log spam when multiple shortcuts are used in succession
+        if timers_cancelled and hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer is None:
+            logger.debug(self.__msg_mgr.get_message("L555", "All timers cancelled."))
+            
+    def __check_operation_throttle(self) -> bool:
+        """Check if enough time has passed since the last operation.
+        
+        This method implements a cooldown mechanism to prevent operations from being
+        executed too rapidly in succession, which can cause UI conflicts.
+        
+        Returns:
+            bool: True if operation is allowed, False if it should be throttled.
+        """
+        current_time = time.time()
+        time_since_last_op = current_time - self.__last_operation_time
+        
+        # If cooldown period has not passed, throttle the operation
+        if time_since_last_op < self.__operation_cooldown:
+            # Log throttling event with remaining cooldown time
+            remaining_ms = int((self.__operation_cooldown - time_since_last_op) * 1000)
+            logger.debug(f"Operation throttled. Please wait {remaining_ms}ms before next operation.")
+            return False
+            
+        # Update last operation time and allow the operation
+        self.__last_operation_time = current_time
+        return True
+
+    def __exit_rotation_mode(self, event: Optional[tk.Event] = None) -> None:
+        """Exit rotation mode and clean up UI elements.
+        
+        This method handles the cleanup when exiting rotation mode.
+        It includes a time-based mechanism to prevent duplicate log messages when called
+        from multiple event handlers in close succession.
         
         Args:
-            event: Mouse button press event
+            event (Optional[tk.Event]): Event that triggered the exit. Default is None.
+        """
+        # Exit early if not in rotation mode
+        if not self.__rotation_mode:
+            return
+            
+        # Use instance variable to track recent exits to prevent duplicate logs
+        # This is needed because both on_key_release and on_mouse_up might call this
+        # method in close succession
+        current_time = time.time()
+        time_since_last_exit = current_time - self.__last_rotation_exit_time
+        
+        # If we've exited rotation mode very recently (within 200ms), skip the log message
+        log_exit = time_since_last_exit >= 0.2  # 200ms threshold
+        
+        # Always update the last exit time
+        self.__last_rotation_exit_time = current_time
+
+        # Cancel all pending timers first to prevent UI flicker
+        self.__cancel_all_timers()
+        
+        # Hide all rotation-related UI elements
+        self.hide_feedback_circle()
+        self.hide_guidance_text()
+        self._remove_shortcut_guide_from_canvas()
+        
+        # Reset rotation mode flags
+        self.__rotation_mode = False
+        self.__rotation_active = False
+        self.__keep_rotation_elements_visible = False
+        if hasattr(self, '_MouseEventHandler__rotation_start_angle'):
+            del self.__rotation_start_angle
+            
+        # Log rotation mode exit with appropriate message code only if not recently logged
+        # L516 is the existing message code for rotation mode exit
+        if log_exit:
+            logger.debug(self.__msg_mgr.get_message("L516"))
+
+    def cleanup(self) -> None:
+        """Clean up resources, timers, and UI elements."""
+        # Log the start of cleanup process
+        logger.debug(self.__msg_mgr.get_message("L543")) # L543: [MOUSE] MouseEventHandler cleanup initiated
+        self.__cancel_all_timers()
+        self.hide_feedback_circle()
+        self.hide_guidance_text()
+        self.hide_notification()
+        self._remove_shortcut_guide_from_canvas() # Ensure shortcut guide is removed
+
+        # Reset core state variables related to mouse interaction
+        self.__rotation_mode = False
+        self.__rotation_active = False
+        self.__dragging = False
+        self.__keep_rotation_elements_visible = False # Explicitly reset this flag
+        # Log the completion of cleanup process
+        logger.debug(self.__msg_mgr.get_message("L544")) # L544: [MOUSE] MouseEventHandler cleanup completed
+
+    def on_mouse_down(self, event: tk.Event) -> Optional[str]:
+        """Handle mouse button press event.
+        
+        Activates rotation mode on Ctrl+Click, showing relevant UI feedback.
+        
+        Args:
+            event (tk.Event): Mouse button press event.
             
         Returns:
-            String to prevent default handling
+            Optional[str]: "break" to prevent default handling, or None if canvas_ref is not set.
         """
-        # Set dragging flag and store initial position
+        # Log mouse down event with coordinates
+        logger.debug(self.__msg_mgr.get_message("L512").format(event.x, event.y)) # L512: Mouse down at ({}, {})
+        
+        # Ensure canvas reference is available
+        if self.__canvas_ref is None:
+            # Log missing canvas reference
+            logger.warning(self.__msg_mgr.get_message("L527")) # L527: Canvas reference is not set in MouseEventHandler.
+            return None
+
+        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+        # Store last mouse position in canvas coordinates
+        self.__last_mouse_x = self.__canvas_ref.canvasx(event.x)
+        self.__last_mouse_y = self.__canvas_ref.canvasy(event.y)
+        # Set dragging flag to true, indicating a potential drag operation
         self.__dragging = True
-        
-        # Use canvas coordinates to account for scrolling
-        # Ensure canvas reference is not None before calling methods
-        if self.__canvas_ref is not None:
-            self.__last_mouse_x = self.__canvas_ref.canvasx(event.x)
-            self.__last_mouse_y = self.__canvas_ref.canvasy(event.y)
-        
-        # Check if Ctrl key is pressed for rotation mode
-        ctrl_pressed = False
-        if hasattr(event, 'state'):
-            # Ensure state is an integer before performing bitwise operation
-            if isinstance(event.state, int):
-                ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
-        
-        # If Ctrl key is pressed, enter rotation mode
+
+        # Check if Ctrl key was pressed during the mouse click
+        ctrl_pressed = (cast(int, event.state) & 0x4) != 0
+
         if ctrl_pressed:
-            # Only set a new rotation center if we're not already in rotation mode
-            # This prevents the center from changing when clicking again while in rotation mode
-            if not self.__rotation_mode:
-                self.__rotation_mode = True
-                self.__rotation_active = False
-                
-                # Set rotation center to the clicked point using canvas coordinates
-                # Ensure canvas reference is not None before calling methods
-                if self.__canvas_ref is not None:
-                    self.__rotation_center_x = self.__canvas_ref.canvasx(event.x)
-                    self.__rotation_center_y = self.__canvas_ref.canvasy(event.y)
-                
-                # Show visual feedback for rotation center point
-                self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
-                # Show rotation guidance with shortcuts
-                self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
-                
-                # Show shortcut guide in the top-right corner if not already visible
-                if not self.__shortcut_guide_visible:
-                    # Mark this as system-initiated (not user-toggled)
-                    self.__user_toggled_shortcut_guide = False
-                    # Show the shortcut guide
-                    self.__show_shortcut_guide(self.__msg_mgr.get_message('M049'))
-        
-        # Log mouse down event
-        logger.debug(self.__msg_mgr.get_message("L512").format(event.x, event.y))
-        
-        return "break"  # Prevent default handling
+            # Ctrl+Click: Enter or re-affirm rotation mode
+            logger.debug(self.__msg_mgr.get_message("L540").format("Ctrl+Click detected, entering rotation mode"))
+            
+            # Clear any existing rotation-related UI elements before drawing new ones
+            logger.debug(self.__msg_mgr.get_message("L540").format(f"Deleting UI elements with tags: {self.ROTATION_CENTER_TAG}, {self.GUIDANCE_TEXT_TAG}, {self.SHORTCUT_GUIDE_TAG}"))
+            
+            # First hide existing guidance text and notification to ensure proper cleanup
+            self.hide_guidance_text()
+            self.hide_notification()
+            
+            # Then delete tags from canvas
+            self.__canvas_ref.delete(self.ROTATION_CENTER_TAG)
+            self.__canvas_ref.delete(self.ROTATION_GUIDANCE_TAG)
+            self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
+            
+            # Force canvas update to ensure UI is cleared before drawing new elements
+            self.__canvas_ref.update_idletasks()
+            
+            # Get click coordinates on the canvas
+            canvas_click_x = self.__canvas_ref.canvasx(event.x)
+            canvas_click_y = self.__canvas_ref.canvasy(event.y)
+            
+            # Enter rotation mode with explicit flags
+            self.__rotation_mode = True
+            self.__keep_rotation_elements_visible = True  # Ensure elements stay visible
+            self.__rotation_center_x = canvas_click_x
+            self.__rotation_center_y = canvas_click_y
+            self.__rotation_start_time = time.time()
+            self.__rotation_active = False
+            logger.debug(self.__msg_mgr.get_message("L540").format("Rotation mode activated with keep_visible flag"))
+            
+            # Show feedback circle at rotation center
+            self.draw_feedback_circle(canvas_click_x, canvas_click_y, is_rotating=True)
+            
+            # Cancel any existing timers to prevent conflicts
+            self.__cancel_all_timers()
+            
+            # Ensure the canvas is updated before drawing new elements
+            self.__canvas_ref.update()
+            
+            # First draw shortcut guide (fixed position in viewport)
+            # This ensures it appears at the correct position without scroll adjustment
+            logger.debug(self.__msg_mgr.get_message("L540").format("Drawing shortcut guide on canvas"))
+            self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049')) # M050: Rotation Shortcuts, M049: Ctrl+R: RotR, Ctrl+L: RotL, Esc: Exit
+            
+            # Force update to ensure shortcut guide is displayed
+            self.__canvas_ref.update_idletasks()
+            
+            # Ensure shortcut guide is visible by raising it to the top
+            self.__canvas_ref.tag_raise(self.SHORTCUT_GUIDE_TAG)
+            
+            # Then show rotation guidance text with explicit rotation flag
+            logger.debug(self.__msg_mgr.get_message("L540").format("Showing rotation guidance text"))
+            self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True) # M042: Rotation Mode: Drag to rotate.
+            
+            # Ensure guidance text is on top
+            if self.__guidance_text_id and isinstance(self.__guidance_text_id, tuple) and len(self.__guidance_text_id) == 2:
+                # Raise guidance text to ensure it's visible above other elements
+                self.__canvas_ref.tag_raise(self.__guidance_text_id[0])  # Background
+                self.__canvas_ref.tag_raise(self.__guidance_text_id[1])  # Text
+            
+            # Force update again after drawing shortcut guide
+            self.__canvas_ref.update_idletasks()
+            
+            # Display central notification for rotation mode
+            logger.debug(self.__msg_mgr.get_message("L540").format("Showing notification"))
+            self.show_notification(self.__msg_mgr.get_message('M042'), duration=1.0)  # Longer duration for better visibility
+            
+            self.__keep_rotation_elements_visible = True
+            return "break"
+        else:
+            # Click without Ctrl
+            if self.__rotation_mode and not self.__rotation_active:
+                # If in rotation mode (e.g. Ctrl was pressed and released without click)
+                # and then a click happens without Ctrl, exit rotation mode.
+                self.__exit_rotation_mode(event) # Exit rotation mode on non-Ctrl click if already in passive rotation mode
+            
+            # For non-Ctrl clicks, allow default handling
+            return None
+
 
     def on_mouse_drag(self, event: tk.Event) -> None:
         """Handle mouse drag event.
@@ -954,7 +1843,7 @@ class MouseEventHandler:
             # If rotation has not been activated yet, check if we've moved enough to start
             if not self.__rotation_active:
                 # Calculate distance from initial press point
-                distance = ((current_x - self.__rotation_center_x) ** 2 + 
+                distance = ((current_x - self.__rotation_center_x) ** 2 +
                             (current_y - self.__rotation_center_y) ** 2) ** 0.5
                 
                 # If moved enough distance, activate rotation
@@ -963,6 +1852,14 @@ class MouseEventHandler:
                     # Store initial angle for reference
                     self.__rotation_start_angle = math.atan2(current_y - self.__rotation_center_y,
                                                             current_x - self.__rotation_center_x)
+                    
+                    # Redraw feedback circle at the original rotation center to ensure it stays fixed
+                    # This prevents the red dot from moving during rotation
+                    # Always use canvas coordinates for consistent positioning
+                    if self.__canvas_ref:
+                        # Ensure we're using the exact rotation center coordinates
+                        # without any offset or transformation
+                        self.draw_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
             
             # If rotation is active, calculate angle and rotate
             if self.__rotation_active:
@@ -978,32 +1875,36 @@ class MouseEventHandler:
                 angle_diff = math.degrees(current_angle - prev_angle)
                 
                 # Apply smoothing to prevent jitter
-                if abs(angle_diff) > 0.05:  # Even lower threshold to catch smaller movements (was 0.1)
-                    # Limit angle change per frame to reduce jerkiness
-                    if abs(angle_diff) > 0.5:  # Limit to 0.5 degrees per frame
-                        angle_diff = 0.5 if angle_diff > 0 else -0.5
-                    elif abs(angle_diff) > 0.3:
-                        # Apply scaling for medium changes
-                        angle_diff = 0.3 if angle_diff > 0 else -0.3
-                    
-                    # Apply additional smoothing for very small changes
-                    if abs(angle_diff) < 0.2:
-                        # Apply a stronger scaling factor to make small movements even smoother
-                        angle_diff *= 0.5
+                if abs(angle_diff) > 0.05:  # Threshold to prevent minor jitter
+                    # Strictly limit angle change to ±1° per frame for smooth rotation
+                    # Clamp the angle_diff value between -1.0 and 1.0
+                    if abs(angle_diff) > 1.0:
+                        angle_diff = 1.0 if angle_diff > 0 else -1.0
                     
                     # Apply rotation
                     self.__rotate_by_angle(angle_diff)
                     
                     # Calculate total rotation from start for display
-                    total_angle_change = math.degrees(current_angle - self.__rotation_start_angle)
-                    total_angle_change = round(total_angle_change, 1)  # Round for display
+                    # Ensure __rotation_start_angle is available
+                    if hasattr(self, '_MouseEventHandler__rotation_start_angle'):
+                        total_angle_change = math.degrees(current_angle - self.__rotation_start_angle)
+                        total_angle_change = round(total_angle_change, 1)  # Round for display
+                    else: # Fallback if start angle wasn't set (should not happen if logic is correct)
+                        total_angle_change = 0.0
                     
                     # Update display
                     self.__on_transform_update()
                     
-                    # Show rotation feedback with current angle
-                    self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                    # Show rotation feedback with current angle - always use the original rotation center
+                    # This ensures the red dot stays fixed at the rotation center point
+                    # Do not show feedback circle for shortcut operations - prevent unwanted red dots
+                    
+                    # Update guidance text with current rotation angle
                     self.show_guidance_text(self.__msg_mgr.get_message('M043').format(total_angle_change), is_rotation=True)
+                    
+                    # Force canvas update to ensure feedback circle is visible at the correct position
+                    if self.__canvas_ref:
+                        self.__canvas_ref.update_idletasks()
         else:
             # Normal dragging - move all visible layers
             for layer_id, visible in self.__visible_layers.items():
@@ -1023,13 +1924,29 @@ class MouseEventHandler:
             # Update display
             self.__on_transform_update()
         
-        # Update last mouse position
-        self.__last_mouse_x = current_x
-        self.__last_mouse_y = current_y
+        # Update last mouse position only if not in rotation mode
+        # In rotation mode, we want to keep the original center point fixed
+        if not self.__rotation_mode:
+            self.__last_mouse_x = current_x
+            self.__last_mouse_y = current_y
         
         # Log mouse drag with throttling to avoid excessive logs
         if self._transform_log_throttle.should_log(key="mouse_drag"):
             logger.debug(self.__msg_mgr.get_message("L513").format(event.x, event.y, delta_x, delta_y))
+    
+    def on_mouse_press(self, event: tk.Event) -> Optional[str]:
+        """Handle mouse button press event (alias for on_mouse_down).
+        
+        This method serves as an alias for on_mouse_down to maintain compatibility
+        with event bindings in the UI layer.
+        
+        Args:
+            event: Mouse button press event
+            
+        Returns:
+            String to prevent default handling
+        """
+        return self.on_mouse_down(event)
     
     def on_mouse_up(self, event: tk.Event) -> None:
         """Handle mouse button release event.
@@ -1037,6 +1954,11 @@ class MouseEventHandler:
         Args:
             event: Mouse button release event
         """
+        if self.__canvas_ref is None:
+            logger.warning(self.__msg_mgr.get_message("L528")) # L528: Canvas reference is not set in MouseEventHandler.on_mouse_up.
+            return
+        assert self.__canvas_ref is not None
+
         # Update last mouse position to prevent angle calculation drift using canvas coordinates
         if self.__canvas_ref is not None:
             self.__last_mouse_x = self.__canvas_ref.canvasx(event.x)
@@ -1049,26 +1971,21 @@ class MouseEventHandler:
         if self.__rotation_mode:
             # Check if Ctrl key is still pressed
             ctrl_pressed = False
-            if hasattr(event, 'state'):
-                # Ensure state is an integer before performing bitwise operation
-                if isinstance(event.state, int):
-                    ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
+            if hasattr(event, 'state') and isinstance(event.state, int):
+                ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
             
-            # If Ctrl is no longer pressed and we're not keeping rotation elements visible,
-            # exit rotation mode
-            if not ctrl_pressed and not self.__keep_rotation_elements_visible:
-                # Use the exit rotation mode method to properly clean up
-                self.__exit_rotation_mode()
-                
-                # Update display to reflect changes immediately
-                if self.__canvas_ref:
-                    try:
-                        self.__canvas_ref.update_idletasks()
-                    except Exception as e:
-                        logger.debug(self.__msg_mgr.get_message("L526").format(str(e)))
-                
-                # Log exit from rotation mode\n                logger.debug(self.__msg_mgr.get_message(\ L516\))
-        
+            if not ctrl_pressed:
+                # If Ctrl key is NOT pressed upon mouse up, it means the user intends to potentially
+                # release the rotation mode when the Ctrl key is physically released.
+                # We set __keep_rotation_elements_visible to False here. The actual exit
+                # will be handled by on_key_release when the Control key up event is detected.
+                self.__keep_rotation_elements_visible = False
+                # If Ctrl is not pressed on mouse up while in rotation mode, exit rotation mode immediately.
+                self.__exit_rotation_mode(event)
+            # If Ctrl IS still pressed, __keep_rotation_elements_visible remains True (set in on_mouse_down/drag),
+            # allowing the user to release the mouse button, move the mouse, and then press the mouse button again
+            # to continue rotating from the same center without UI flickering.
+
         # Log mouse up event
         logger.debug(self.__msg_mgr.get_message("L514").format(event.x, event.y))
         
@@ -1079,112 +1996,228 @@ class MouseEventHandler:
             event: Keyboard event
             
         Returns:
-            String to prevent default handling or None
+            String "break" to prevent default handling, or None to allow it.
         """
-        # Process keyboard shortcuts
-        if hasattr(event, 'keysym') and hasattr(event, 'state') and isinstance(event.state, int):
-            # Check if Ctrl key is pressed
-            ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
-            
-            if ctrl_pressed:
-                # Handle Ctrl+R for rotate right 90°
-                if event.keysym in ['r', 'R']:
-                    # Call rotate right and return its result or "break" if it returns None
+        # Ensure event has necessary attributes for key processing
+        if not (hasattr(event, 'keysym') and hasattr(event, 'state') and isinstance(event.state, int)):
+            return None
+
+        ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is the Ctrl modifier bit
+        shift_pressed = (event.state & 0x1) != 0 # 0x1 is the Shift modifier bit
+
+        # If Ctrl key is pressed
+        if ctrl_pressed:
+            # Check if a non-modifier key was part of the event (e.g., 'r' in Ctrl+R)
+            if self.__is_other_key_pressed(event):
+                key_sym_lower = event.keysym.lower()
+
+                if key_sym_lower == 'r':
+                    # Check operation throttling to prevent rapid consecutive operations
+                    if not self.__check_operation_throttle():
+                        # If throttled, show notification and skip operation
+                        if self.__canvas_ref:
+                            # Show throttling notification when operations are too frequent
+                            self.show_notification(self.__msg_mgr.get_message('M056'), 0.3, warning=True)
+                        return "break"
+                    
+                    self.__cancel_all_timers() # Cancel previous timers
+                    # Hide feedback circle to prevent red dot display during shortcut use
+                    self.hide_feedback_circle()
                     result = self.on_rotate_right(event)
-                    return result if result is not None else "break"
                     
-                # Handle Ctrl+L for rotate left 90°
-                elif event.keysym in ['l', 'L']:
-                    # Call rotate left and return its result or "break" if it returns None
-                    result = self.on_rotate_left(event)
-                    return result if result is not None else "break"
-                    
-                # Handle Ctrl+V for vertical flip
-                elif event.keysym == 'v' or event.keysym == 'V':
-                    # Call vertical flip and return its result or "break" if it returns None
-                    # Notification is displayed inside on_flip_vertical method
-                    result = self.on_flip_vertical(event)
-                    return result if result is not None else "break"
-                    
-                # Handle Ctrl+H for horizontal flip
-                elif event.keysym == 'h' or event.keysym == 'H':
-                    # Call horizontal flip and return its result or "break" if it returns None
-                    # Notification is displayed inside on_flip_horizontal method
-                    result = self.on_flip_horizontal(event)
-                    return result if result is not None else "break"
-                    
-                # Handle Ctrl+B for reset transformations
-                elif event.keysym in ['b', 'B']:
-                    # TODO: Add reset implementation
-                    # Show notification
-                    self.show_notification(self.__msg_mgr.get_message('M048'))
-                    return "break"
-                    
-                # Handle Ctrl+? for showing/hiding shortcut help
-                elif event.keysym == 'slash' and (event.state & 0x1) != 0:  # Shift+/ is ?
-                    # Use the toggle_shortcut_guide method to prevent duplicate calls
-                    # This will handle showing/hiding the guide and manage the visibility flag
-                    # The toggle_shortcut_guide method will set __user_toggled_shortcut_guide to True
-                    self.toggle_shortcut_guide(event)
-                    
-                    # Show brief notification only when showing the guide (not when hiding)
-                    if self.__shortcut_guide_visible:
-                        shortcut_guide = self.__msg_mgr.get_message('M049')
-                        self.show_notification(shortcut_guide.split('\n')[0])
-                    
-                    return "break"
-        
-        # Check if Ctrl key is pressed
-        if hasattr(event, 'state'):
-            # Ensure state is an integer before performing bitwise operation
-            if isinstance(event.state, int):
-                ctrl_pressed = (event.state & 0x4) != 0  # 0x4 is Ctrl key state
-                
-                # If Ctrl is pressed, enter rotation mode
-                if ctrl_pressed and not self.__rotation_mode:
-                    self.__rotation_mode = True
-                    self.__rotation_active = False
-                    
-                    # Use canvas center as default rotation center
+                    # Show notification message for right rotation
                     if self.__canvas_ref:
-                        canvas_width = self.__canvas_ref.winfo_width()
-                        canvas_height = self.__canvas_ref.winfo_height()
-                        self.__rotation_center_x = canvas_width / 2
-                        self.__rotation_center_y = canvas_height / 2
+                        self.show_notification(self.__msg_mgr.get_message('M044'), 0.5, warning=False)
+                    
+                    # Show rotation mode message if in rotation mode
+                    if self.__rotation_mode and self.__canvas_ref:
+                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
+                    
+                    # Draw shortcut guide
+                    self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
                         
-                        # Show rotation center immediately
-                        self.show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
-                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation mode
+                    return result if result is not None else "break"
+                elif key_sym_lower == 'l':
+                    # Check operation throttling to prevent rapid consecutive operations
+                    if not self.__check_operation_throttle():
+                        # If throttled, show notification and skip operation
+                        if self.__canvas_ref:
+                            # Show throttling notification when operations are too frequent
+                            self.show_notification(self.__msg_mgr.get_message('M056'), 0.3, warning=True)
+                        return "break"
+                    
+                    self.__cancel_all_timers() # Cancel previous timers
+                    # Hide feedback circle to prevent red dot display during shortcut use
+                    self.hide_feedback_circle()
+                    result = self.on_rotate_left(event)
+                    
+                    # Show notification message for left rotation
+                    if self.__canvas_ref:
+                        self.show_notification(self.__msg_mgr.get_message('M045'), 0.5, warning=False)
+                    
+                    # Show rotation mode message if in rotation mode
+                    if self.__rotation_mode and self.__canvas_ref:
+                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
+                    
+                    # Draw shortcut guide
+                    self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
                         
-                        # Log rotation mode activation
-                        logger.debug(self.__msg_mgr.get_message("L515").format(
-                            self.__rotation_center_x, self.__rotation_center_y))
-        
-        # Allow default handling for other keys
-        return None
+                    return result if result is not None else "break"
+                elif key_sym_lower == 'v':
+                    # Check operation throttling to prevent rapid consecutive operations
+                    if not self.__check_operation_throttle():
+                        # If throttled, show notification and skip operation
+                        if self.__canvas_ref:
+                            # Show throttling notification when operations are too frequent
+                            self.show_notification(self.__msg_mgr.get_message('M056'), 0.3, warning=True)
+                        return "break"
+                    
+                    # Properly handle Ctrl+V for vertical flip
+                    self.__cancel_all_timers() # Cancel previous timers
+                    self.hide_feedback_circle() # Hide feedback for immediate flip
+                    
+                    # Call vertical flip handler which handles all the logic
+                    result = self.on_flip_vertical(event)
+                    
+                    # Show notification message for vertical flip
+                    if self.__canvas_ref:
+                        self.show_notification(self.__msg_mgr.get_message('M046'), 0.5, warning=False)
+                    
+                    # Draw shortcut guide
+                    self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+                    
+                    # Ensure rotation guidance is shown if in rotation mode
+                    if self.__rotation_mode and self.__canvas_ref:
+                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
+                        
+                    return result if result is not None else "break"
+                elif key_sym_lower == 'h':
+                    # Properly handle Ctrl+H for horizontal flip
+                    self.__cancel_all_timers() # Cancel previous timers
+                    self.hide_feedback_circle() # Hide feedback for immediate flip
+                    
+                    # Call horizontal flip handler which handles all the logic
+                    result = self.on_flip_horizontal(event)
+                    
+                    # Show notification message for horizontal flip
+                    if self.__canvas_ref:
+                        self.show_notification(self.__msg_mgr.get_message('M047'), 0.5, warning=False)
+                    
+                    # Draw shortcut guide
+                    self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+                    
+                    # Ensure rotation guidance is shown if in rotation mode
+                    if self.__rotation_mode and self.__canvas_ref:
+                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
+                        
+                    return result if result is not None else "break"
+                elif key_sym_lower == 'b':
+                    # Cancel all timers to prevent UI conflicts
+                    self.__cancel_all_timers()
+                    
+                    # Clear UI elements for clean reset
+                    if self.__canvas_ref:
+                        self.hide_feedback_circle()
+                        self.hide_guidance_text()
+                        self.hide_notification()
+                    
+                    # Reset transformations for all visible layers
+                    for layer_id, visible in self.__visible_layers.items():
+                        if not visible:
+                            continue
+                            
+                        if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                            # Reset to default values: no rotation (0), centered (0,0), normal scale (1.0)
+                            self.__layer_transform_data[layer_id][self.__current_page_index] = (0.0, 0.0, 0.0, 1.0)
+                    
+                    # Update display
+                    self.__on_transform_update()
+                    
+                    # Show notification with reset message
+                    self.show_notification(self.__msg_mgr.get_message('M048'), 0.5, warning=False) # Reset notification
+                    
+                    # Draw shortcut guide to ensure it's visible after reset
+                    self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
+                    return "break"
+                # Handle Ctrl + ? (Ctrl + Shift + /)
+                # Support various keyboard layouts including US and Japanese keyboards
+                # US keyboard: Ctrl+Shift+/ (keysym='slash' with shift_pressed=True)
+                # Japanese keyboard: may report as 'question' directly or other variants
+                elif (event.keysym in ('slash', 'question', 'questiondown', 'question_mark') and shift_pressed) or \
+                     (event.keysym == 'question' or event.char == '?'):
+                    self.__cancel_all_timers() # Cancel previous timers
+                    
+                    # Toggle the shortcut guide visibility with force_show=None for explicit toggle behavior
+                    # This ensures the toggle behavior works as expected with the auto-hide timer
+                    self.toggle_shortcut_guide(event, force_show=None)
+                    
+                    # Show appropriate notification based on current state
+                    if self.__shortcut_guide_visible:
+                        # Guide is now visible - show notification
+                        shortcut_guide_msg = self.__msg_mgr.get_message('M049') # Shortcut guide content
+                        if shortcut_guide_msg:
+                            # Show first line as notification
+                            first_line = shortcut_guide_msg.split('\n')[0] if '\n' in shortcut_guide_msg else shortcut_guide_msg
+                            self.show_notification(first_line, duration=1.0)
+                    else:
+                        # Guide was hidden - show notification
+                        self.show_notification(self.__msg_mgr.get_message('M051', "Shortcut guide hidden"), duration=1.0)
+                    
+                    # If in rotation mode, ensure rotation guidance is shown
+                    if self.__rotation_mode and self.__canvas_ref:
+                        self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)
+                        
+                    return "break"
+                # If Ctrl is pressed with another key not defined as a shortcut, do nothing here,
+                # allowing rotation mode to potentially be used with mouse interaction if already active.
+                # No 'return "break"' here, let it fall through.
+
+            # Else, if Ctrl was pressed but __is_other_key_pressed is false, it means
+            # the event.keysym was likely 'Control_L' or 'Control_R' (Ctrl key itself).
+            else:
+                if not self.__rotation_mode:
+                    self.__rotation_mode = True
+                    # UI elements (dot, guidance) are NOT shown here.
+                    # They are shown when Ctrl + MouseDown occurs.
+                    # Use L540 with rotation center coordinates for rotation mode activation log
+                    # L540: "[DEBUG] {0}"
+                    logger.debug(self.__msg_mgr.get_message("L540").format(f"Rotation mode activated at coordinates: ({self.__rotation_center_x}, {self.__rotation_center_y})"))
+                # It can be useful to return "break" here to prevent Tkinter's default
+                # processing of a lone Ctrl press if it causes unwanted behavior (e.g., focus changes).
+                return "break"
+        return None # Allow default handling for other keys or unhandled combinations
         
     def on_key_release(self, event: tk.Event) -> None:
         """Handle keyboard release events.
-        
+
         Args:
             event: Keyboard event
         """
         # Check if Ctrl key was released
-        if hasattr(event, 'keysym') and (event.keysym == 'Control_L' or event.keysym == 'Control_R'):
-            # If in rotation mode, exit it when Ctrl is released
-            if self.__rotation_mode and not self.__keep_rotation_elements_visible:
-                # Use the exit rotation mode method to properly clean up
-                self.__exit_rotation_mode()
-                
-                # Update display to reflect changes immediately
-                if self.__canvas_ref:
-                    try:
-                        self.__canvas_ref.update_idletasks()
-                    except Exception as e:
-                        logger.debug(self.__msg_mgr.get_message("L526").format(str(e)))
-                
-                # Log rotation mode exit
-                logger.debug(self.__msg_mgr.get_message("L516"))
+        if event.keysym in ("Control_L", "Control_R"):
+            if self.__rotation_mode:
+                # Log the attempt to exit rotation mode due to Ctrl key release
+                logger.debug(self.__msg_mgr.get_message("L519")) # Attempting to exit rotation mode
+
+                # If UI elements are not meant to be kept visible (e.g., mouse button was already up,
+                # or Ctrl was pressed/released without mouse interaction, or mouse was released without Ctrl),
+                # then proceed to exit rotation mode.
+                if not self.__keep_rotation_elements_visible:
+                    self.__exit_rotation_mode() # Handles UI cleanup and flag resets.
+                else:
+                    # If UI elements are currently meant to be kept visible (this implies that
+                    # on_mouse_down or on_mouse_drag set it to True, and on_mouse_up with Ctrl
+                    # might have kept it True or on_mouse_up without Ctrl set it to False).
+                    # Now that Ctrl is released, we definitely don't want to keep them visible
+                    # solely based on a past Ctrl state.
+                    self.__keep_rotation_elements_visible = False
+                    
+                    # If the mouse button is NOT currently pressed (i.e., not actively rotating via mouse drag),
+                    # then it's safe to exit rotation mode now that Ctrl is also released.
+                    # This covers scenarios like: Ctrl+MouseDown -> Drag -> MouseUp (Ctrl still held) -> CtrlRelease.
+                    if not self.__rotation_active:
+                        self.__exit_rotation_mode()
+            # No 'else' needed here; if not in rotation_mode, Ctrl release does nothing special.
         
     def on_mouse_wheel(self, event: tk.Event, layer_data=None) -> None:
         """Handle mouse wheel events for zooming.
@@ -1225,18 +2258,45 @@ class MouseEventHandler:
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
                 r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
                 
+                # Get current flip flags after toggle
+                h_flip, v_flip = self.__layer_flip_flags[layer_id][self.__current_page_index]
+                
+                # Apply flips by adjusting coordinates and scale
+                # For horizontal flip, we need to negate x-coordinate and scale
+                # For vertical flip, we need to negate y-coordinate and scale
+                new_x = -x if h_flip else x
+                new_y = -y if v_flip else y
+                
+                # Apply scale changes to reflect flipping
+                # Negative scale indicates flipping
+                new_s = abs(s)  # Start with absolute scale
+                if h_flip != v_flip:  # If only one axis is flipped
+                    new_s = -new_s     # Negate scale to indicate flip
+                
+                # Keep the original rotation angle
+                new_r = r
+                
+                # Update the transformation data
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, new_x, new_y, new_s)
+                
                 # Apply zoom factor to scale
-                new_scale = s * zoom_factor
+                new_scale = new_s * zoom_factor
                 
                 # Limit scale to reasonable bounds (0.1x to 10x)
                 new_scale = max(0.1, min(10.0, new_scale))
                 
                 # Update transformation data with new scale
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (r, x, y, new_scale)
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, new_x, new_y, new_scale)
         
-        # Log zoom operation with throttling
-        if self._wheel_log_throttle.should_log(key="zoom_operation"):
-            logger.debug(self.__msg_mgr.get_message("L517").format(zoom_factor))
+        # Log zoom operation with throttling - use a different key than the wrapper
+        # to avoid duplicate logs when both the wrapper and this method log
+        # Only log here if the wrapper didn't already log (check if we have a canvas reference)
+        if not hasattr(self, '_last_wheel_log_time') or time.time() - self._last_wheel_log_time > 1.0:
+            # Store last log time to further reduce duplicates
+            self._last_wheel_log_time = time.time()
+            # Only log from here if we're called directly (not through wrapper)
+            if self._wheel_log_throttle.should_log(key="direct_zoom_operation"):
+                logger.debug(self.__msg_mgr.get_message("L517").format(zoom_factor))
         
         # Update display
         self.__on_transform_update()
@@ -1253,8 +2313,7 @@ class MouseEventHandler:
         self.__canvas_ref.bind("<ButtonPress-1>", self.on_mouse_down)
         self.__canvas_ref.bind("<B1-Motion>", self.on_mouse_drag)
         self.__canvas_ref.bind("<ButtonRelease-1>", self.on_mouse_up)
-        
-        # Bind keyboard events
+                # Bind keyboard events
         self.__canvas_ref.bind("<KeyPress>", self.on_key_press)
         self.__canvas_ref.bind("<KeyRelease>", self.on_key_release)
         
@@ -1289,7 +2348,7 @@ class MouseEventHandler:
         
         # Only hide shortcut guide if it wasn't explicitly toggled by user
         if not self.__user_toggled_shortcut_guide and self.__shortcut_guide_visible:
-            self.__hide_shortcut_guide()
+            self._remove_shortcut_guide_from_canvas()
         
         # Reset rotation mode flags
         self.__rotation_mode = False
@@ -1300,7 +2359,7 @@ class MouseEventHandler:
     
     def update_state(self, current_page_index: Optional[int] = None, visible_layers: Optional[Dict[int, bool]] = None, layer_transform_data: Optional[Dict[int, List[Tuple[float, float, float, float]]]] = None) -> None:
         """Update the state of the mouse event handler.
-        
+
         Args:
             current_page_index: Current page index to display
             visible_layers: Dictionary of layer visibility states {layer_id: is_visible}
@@ -1308,7 +2367,7 @@ class MouseEventHandler:
         """
         # Cancel any existing timers to prevent UI elements from appearing after state changes
         self.__cancel_all_timers()
-        
+
         # Only update if the page index has actually changed
         if current_page_index is not None and current_page_index != self.__current_page_index:
             # Exit rotation mode if active (this will handle cleaning up UI elements)
@@ -1318,64 +2377,79 @@ class MouseEventHandler:
                 # Clear any feedback elements when changing pages
                 # clear_feedback method already handles shortcut guide visibility based on __user_toggled_shortcut_guide flag
                 self.clear_feedback()
-                
+
                 # Keep shortcut guide if explicitly toggled by user
                 if not self.__user_toggled_shortcut_guide and self.__shortcut_guide_visible:
-                    self.__hide_shortcut_guide()
-            
+                    self._remove_shortcut_guide_from_canvas() # Ensure this line is correctly indented and present
+
             self.__current_page_index = current_page_index
-            
-            # Log page change
-            logger.debug(self.__msg_mgr.get_message("L518").format(current_page_index))
+            # logger.info(self.__msg_mgr.get_log_message("L538", self.__current_page_index + 1, base_total, comp_current, comp_total)) # TODO: Get total page counts
         else:
             # Update current page index if provided but not different
             if current_page_index is not None:
                 self.__current_page_index = current_page_index
-            
+
         # Update visible layers if provided
         if visible_layers is not None:
             self.__visible_layers = visible_layers
-            
+
         # Update layer transform data if provided
         if layer_transform_data is not None:
             self.__layer_transform_data = layer_transform_data
-            
-        # Log the state update with page and layer information
-        logger.debug(self.__msg_mgr.get_message("L518").format(
-            self.__current_page_index,
-            len(self.__visible_layers) if self.__visible_layers else 0,
-            sum(1 for layer_id, is_visible in self.__visible_layers.items() if is_visible) if self.__visible_layers else 0
-        ))
-    
+
     def __rotate_by_angle(self, angle_degrees: float) -> None:
-        """Rotate all visible layers by the specified angle.
-        
-        Args:
+        """Rotate all visible layers by the specified angle around the rotation center.
+    
+    Args:
             angle_degrees: Angle to rotate in degrees (positive = clockwise)
         """
-        # Skip very small angle changes to prevent infinite loops
+        # Skip very small angle changes
         if abs(angle_degrees) < 0.05:
             return
-            
+
+        # Convert incremental angle_degrees to radians for rotating the position
+        theta = math.radians(angle_degrees)
+        cos_theta = math.cos(theta)
+        sin_theta = math.sin(theta)
+
+        # Rotation center (canvas coordinates)
+        cx = self.__rotation_center_x
+        cy = self.__rotation_center_y
+
         # Apply rotation to all visible layers
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
                 continue
-                
-            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+
+            if layer_id in self.__layer_transform_data and \
+               self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+
                 r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                
+
                 # Add the new rotation angle to the current rotation and normalize to 0-360 range
-                # Use modulo operator instead of loops to prevent infinite loops
                 new_rotation = (r + angle_degrees) % 360
-                
-                # Update the transformation data
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_rotation, x, y, s)
+
+                # Current layer position (canvas coordinates)
+                # (x, y) is the layer's current reference point.
+
+                # Translate point (layer's current position) to origin (relative to rotation center)
+                translated_x = x - cx
+                translated_y = y - cy
+
+                # Rotate point
+                # For standard 2D rotation matrix:
+                # x' = x*cos(θ) - y*sin(θ)
+                # y' = x*sin(θ) + y*cos(θ)
+                rotated_x = translated_x * cos_theta - translated_y * sin_theta
+                rotated_y = translated_x * sin_theta + translated_y * cos_theta
+
+                # Translate point back to its new position
+                new_x = rotated_x + cx
+                new_y = rotated_y + cy
+
+                # Update the transformation data with new rotation and new position
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_rotation, new_x, new_y, s)
         
-        # Log the rotation operation
+        # Log the rotation operation (consider logging new_x, new_y as well if needed)
         logger.debug(self.__msg_mgr.get_message("L511").format(angle_degrees))
-        
-    # Note: This method was removed because it was a duplicate of the one defined at line 653
-    
-    # Note: This method was removed because it was a duplicate of the one defined at line 725
 
