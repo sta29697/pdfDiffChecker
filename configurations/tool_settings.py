@@ -47,7 +47,18 @@ LOG_LEVEL = (
 )
 
 # Font settings
-font_family: str = "BIZ UDゴシック"
+# List of preferred font families, in order of preference.
+# The application will try to use the first available font from this list.
+PREFERRED_FONT_FAMILIES: list[str] = [
+    "BIZ UDゴシック",      # Primary recommended UD font
+    "Yu Gothic UI",      # Common Windows Japanese UI font
+    "Meiryo UI",         # Another common Windows Japanese UI font
+    "Hiragino Sans",     # Common macOS Japanese font
+    "Noto Sans JP",      # Google's Noto Sans for Japanese
+    "sans-serif"         # Generic fallback
+]
+DEFAULT_FONT_FAMILY: str = "BIZ UDゴシック"  # Primary default font, ideally found via UserSettingManager
+SECOND_FALLBACK_FONT_FAMILY: str = "sans-serif" # Ultimate fallback if preferred fonts (including BIZ UD) are not available
 font_size: int = 12
 
 # Operation setting flags
@@ -137,6 +148,20 @@ DEFAULT_USER_SET: Dict[str, Dict[str, Any]] = {
         "comparison_file_graph_subwindow_width": 500,
         "comparison_file_graph_subwindow_height": 10,
         "comparison_file_graph_subwindow_geometry": "500x10+300+300",
+        # Feedback circle settings
+        "feedback_circle_radius": 10,
+        "feedback_circle_fill": "#FF0000",
+        "feedback_circle_outline": "#FFFFFF",
+        "feedback_circle_outline_width": 2,
+        "feedback_circle_pulse": True,
+        # Font and guidance settings
+        "font_size": 12,
+        "guidance_position": "sw",
+        "rotation_guidance_text_color": "#FF0000",
+        "guidance_text_color": "#0000FF",
+        "guidance_bg_color": "#0000FF",
+        "guidance_border_color": "#0000FF",
+        "guidance_stipple": "gray25",
     },
 }
 
@@ -330,4 +355,24 @@ DEFAULT_COLOR_THEME_SET: Dict[str, Dict[str, Any]] = {
     },
     "dpi_label": {"fg": "#43c0cd", "bg": "#27283a"},
     "dpi_entry": {"fg": "#db57c4", "bg": "#27283a", "highlightcolor": "#43c0cd", "highlightbackground": "#27283a", "insertbackground": "#db57c4"}
+}
+
+# Global keyboard shortcut patterns (for bind_all / unbind_all)
+GLOBAL_SHORTCUT_PATTERNS: dict[str, list[str]] = {
+    # Toggle shortcut guide (Ctrl + ?) - US / JP layouts
+    "TOGGLE_GUIDE": [
+        "<Control-Shift-/>",   # US layout Ctrl+?
+        "<Control-question>",  # JP layout Ctrl+?
+        "<Control-Key-question>"  # Fallback pattern
+    ],
+    # Rotation shortcuts
+    "ROTATE_RIGHT": ["<Control-r>"],
+    "ROTATE_LEFT": ["<Control-l>"],
+    # Flip shortcuts
+    "FLIP_HORIZONTAL": ["<Control-h>"],
+    "FLIP_VERTICAL": ["<Control-v>"],
+    # Reset transformations
+    "RESET_TRANSFORM": ["<Control-b>"],
+    # Detect Ctrl key held down (left / right)
+    "CTRL_ONLY": ["<Control_L>", "<Control_R>"]
 }

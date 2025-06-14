@@ -54,49 +54,67 @@ pdfDiffChecker/
 │   │       ├── convert_pdf_to_png(pdf_path, output_dir) - Convert PDF to PNG
 │   │       ├── extract_metadata(pdf_path) - Extract metadata from PDF
 │   │       └── update_progress(progress, page, total) - Update progress
+│   ├── image_operations.py
+│   │   └── ImageOperations class
+│   │       ├── __init__(self, canvas: tk_Canvas, image_id: int, pil_image: Image.Image) -> None - Initialize the ImageOperations
+│   │       ├── move(self, dx: int, dy: int) -> None - Move the image by the specified amount
+│   │       ├── set_rotation_center(self, x: int, y: int) -> None - Set the center point for rotation
+│   │       ├── rotate(self, angle_degrees: float) -> None - Rotate the image by the specified angle
+│   │       ├── zoom(self, scale_factor: float) -> None - Zoom the image by the specified factor
+│   │       ├── update_image(self, new_image: Image.Image) -> None - Update the image on the canvas
+│   │       ├── flip_horizontal(self) -> None - Flip the image horizontally using PIL's transpose method
+│   │       └── flip_vertical(self) -> None - Flip the image vertically using PIL's transpose method
 │   ├── mouse_event_handler.py
 │   │   └── MouseEventHandler class
-│   │       ├── update_state(current_page_index, visible_layers) - Update state
-│   │       ├── add_layer(layer_id, init_transform_data) - Add a new layer
-│   │       ├── remove_layer(layer_id) - Remove a layer
-│   │       ├── attach_to_canvas(canvas_widget) - Attach to a canvas for visual feedback
-│   │       ├── on_key_press(event) - Handle key press events
-│   │       ├── on_mouse_down(event) - Handle mouse button press
-│   │       ├── on_mouse_drag(event) - Handle mouse drag
-│   │       ├── on_mouse_up(event) - Handle mouse button release
-│   │       ├── __force_display_rotation_elements() - Force display of rotation-related visual elements
-│   │       ├── __schedule_ctrl_check_timer() - Schedule timer to check Ctrl key state
-│   │       ├── __check_ctrl_key_state() - Check if Ctrl key is still pressed
-│   │       ├── __exit_rotation_mode() - Exit rotation mode and clean up visual elements
-│   │       ├── on_mouse_move(event) - Handle mouse movement events
-│   │       ├── clear_feedback() - Clear all visual feedback elements
-│   │       ├── hide_feedback_circle() - Hide any displayed feedback circle
-│   │       ├── hide_guidance_text() - Hide any displayed guidance text
-│   │       ├── on_mouse_wheel(event, single_layer_data) - Handle mouse wheel for zooming
-│   │       ├── _process_wheel_zoom(event, transform_data, page_index, callback_function) - Process zoom for single layer
-│   │       ├── _process_wheel_zoom_multi_layer(event) - Process zoom for multiple layers
-│   │       ├── __rotate_by_angle(angle) - Rotate all visible layers by angle
-│   │       ├── on_rotate_right(event) - Handle right rotation (90°)
-│   │       ├── on_rotate_left(event) - Handle left rotation (90°)
-│   │       ├── on_flip_vertical(event) - Handle vertical flip
-│   │       ├── on_flip_horizontal(event) - Handle horizontal flip
-│   │       ├── on_reset_transform(event) - Reset transformations
-│   │       ├── show_feedback_circle(x, y, is_rotating) - Show feedback circle at position
-│   │       ├── show_guidance_text(message, is_rotation) - Show guidance text on canvas
-│   │       ├── show_notification(message, duration) - Show transient notification
-│   │       └── hide_notification() - Hide the notification text
+│   │       ├── __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], current_page_index: int, visible_layers: Dict[int, bool], on_transform_update: Callable[[], None]) - Initialize handler
+│   │       ├── attach_to_canvas(self, canvas: tk.Canvas) - Attach to a canvas for visual feedback
+│   │       ├── update_state(self, current_page_index: int, visible_layers: Dict[int, bool]) - Update state (e.g., on page change)
+│   │       ├── set_current_page_index(self, page_index: int) - Set the current page index
+│   │       ├── set_visible_layers(self, visible_layers: Dict[int, bool]) - Set the visibility of layers
+│   │       ├── get_current_transform_for_layer(self, layer_id: int) -> Optional[Tuple[float, float, float, float]] - Get current transformation for a layer
+│   │       ├── on_mouse_down(self, event: tk.Event) -> str - Handle mouse button press
+│   │       ├── on_mouse_drag(self, event: tk.Event) -> None - Handle mouse drag
+│   │       ├── on_mouse_up(self, event: tk.Event) -> None - Handle mouse button release
+│   │       ├── on_mouse_move(self, event: tk.Event) -> None - Handle mouse movement (updates cursor position)
+│   │       ├── on_mouse_wheel(self, event: tk.Event) -> None - Handle mouse wheel for zooming
+│   │       ├── on_key_press(self, event: tk.Event) -> Optional[str] - Handle key press events (shortcuts)
+│   │       ├── on_key_release(self, event: tk.Event) -> None - Handle key release events (Ctrl key state)
+│   │       ├── on_rotate_right(self, event: tk.Event | None = None) -> str | None - Handle Ctrl+R for 90° clockwise rotation
+│   │       ├── on_rotate_left(self, event: tk.Event | None = None) -> str | None - Handle Ctrl+L for 90° counter-clockwise rotation
+│   │       ├── on_flip_vertical(self, event: tk.Event | None = None) -> str | None - Handle Ctrl+V for vertical flip
+│   │       ├── on_flip_horizontal(self, event: tk.Event | None = None) -> str | None - Handle Ctrl+H for horizontal flip
+│   │       ├── on_reset_transform(self, event: tk.Event | None = None) -> str | None - Handle Ctrl+B to reset transformations for the current page
+│   │       ├── toggle_shortcut_guide(self, event: Optional[tk.Event] = None) -> str - Toggle shortcut guide visibility
+│   │       ├── show_guidance_text(self, text: str, duration: float = 2.0, is_rotation: bool = False, tag: Optional[str] = None) -> None - Show guidance text on canvas
+│   │       ├── hide_guidance_text(self, event: Optional[tk.Event] = None) -> None - Hide any displayed guidance text
+│   │       ├── show_notification(self, message: str, duration: float = 2.0, warning: bool = False) -> None - Show transient notification
+│   │       ├── hide_notification(self) -> None - Hide the notification text
+│   │       ├── show_feedback_circle(self, x: float, y: float, is_rotating: bool) -> None - Show feedback circle at position
+│   │       ├── hide_feedback_circle(self) -> None - Hide any displayed feedback circle
+│   │       ├── clear_feedback(self) -> None - Clear all visual feedback elements (guidance, notification, circle)
+│   │       ├── _show_shortcut_guide(self, event: Optional[tk.Event] = None) -> None - (Private) Show shortcut guide on canvas
+│   │       ├── _hide_shortcut_guide(self, event: Optional[tk.Event] = None) -> None - (Private) Hide the shortcut guide
+│   │       ├── _exit_rotation_mode(self) -> None - (Private) Exit rotation mode and clean up visual elements
+│   │       ├── _process_wheel_zoom(self, event: tk.Event) -> None - (Private) Process zoom for all visible layers
+│   │       ├── __rotate_by_angle(self, angle_degrees: float) -> None - (Private) Rotate all visible layers by a specified angle
+│   │       ├── __process_pending_rotation(self) -> None - (Private) Process pending rotation updates if any
+│   │       ├── __cancel_all_timers(self) -> None - (Private) Cancel all pending hide/check timers
+│   │       ├── __force_display_rotation_elements(self) -> None - (Private) Force display of rotation-related visual elements
+│   │       ├── __schedule_ctrl_check_timer(self) -> None - (Private) Schedule timer to check Ctrl key state for rotation mode
+│   │       └── __check_ctrl_key_state(self) -> None - (Private) Check if Ctrl key is still pressed to maintain rotation mode
 │   ├── transform_manager.py
 │   │   └── TransformationManager class
-│   │       ├── get_transform_data(layer_id, page_index) - Get transformation data
-│   │       ├── set_transform_data(layer_id, page_index, rotation, tx, ty, scale) - Set transformation data
-│   │       ├── update_transform_data(layer_id, page_index, rotation, tx, ty, scale) - Update transformation data
-│   │       ├── reset_transform(layer_id, page_index) - Reset transformation data
-│   │       ├── reset_all_transforms() - Reset all transformation data
-│   │       ├── set_current_page_index(page_index) - Set current page index
-│   │       ├── get_current_page_index() - Get current page index
-│   │       ├── add_layer(layer_id, transform_data) - Add a new layer
-│   │       ├── remove_layer(layer_id) - Remove a layer
-│   │       └── get_all_transform_data() - Get all transformation data
+│   │       ├── __init__(self) -> None - Initialize the TransformationManager
+│   │       ├── get_transform_data(self, layer_id: int, page_index: int) -> Tuple[float, float, float, float] - Get transformation data (rotation, x, y, scale)
+│   │       ├── set_transform_data(self, layer_id: int, page_index: int, rotation: float, tx: float, ty: float, scale: float) -> None - Set transformation data
+│   │       ├── update_transform_data(self, layer_id: int, page_index: int, rotation: Optional[float] = None, tx: Optional[float] = None, ty: Optional[float] = None, scale: Optional[float] = None) -> None - Update specific transformation parameters
+│   │       ├── reset_transform(self, layer_id: int, page_index: int) -> None - Reset transformation data for a specific layer and page
+│   │       ├── reset_all_transforms(self) -> None - Reset all transformation data to default values
+│   │       ├── set_current_page_index(self, page_index: int) -> None - Set current page index
+│   │       ├── get_current_page_index(self) -> int - Get current page index
+│   │       ├── add_layer(self, layer_id: int, transform_data: Optional[List[Tuple[float, float, float, float]]] = None) -> None - Add a new display layer
+│   │       ├── remove_layer(self, layer_id: int) -> None - Remove a display layer
+│   │       └── get_all_transform_data(self) -> Dict[int, List[Tuple[float, float, float, float]]] - Get all transformation data
 │   └── widgets_tracker.py
 │       └── WidgetsTracker class
 │           ├── register_widget(widget) - Register widget
@@ -117,6 +135,9 @@ pdfDiffChecker/
 │   │   └── BalloonMessage class - Display balloon message
 │   ├── log_throttle.py
 │   │   └── LogThrottle class - Limit log output
+│   ├── shortcut_binding.py
+│   │   ├── bind_shortcuts(root, patterns, handler) - Bind multiple shortcut patterns
+│   │   └── unbind_shortcuts(root, patterns) - Unbind multiple shortcut patterns
 │   └── utils.py - General utility functions
 ├── views/
 │   ├── description.py
@@ -174,37 +195,65 @@ pdfDiffChecker/
 
 #### `transform_manager.py`
 
-Manages transformation data for PDF layers, providing a centralized interface for rotation, scaling, and translation operations.
+Manages transformation data for display layers (base file and comparison file), providing a centralized interface for rotation, scaling, translation, and flipping operations. This controller is used by the MouseEventHandler to maintain transformation state across page navigation.
 
 ```python
 class TransformationManager:
-    def __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], 
-                 current_page_index: int, on_transform_update: Callable[[], None]):
-        # Initialize transformation data, current page index, and update callback
+    def __init__(self) -> None:
+        # Initialize the TransformationManager with empty data.
     
-    def get_transform_data(self, layer_id: int, page_index: int) -> Tuple[float, float, float, float]:
-        # Get transformation data (rotation, tx, ty, scale) for a specific layer and page
+    def get_transform_data(self, layer_id: int, page_index: int) -> Tuple[float, float, float, float, bool, bool]:
+        # Get transformation data (rotation, x, y, scale, flip_x, flip_y) for a specific layer and page.
+        # Default is (0.0, 0.0, 0.0, 1.0, False, False) if not found.
+    
+    def set_transform_data(self, layer_id: int, page_index: int, rotation: float, 
+                           tx: float, ty: float, scale: float,
+                           flip_x: bool = False, flip_y: bool = False) -> None:
+        # Set transformation data for a specific layer and page including flip flags.
     
     def update_transform_data(self, layer_id: int, page_index: int, rotation: Optional[float] = None,
                              tx: Optional[float] = None, ty: Optional[float] = None,
-                             scale: Optional[float] = None, scale_x: Optional[float] = None,
-                             update_callback: bool = True) -> None:
-        # Update transformation data for a specific layer and page
+                             scale: Optional[float] = None, flip_x: Optional[bool] = None,
+                             flip_y: Optional[bool] = None) -> None:
+        # Update specific transformation parameters for a layer and page including flip flags.
+        # If a parameter is None, its current value is kept.
     
     def reset_transform(self, layer_id: int, page_index: int) -> None:
         # Reset transformation data to default values
+        
+    def reset_all_transforms(self) -> None:
+        # Reset all transformation data for all layers and pages to default values
+        
+    def set_current_page_index(self, page_index: int) -> None:
+        # Set current page index
+        
+    def get_current_page_index(self) -> int:
+        # Get current page index
+        
+    def add_layer(self, layer_id: int, transform_data: Optional[List[Tuple[float, float, float, float, bool, bool]]] = None) -> None:
+        # Add a new layer with optional transformation data including flip flags
+        
+    def remove_layer(self, layer_id: int) -> None:
+        # Remove a layer and its transformation data
+        
+    def get_all_transform_data(self) -> Dict[int, List[Tuple[float, float, float, float, bool, bool]]]:
+        # Get all transformation data for all layers including flip flags
 ```
 
 #### `mouse_event_handler.py`
 
-Provides comprehensive mouse event handling and transformation operations for PDF layers. Uses TransformationManager to manage transformation data.
+Provides comprehensive mouse event handling and transformation operations for PDF/TIFF display layers. Works with TransformationManager to manage rotation, scaling, and translation operations. Handles user interactions such as dragging, rotation mode (Ctrl+drag), and mouse wheel zooming, providing visual feedback during operations.
 
 ```python
 class MouseEventHandler:
-    def __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], 
-                 current_page_index: int, visible_layers: Dict[int, bool], 
-                 on_transform_update: Callable[[], None]):
-        # Initialize transformation manager, visible layers, and feedback elements
+    def __init__(
+            self,
+            layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]],
+            current_page_index: int,
+            visible_layers: Dict[int, bool],
+            on_transform_update: Callable[[], None],
+        ) -> None:
+        # Initialize with transformation data, page index, visibility, and update callback
     
     def on_mouse_down(self, event: tk.Event) -> None:
         # Handle mouse button press events

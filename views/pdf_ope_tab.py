@@ -19,6 +19,8 @@ from utils.log_throttle import LogThrottle, window_resize_throttle
 from utils.utils import get_temp_dir
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
 from utils.image_cache import ImageCache
+from utils.shortcut_binding import bind_shortcuts, unbind_shortcuts  # Added utility for global shortcuts
+from configurations.tool_settings import GLOBAL_SHORTCUT_PATTERNS as SC_PATTERNS  # Shortcut patterns
 
 # Controller imports
 from controllers.mouse_event_handler import MouseEventHandler
@@ -134,7 +136,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._setup_drag_and_drop()
 
     def _setup_ui(self) -> None:
-        """Setup the user interface."""
+        """Setup the user interface.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Configure first frame column weights to push controls to the right
         self.frame_main0.grid_columnconfigure(0, weight=1)  # This column will expand
         
@@ -224,7 +233,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.pdf_file_path_entry = None
 
     def _on_base_file_select(self) -> None:
-        """Handle base file selection event using common dialog."""
+        """Handle base file selection event using common dialog.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         file_path = ask_file_dialog(
             initialdir=self._base_file_path_entry.path_var.get(),
             title_code="U022",
@@ -271,6 +287,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Opens a folder selection dialog and updates the output folder path entry
         with the selected folder path.
+        
+        Args:
+            None
+            
+        Returns:
+            None
         """
         folder_path = ask_folder_dialog(
             initialdir=self._output_folder_path_entry.path_var.get(),
@@ -285,6 +307,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Registers the canvas as a drop target for PDF files and sets up the
         necessary callbacks for handling dropped files.
+        
+        Args:
+            None
+            
+        Returns:
+            None
         """
         # Try to register drop target; suppress non-fatal errors
         success = DragAndDropHandler.register_drop_target(
@@ -299,6 +327,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Args:
             file_path (str): Path to the PDF file to load and display.
+            
+        Returns:
+            None
         """
         try:
             # Create temporary directory for extracted PNG files
@@ -378,7 +409,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Args:
             page_index (int): Index of the page to display (0-based)
-        
+            
+        Returns:
+            None
         """
         # Fix-1: Set current page index at the beginning
         self.current_page_index = page_index
@@ -777,7 +810,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.error(traceback.format_exc())
 
     def _on_prev_page(self) -> None:
-        """Go to previous page."""
+        """Go to previous page.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Check if PDF is loaded
         if not hasattr(self, 'file_path_info') or not self.file_path_info:
             # Log attempt to navigate when no PDF is loaded
@@ -813,6 +853,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         This method creates a new MouseEventHandler instance and configures it
         for use with the PDF viewer.
+        
+        Args:
+            None
+            
+        Returns:
+            None
         """
         try:
             # Initialize base transform data if not already created
@@ -860,6 +906,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         This method sets up mouse wheel event bindings for zoom functionality.
         It includes platform-specific bindings and error handling to ensure
         robust operation across different environments.
+        
+        Args:
+            None
+            
+        Returns:
+            None
         """
         # Create mouse handler if it doesn't exist
         if not hasattr(self, 'mouse_handler') or self.mouse_handler is None:
@@ -928,42 +980,15 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
     # _zoom_in and _zoom_out methods have been removed and integrated with MouseEventHandler
         
-    def _on_next_page(self) -> None:
-        """Go to next page."""
-# ... (rest of the code remains the same)
-        # Check if PDF is loaded
-        if not hasattr(self, 'file_path_info') or not self.file_path_info:
-            # Log attempt to navigate when no PDF is loaded
-            logger.warning(message_manager.get_log_message("L289"))
-            # Show info message that no PDF is loaded
-            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
-            return
-            
-        # Get total page count
-        page_count = self.page_count if hasattr(self, 'page_count') else 0
-        
-        # Check if we can go to a next page
-        if self.current_page_index < page_count - 1:
-            self.current_page_index += 1
-            self._display_page(self.current_page_index)
-            if hasattr(self, 'page_control_frame') and self.page_control_frame:
-                # Update the page control UI (0-based index for update_page_label)
-                self.page_control_frame.update_page_label(self.current_page_index, page_count)
-                # Update the page variable to ensure consistency
-                self.page_control_frame.page_var.set(self.current_page_index + 1)
-                
-            # Log page movement using window_resize_throttle to prevent excessive logging
-            if window_resize_throttle.should_log("page_navigation"):
-                # Use L353 for page navigation which has placeholders for page numbers
-                logger.info(message_manager.get_log_message("L353", self.current_page_index + 1, page_count))
-        else:
-            # Already at last page
-            logger.info(message_manager.get_log_message("L295"))
-            # Show info message that this is the last page
-            messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U059"))
-    
     def _on_page_entry(self, event: tk.Event) -> None:
-        """Handle page entry event."""
+        """Handle page entry event.
+        
+        Args:
+            event (tk.Event): The event object containing information about the entry event
+            
+        Returns:
+            None
+        """
         try:
             # Get the page control frame
             if not self.page_control_frame:
@@ -999,15 +1024,23 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Log error
             logger.error(message_manager.get_log_message("L309", str(e)))
             # Show error message
-            messagebox.showerror(message_manager.get_ui_message("U056"), 
-                               message_manager.get_ui_message("U060") + str(e))
+            messagebox.showerror(
+                message_manager.get_ui_message("U056"),
+                message_manager.get_ui_message("U060") + str(e))
         
     # This method has been merged with the other _setup_mouse_events method at line ~1228
 
     # _on_transform_update method is defined later in the class
     
     def _reset_transform(self) -> None:
-        """Reset transformation for the current page."""
+        """Reset transformation for the current page.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Reset transform data for the current page
         if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
             # Reset to default transform values (0 rotation, 0,0 position, 1.0 scale)
@@ -1017,7 +1050,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     # _zoom_in and _zoom_out methods have been integrated into MouseEventHandler
             
     def _go_to_first_page(self) -> None:
-        """Go to the first page of the document."""
+        """Go to the first page of the document.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if hasattr(self, 'page_count') and self.page_count > 0:
             self.current_page_index = 0
             self._display_page(self.current_page_index)
@@ -1025,7 +1065,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
     
     def _go_to_last_page(self) -> None:
-        """Go to the last page of the document."""
+        """Go to the last page of the document.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if hasattr(self, 'page_count') and self.page_count > 0:
             self.current_page_index = self.page_count - 1
             self._display_page(self.current_page_index)
@@ -1033,7 +1080,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
                 
     def _on_prev_page(self) -> None:
-        """Handle previous page button click."""
+        """Handle previous page button click.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Log the previous page request
         logger.info(message_manager.get_log_message("L286"))
         
@@ -1069,7 +1123,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U058"))
     
     def _on_next_page(self) -> None:
-        """Handle next page button click."""
+        """Handle next page button click.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Log the next page request
         logger.info(message_manager.get_log_message("L288"))
         
@@ -1128,6 +1189,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         Args:
             drop_data: Data being dropped
             is_valid: Whether the dropped file type is valid
+            
+        Returns:
+            None
         """
         # Clear previous feedback
         self.canvas.delete("drop_feedback")
@@ -1153,6 +1217,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         Args:
             page_count: Total number of pages
+            
+        Returns:
+            None
         """
         try:
             # Remove existing page control frame if it exists
@@ -1206,9 +1273,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     
     def _setup_mouse_events(self, page_count: int | None = None) -> None:
         """Set up mouse events for canvas operations.
-        
+
         Args:
-            page_count: Number of pages in the PDF (optional)
+            page_count (int | None): Total number of pages in the loaded PDF. If ``None``,
+                the method falls back to ``self.page_count``.
+
+        Returns:
+            None: This method configures internal handlers and does not return a value.
         """
         try:
             # Use page_count if provided, otherwise use existing value
@@ -1217,7 +1288,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 
             # Initialize mouse handler if not already initialized
             if self.mouse_handler is None:
-                self._initialize_mouse_handler()
+                try:
+                    self._initialize_mouse_handler()
+                except Exception as ex:
+                    # Log initialization error with specific error code
+                    logger.error(message_manager.get_log_message("L287", f"Failed to initialize mouse handler: {str(ex)}"))
+                    return  # Exit if initialization fails
             
             # Create visibility layer dictionary
             visible_layers = {
@@ -1306,7 +1382,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.error(traceback.format_exc())
     
     def _restore_rotation_mode_after_update(self) -> None:
-        """Restore rotation mode after mouse handler state update."""
+        """Restore rotation mode after mouse handler state update.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if hasattr(self, 'mouse_handler') and self.mouse_handler:
             # Check if rotation center coordinates are available
             if hasattr(self.mouse_handler, '_MouseEventHandler__rotation_center_x') and \
@@ -1318,12 +1401,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 self.mouse_handler.show_guidance_text(message_manager.get_message('M042'), is_rotation=True)
     
     def _restore_shortcut_guide_after_update(self) -> None:
-        """Restore shortcut guide after mouse handler state update."""
+        """Restore shortcut guide after mouse handler state update.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if hasattr(self, 'mouse_handler') and self.mouse_handler:
             self.mouse_handler._show_shortcut_guide(message_manager.get_message('M049'))
     
     def _bind_shortcut_keys(self) -> None:
-        """Bind keyboard shortcuts to functions."""
+        """Bind keyboard shortcuts to functions.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Bind keyboard shortcuts for PDF navigation
         self.canvas.bind("<Right>", lambda e: self._on_next_page())
         self.canvas.bind("<Left>", lambda e: self._on_prev_page())
@@ -1333,28 +1430,59 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
             
     def _bind_global_shortcut_keys(self) -> None:
-        """Bind global keyboard shortcuts that should work regardless of focus."""
+        """Bind global keyboard shortcuts that should work regardless of focus.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Get the root window
         root = self.canvas.winfo_toplevel()
         
-        # Bind global shortcuts
+        # Bind global shortcuts using centralised helper
         if hasattr(self, 'mouse_handler') and self.mouse_handler:
-            # Toggle shortcut guide with F1 key
-            root.bind_all("<F1>", self.mouse_handler.toggle_shortcut_guide)
-            
+            # Toggle shortcut guide (Ctrl+?) via on_key_press handler for layout-agnostic logic
+            bind_shortcuts(root, SC_PATTERNS["TOGGLE_GUIDE"], self.mouse_handler.on_key_press)
             # Rotation shortcuts
-            root.bind_all("<Control-r>", lambda e: self._on_rotate_clockwise())
-            root.bind_all("<Control-l>", lambda e: self._on_rotate_counterclockwise())
-            
+            bind_shortcuts(root, SC_PATTERNS["ROTATE_RIGHT"], lambda e: self._on_rotate_clockwise())
+            bind_shortcuts(root, SC_PATTERNS["ROTATE_LEFT"], lambda e: self._on_rotate_counterclockwise())
             # Flip shortcuts
-            root.bind_all("<Control-h>", lambda e: self._on_flip_horizontal())
-            root.bind_all("<Control-v>", lambda e: self._on_flip_vertical())
-            
+            bind_shortcuts(root, SC_PATTERNS["FLIP_HORIZONTAL"], lambda e: self._on_flip_horizontal())
+            bind_shortcuts(root, SC_PATTERNS["FLIP_VERTICAL"], lambda e: self._on_flip_vertical())
+            # Reset transform shortcut
+            bind_shortcuts(root, SC_PATTERNS["RESET_TRANSFORM"], self.mouse_handler.on_key_press)
+            # Ctrl key only detection for rotation mode maintenance handled inside mouse_handler
+            bind_shortcuts(root, SC_PATTERNS["CTRL_ONLY"], self.mouse_handler.on_key_press)
             # Log binding of global shortcuts
             logger.debug(message_manager.get_log_message("L350", "Global shortcut keys bound successfully"))
     
+    def _unbind_global_shortcut_keys(self) -> None:
+        """Unbind all global keyboard shortcuts registered for this tab.
+        
+        This method iterates over GLOBAL_SHORTCUT_PATTERNS and removes each bound event pattern via
+        utils.shortcut_binding.unbind_shortcuts.
+        
+        Args:
+            None
+            
+        Returns:
+            None: This method is executed for its side-effects only.
+        """
+        root = self.canvas.winfo_toplevel()
+        for patterns in SC_PATTERNS.values():
+            unbind_shortcuts(root, patterns)
+    
     def destroy(self) -> None:
-        """Clean up resources when tab is destroyed."""
+        """Clean up resources when tab is destroyed.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         # Clean up any active timers
         if hasattr(self, '_update_timer') and self._update_timer:
             try:
@@ -1405,13 +1533,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Unbind global shortcuts
         try:
-            root = self.canvas.winfo_toplevel()
-            root.unbind_all("<F1>")
-            root.unbind_all("<Control-r>")
-            root.unbind_all("<Control-l>")
-            root.unbind_all("<Control-h>")
-            root.unbind_all("<Control-v>")
-            logger.debug(message_manager.get_log_message("L539", "Global shortcuts unbound"))
+            self._unbind_global_shortcut_keys()
         except Exception as e:
             logger.error(message_manager.get_log_message("L290", str(e)))
         
@@ -1419,7 +1541,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         super().destroy()
         
     def _on_transform_update(self) -> None:
-        """Callback when transform data is updated."""
+        """Callback when transform data is updated.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         try:
             # Store current scale factor for use in _display_page
             if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
@@ -1517,7 +1646,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.error(traceback.format_exc())
     
     def _on_insert_blank_page(self) -> None:
-        """Insert a blank page after the current page."""
+        """Insert a blank page after the current page.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if not hasattr(self, 'page_count') or self.page_count == 0:
             messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
             return
@@ -1587,7 +1723,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.error(message_manager.get_log_message("L383", str(e)))
     
     def _on_complete_edit(self) -> None:
-        """Complete the editing process and export the PDF."""
+        """Complete the editing process and export the PDF.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         if not hasattr(self, 'page_count') or self.page_count == 0:
             messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
             return
