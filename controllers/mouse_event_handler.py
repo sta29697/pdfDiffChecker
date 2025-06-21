@@ -93,6 +93,7 @@ class MouseEventHandler:
         # Shortcut guide item IDs
         self.__shortcut_guide_ids: List[Union[int, str]] = []
         self.__shortcut_guide_timer: Optional[threading.Timer] = None
+        self.__auto_hide_timer: Optional[str] = None  # Timer ID for auto-hide functionality
         
         # Get message manager for localized messages
         self.__msg_mgr = get_message_manager()
@@ -408,7 +409,7 @@ class MouseEventHandler:
         self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
         
         # Then show notification and raise it to the top
-        self.show_notification(self.__msg_mgr.get_message('M044'), 0.5, warning=True)  # Rotated 90° right
+        self.show_notification(self.__msg_mgr.get_message('M044'), 1.5, warning=True)  # Rotated 90° right
         # Ensure notification is always on top
         if self.__notification_text_id and self.__canvas_ref:
             self.__canvas_ref.tag_raise("notification_tag")
@@ -544,7 +545,7 @@ class MouseEventHandler:
         self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
         
         # Then show notification and raise it to the top
-        self.show_notification(self.__msg_mgr.get_message('M045'), 0.5, warning=True)  # Rotated 90° left
+        self.show_notification(self.__msg_mgr.get_message('M045'), 1.5, warning=True)  # Rotated 90° left
         # Ensure notification is always on top
         if self.__notification_text_id and self.__canvas_ref:
             self.__canvas_ref.tag_raise("notification_tag")
@@ -621,7 +622,7 @@ class MouseEventHandler:
         self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
         
         # Then show notification and raise it to the top
-        self.show_notification(self.__msg_mgr.get_message('M046'), 0.5, warning=True)  # Flipped vertically
+        self.show_notification(self.__msg_mgr.get_message('M046'), 1.5, warning=True)  # Flipped vertically
         # Ensure notification is always on top
         if self.__notification_text_id and self.__canvas_ref:
             self.__canvas_ref.tag_raise("notification_tag")
@@ -674,7 +675,7 @@ class MouseEventHandler:
         self._draw_shortcut_guide_on_canvas(self.__msg_mgr.get_message('M050'), self.__msg_mgr.get_message('M049'))
         
         # Then show notification and raise it to the top
-        self.show_notification(self.__msg_mgr.get_message('M047'), 0.5, warning=True)  # Flipped horizontally
+        self.show_notification(self.__msg_mgr.get_message('M047'), 1.5, warning=True)  # Flipped horizontally
         # Ensure notification is always on top
         if self.__notification_text_id and self.__canvas_ref:
             self.__canvas_ref.tag_raise("notification_tag")
@@ -987,6 +988,12 @@ class MouseEventHandler:
             bg_x2 = float(x2_text + horizontal_padding)
             bg_y2 = float(y2_text + vertical_padding)
             
+            # Ensure background rectangle doesn't go outside canvas boundaries
+            # This fixes the issue where the left border of the message appears outside the canvas
+            if bg_x1 < 0:
+                # Adjust bg_x1 to be at least 0 (canvas left edge)
+                bg_x1 = 0.0
+            
             # Delete temporary text
             self.__canvas_ref.delete(temp_text_id)
 
@@ -1052,7 +1059,7 @@ class MouseEventHandler:
             # Log error if showing guidance text fails
             logger.error(self.__msg_mgr.get_message("L521").format(str(e)))
 
-    def show_notification(self, message: str, duration: float = 0.5, warning: bool = False) -> None:
+    def show_notification(self, message: str, duration: float = 1.0, warning: bool = False) -> None:
         """Show a temporary notification message on the canvas.
         
         Args:
@@ -1063,6 +1070,9 @@ class MouseEventHandler:
         self.__cancel_all_timers()
         
         self.hide_notification()
+        
+        # Enhanced logging for notification display debugging
+        logger.debug(self.__msg_mgr.get_message("L540").format(f"Attempting to show notification: '{message}' (duration: {duration}s, warning: {warning})"))
 
         if self.__canvas_ref and message: # Check if canvas_ref is not None and message is not empty
             assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
@@ -1157,6 +1167,8 @@ class MouseEventHandler:
                 
                 # Ensure notification is always on top of all other elements
                 self.__canvas_ref.tag_raise("notification_tag")
+                # Force update to ensure immediate visibility
+                self.__canvas_ref.update()
                 
                 # Store IDs for later reference
                 self.__notification_text_id = (bg_id, text_id)
@@ -1164,6 +1176,8 @@ class MouseEventHandler:
 
                 # Set up auto-hide timer
                 hide_ms = int(duration * 1000)
+                # Force canvas update before setting timer to ensure notification is visible
+                self.__canvas_ref.update_idletasks()
                 after_id = self.__canvas_ref.after(hide_ms, self.hide_notification)
                 # Ensure after_id is a valid integer before adding to the list
                 if isinstance(after_id, int):
@@ -1176,6 +1190,8 @@ class MouseEventHandler:
             except Exception as e:
                 # Log error when showing notification
                 logger.error(self.__msg_mgr.get_message("L522").format(str(e)))
+                
+    # hide_notification method moved to line 1282
 
     def hide_guidance_text(self) -> None:
         """Hide the guidance text and its background from the canvas."""
@@ -1222,7 +1238,13 @@ class MouseEventHandler:
         self.__guidance_text_visible = False
 
     def hide_notification(self) -> None:
-        """Hide the notification message and its background from the canvas."""
+        """Hide the notification message and its background from the canvas.
+        
+        This method cancels any active notification timers and removes notification
+        elements from the canvas. It's called automatically after the notification
+        duration expires or can be called manually to immediately hide a notification.
+        """
+        # Cancel all active notification timers
         for after_id in self._hide_after_ids:
             if self.__canvas_ref and after_id is not None: 
                 assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
@@ -1237,267 +1259,200 @@ class MouseEventHandler:
                 self.__canvas_ref.after_cancel(str(timer_id))
         self._hide_after_ids.clear()
 
-        if self.__canvas_ref and self.__notification_text_id:
+        # Remove notification elements from canvas
+        if self.__notification_visible and self.__notification_text_id and self.__canvas_ref:
             assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
+            
+            # Track deletion results for summary logging
+            deleted_ids = []
+            errors = []
+            
             if isinstance(self.__notification_text_id, tuple):
                 for item_id in self.__notification_text_id:
-                    if item_id: 
-                        self.__canvas_ref.delete(item_id)
-            elif isinstance(self.__notification_text_id, int):
-                self.__canvas_ref.delete(self.__notification_text_id)
-            # else: logger.warning(f"Unexpected type for __notification_text_id: {type(self.__notification_text_id)}")
+                    if item_id: # Ensure item_id is not None
+                        try:
+                            self.__canvas_ref.delete(item_id)
+                            deleted_ids.append(item_id)
+                        except Exception as e:
+                            errors.append(f"Error with ID {item_id}: {str(e)}")
+                            logger.error(self.__msg_mgr.get_message("L521").format(f"Error deleting notification item {item_id}: {str(e)}"))
+            elif isinstance(self.__notification_text_id, int): # Check if it's a single int ID
+                try:
+                    self.__canvas_ref.delete(self.__notification_text_id)
+                    deleted_ids.append(self.__notification_text_id)
+                except Exception as e:
+                    errors.append(f"Error with ID {self.__notification_text_id}: {str(e)}")
+                    logger.error(self.__msg_mgr.get_message("L521").format(f"Error deleting notification item {self.__notification_text_id}: {str(e)}"))
+            
+            # Log summary of deletion operation
+            if errors:
+                logger.warning(self.__msg_mgr.get_message("L541").format(f"Deleted {len(deleted_ids)} notification items with {len(errors)} errors"))
+            else:
+                logger.debug(self.__msg_mgr.get_message("L540").format(f"Successfully deleted {len(deleted_ids)} notification items"))
 
+        # Reset notification state
         self.__notification_text_id = None
         self.__notification_visible = False
+        
+        # Force canvas update to ensure notification is removed
+        if self.__canvas_ref:
+            self.__canvas_ref.update_idletasks()
 
-    def _remove_shortcut_guide_from_canvas(self) -> None:
-        """Remove the shortcut guide from the canvas."""
-        if not self.__canvas_ref:
-            logger.warning("Canvas reference is not set. Cannot remove shortcut guide.")
-            return
-
-        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
-        # Delete all items with the shortcut guide tag at once
-        # This is more efficient and ensures no items are left behind
-        self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
-        self.__shortcut_guide_ids.clear()
-        logger.debug("Shortcut guide items removed from canvas by tag.")
-
-        self.__shortcut_guide_visible = False
-        # No need to log "Shortcut guide hidden" here as toggle_shortcut_guide handles user-facing logs.
-        # This method is an internal cleanup/drawing helper.
 
     def _draw_shortcut_guide_on_canvas(self, title: str, content: str, auto_hide_delay: float = 5.0) -> None:
-        """Show shortcut guide in the top-right corner of the canvas.
-
-        Args:
-            title: The title of the shortcut guide.
-            content: The content of the shortcut guide (can be multi-line).
-            auto_hide_delay: Time in seconds after which the guide will auto-hide (default: 5.0).
-                             Set to 0 to disable auto-hide.
-        """
-        # Always delete existing shortcut guide first to prevent duplication
-        if self.__canvas_ref:
-            self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
-        self._remove_shortcut_guide_from_canvas() # Clear existing guide first
-
-        if not self.__canvas_ref:
-            logger.warning("Canvas reference not set. Cannot draw shortcut guide.") # Add log
-            return
-
-        assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
-        # NOTE: The blank line above the 'try' is preserved from the original structure.
-        try:
-            canvas_width = self.__canvas_ref.winfo_width()
-
-            # Get user settings for shortcut guide appearance
-            padding = int(self.__user_settings_mgr.get_setting("shortcut_guide_padding", 10))
-            guide_width = int(self.__user_settings_mgr.get_setting("shortcut_guide_width", 250))
-            line_spacing = int(self.__user_settings_mgr.get_setting("shortcut_guide_line_spacing", 4))
-            font_family = self.__user_settings_mgr.get_setting("font_family", tool_settings.DEFAULT_FONT_FAMILY)
-            base_font_size = int(self.__user_settings_mgr.get_setting("font_size", 12))
-            title_font_size = base_font_size + 2  # Title font is slightly larger than base font
-            content_font_size = base_font_size - 2  # Content font is slightly smaller than base font
-            title_color = self.__user_settings_mgr.get_setting("shortcut_guide_title_color", "#0000FF")
-            content_color = self.__user_settings_mgr.get_setting("shortcut_guide_content_color", "#0000FF")
-            bg_color = self.__user_settings_mgr.get_setting("shortcut_guide_bg_color", "")
-            outline_color = self.__user_settings_mgr.get_setting("shortcut_guide_outline_color", title_color)
-            outline_width = int(self.__user_settings_mgr.get_setting("shortcut_guide_outline_width", 2))
-            use_animation = self.__user_settings_mgr.get_setting("shortcut_guide_animation", True)
-
-            # Calculate position for the guide (top-right corner with padding)
-            # Use window coordinates that are fixed relative to the canvas viewport, not the content
-            # This ensures the guide stays in the same position regardless of content movement
-            # Get viewport edge positions to account for scrolling in both directions
-            vx0 = self.__canvas_ref.canvasx(0)   # viewport left edge
-            vy0 = self.__canvas_ref.canvasy(0)   # viewport top edge
-            bg_x1 = float(vx0 + canvas_width - guide_width - padding)
-            bg_y1 = float(vy0 + padding)
-            bg_x2 = float(vx0 + canvas_width - padding)
-            
-            # Calculate total height needed for all text elements
-            total_text_height = 0
-
-            # Create temporary title text to calculate its height
-            temp_title_id = self.__canvas_ref.create_text(
-                0, 0, 
-                text=title,
-                font=(font_family, title_font_size, "bold"),
-                anchor="nw",
-                width=guide_width - (2 * padding),
-                tags="_temp_calc"
-            )
-            title_bbox = self.__canvas_ref.bbox(temp_title_id)
-            self.__canvas_ref.delete(temp_title_id)
-            if title_bbox:
-                total_text_height += (title_bbox[3] - title_bbox[1])
-
-            # Calculate height for each content line
-            content_lines = content.split('\n')
-            for line_idx, line_text in enumerate(content_lines):
-                if line_idx > 0:
-                    total_text_height += line_spacing
-                temp_content_id = self.__canvas_ref.create_text(
-                    0, 0, 
-                    text=line_text,
-                    font=(font_family, content_font_size, "normal"),
-                    anchor="nw",
-                    width=guide_width - (2 * padding),
-                    tags="_temp_calc"
-                )
-                line_bbox = self.__canvas_ref.bbox(temp_content_id)
-                self.__canvas_ref.delete(temp_content_id)
-                if line_bbox:
-                    total_text_height += (line_bbox[3] - line_bbox[1])
+        """Draw shortcut guide with title and content on the canvas.
         
-            # Calculate final background height
-            # Use fixed viewport coordinates without scroll adjustment for consistent positioning
-            bg_y2 = bg_y1 + total_text_height + (2 * padding)
+        Args:
+            title: Title text for the shortcut guide
+            content: Content text for the shortcut guide
+            auto_hide_delay: Time in seconds before auto-hiding the guide
+        """
+        if self.__canvas_ref is None:
+            logger.error(self.__msg_mgr.get_message("L527"))
+            return
             
-            # Create background rectangle with styled border
-            bg_id = self.__canvas_ref.create_rectangle(
-                bg_x1, bg_y1, bg_x2, bg_y2,
-                fill=bg_color,
-                outline=outline_color,
-                width=outline_width,
-                tags=self.SHORTCUT_GUIDE_TAG
+        # Clean up any existing shortcut guide
+        self._remove_shortcut_guide_from_canvas()
+        
+        # Get canvas width for positioning
+        canvas_width = self.__canvas_ref.winfo_width()
+        
+        # Get style settings from user settings
+        padding = self.__user_settings_mgr.get_setting("ui_shortcut_guide_padding", 10)
+        guide_width = self.__user_settings_mgr.get_setting("ui_shortcut_guide_width", 300)
+        line_spacing = self.__user_settings_mgr.get_setting("ui_shortcut_guide_line_spacing", 5)
+        title_color = self.__user_settings_mgr.get_setting("ui_shortcut_guide_title_color", "#FFFFFF")
+        content_color = self.__user_settings_mgr.get_setting("ui_shortcut_guide_content_color", "#CCCCCC")
+        bg_color = self.__user_settings_mgr.get_setting("ui_shortcut_guide_bg_color", "#333333")
+        outline_color = self.__user_settings_mgr.get_setting("ui_shortcut_guide_outline_color", "#666666")
+        outline_width = self.__user_settings_mgr.get_setting("ui_shortcut_guide_outline_width", 1)
+        use_animation = self.__user_settings_mgr.get_setting("ui_shortcut_guide_animation", True)
+        
+        # Calculate position (top right corner with padding)
+        x_pos = canvas_width - guide_width - padding
+        y_pos = padding
+        
+        # Create temporary text items to calculate heights
+        temp_title_id = self.__canvas_ref.create_text(
+            0, 0,  # Position doesn't matter for measurement
+            text=title,
+            font=("Arial", 12, "bold"),
+            fill=title_color,
+            anchor="nw"
+        )
+        title_bbox = self.__canvas_ref.bbox(temp_title_id)
+        title_height = title_bbox[3] - title_bbox[1]
+        
+        # Calculate content height by creating a temporary text item
+        temp_content_id = self.__canvas_ref.create_text(
+            0, 0,  # Position doesn't matter for measurement
+            text=content,
+            font=("Arial", 10),
+            fill=content_color,
+            anchor="nw",
+            width=guide_width - (padding * 2)  # Wrap text within guide width
+        )
+        content_bbox = self.__canvas_ref.bbox(temp_content_id)
+        content_height = content_bbox[3] - content_bbox[1]
+        
+        # Delete temporary items
+        self.__canvas_ref.delete(temp_title_id)
+        self.__canvas_ref.delete(temp_content_id)
+        
+        # Calculate total height
+        total_height = padding + title_height + line_spacing + content_height + padding
+        
+        # Create background rectangle
+        bg_id = self.__canvas_ref.create_rectangle(
+            x_pos, y_pos,
+            x_pos + guide_width, y_pos + total_height,
+            fill=bg_color,
+            outline=outline_color,
+            width=outline_width,
+            tags=(self.SHORTCUT_GUIDE_TAG,)
+        )
+        
+        # Create title text
+        title_id = self.__canvas_ref.create_text(
+            x_pos + padding, y_pos + padding,
+            text=title,
+            font=("Arial", 12, "bold"),
+            fill=title_color,
+            anchor="nw",
+            tags=(self.SHORTCUT_GUIDE_TAG,)
+        )
+        
+        # Create content text
+        content_id = self.__canvas_ref.create_text(
+            x_pos + padding, y_pos + padding + title_height + line_spacing,
+            text=content,
+            font=("Arial", 10),
+            fill=content_color,
+            anchor="nw",
+            width=guide_width - (padding * 2),  # Wrap text within guide width
+            tags=(self.SHORTCUT_GUIDE_TAG,)
+        )
+        
+        # Store IDs for later removal
+        self.__shortcut_guide_ids = [bg_id, title_id, content_id]
+        
+        # Apply animation if enabled
+        if use_animation:
+            # Start with transparent and fade in
+            for item_id in self.__shortcut_guide_ids:
+                self.__canvas_ref.itemconfig(item_id, state="hidden")
+            
+            # Schedule fade-in animation
+            self.__canvas_ref.after(50, self.__fade_in_shortcut_guide)
+        
+        # Schedule auto-hide if delay is positive
+        if auto_hide_delay > 0:
+            self.__auto_hide_timer = self.__canvas_ref.after(
+                int(auto_hide_delay * 1000),
+                lambda: self._remove_shortcut_guide_from_canvas()
             )
-            self.__shortcut_guide_ids.insert(0, bg_id)
-
-            # Position title at the top-right with padding
-            title_actual_x = bg_x2 - padding
-            title_actual_y = bg_y1 + padding
-            title_id = self.__canvas_ref.create_text(
-                title_actual_x,
-                title_actual_y,
-                text=title,
-                font=(font_family, title_font_size, "bold"),
-                fill=title_color,
-                anchor="ne",  # Anchor to northeast (top-right) for right alignment
-                tags=self.SHORTCUT_GUIDE_TAG,
-                width=guide_width - (2 * padding)
-            )
-            self.__shortcut_guide_ids.append(title_id)
-            title_bbox_actual = self.__canvas_ref.bbox(title_id)
-            current_y_offset = (title_bbox_actual[3] + (padding / 2)) if title_bbox_actual else (title_actual_y + 30.0)
-
-            # Add content lines
-            content_ids = []
-            for line_text in content_lines:
-                # Position content lines with right alignment
-                # Position content lines with left alignment instead of right alignment
-                line_id = self.__canvas_ref.create_text(
-                    bg_x1 + padding,
-                    current_y_offset,
-                    text=line_text,
-                    font=(font_family, content_font_size, "normal"),
-                    fill=content_color,
-                    anchor="nw",  # Anchor to northwest for left alignment
-                    tags=self.SHORTCUT_GUIDE_TAG,
-                    width=guide_width - (2 * padding)
-                )
-                content_ids.append(line_id)
-                self.__shortcut_guide_ids.append(line_id)
-                line_bbox_actual = self.__canvas_ref.bbox(line_id)
-                current_y_offset = (line_bbox_actual[3] + line_spacing) if line_bbox_actual else (current_y_offset + 20.0 + line_spacing)
-
-            # Ensure proper layering (text above background)
-            self.__canvas_ref.tag_raise(title_id, bg_id)
-            for item_id in content_ids:
-                self.__canvas_ref.tag_raise(item_id, bg_id)
-
-            self.__shortcut_guide_visible = True
-            logger.debug("Shortcut guide shown.")
+    
+    def _remove_shortcut_guide_from_canvas(self) -> None:
+        """Remove shortcut guide items from canvas."""
+        if self.__canvas_ref is None:
+            return
             
-            # Add fade-in animation effect if enabled
-            if use_animation and hasattr(self.__canvas_ref, "after"):
-                # Initially set all elements to transparent
-                initial_alpha = 0.0
-                target_alpha = 1.0
-                steps = 5
-                step_duration = 50  # milliseconds
-                
-                # Create animation function
-                def animate_fade_in(step=0):
-                    if step > steps:
-                        return
-                        
-                    # Calculate current alpha
-                    current_alpha = initial_alpha + (target_alpha - initial_alpha) * (step / steps)
-                    
-                    # Apply alpha to all elements
-                    if bg_color:
-                        # If background has a color, adjust its transparency using stipple pattern
-                        # Tkinter doesn't support RGBA hex codes, so we use stipple for transparency
-                        if current_alpha < 1.0:
-                            # Use stipple pattern based on alpha value
-                            if current_alpha < 0.3:
-                                stipple_pattern = "gray12"
-                            elif current_alpha < 0.6:
-                                stipple_pattern = "gray25"
-                            else:
-                                stipple_pattern = "gray50"
-                            self.__canvas_ref.itemconfig(bg_id, fill=bg_color, stipple=stipple_pattern)
-                        else:
-                            # Fully opaque
-                            self.__canvas_ref.itemconfig(bg_id, fill=bg_color, stipple="")
-                    
-                    # Adjust text opacity using fill color and stipple pattern
-                    # For text, we can only control visibility, not true transparency
-                    if current_alpha < 0.1:
-                        # Almost invisible - hide text completely
-                        self.__canvas_ref.itemconfig(title_id, state="hidden")
-                        for content_id in content_ids:
-                            self.__canvas_ref.itemconfig(content_id, state="hidden")
-                    else:
-                        # Show text with normal color
-                        self.__canvas_ref.itemconfig(title_id, fill=title_color, state="normal")
-                        for content_id in content_ids:
-                            self.__canvas_ref.itemconfig(content_id, fill=content_color, state="normal")
-                            
-                        # Adjust text color brightness based on alpha for a fade-in effect
-                        if current_alpha < 1.0:
-                            brightness = int(current_alpha * 255)
-                            # Create darker version of colors for partial visibility
-                            adjusted_title_color = self.__adjust_color_brightness(title_color, brightness)
-                            adjusted_content_color = self.__adjust_color_brightness(content_color, brightness)
-                            
-                            self.__canvas_ref.itemconfig(title_id, fill=adjusted_title_color)
-                            for content_id in content_ids:
-                                self.__canvas_ref.itemconfig(content_id, fill=adjusted_content_color)
-                    
-                    # Schedule next animation step
-                    if step < steps:
-                        after_id = self.__canvas_ref.after(step_duration, lambda: animate_fade_in(step + 1))
-                        self._hide_after_ids.append(after_id)
-                
-                # Start animation
-                animate_fade_in()
+        # Cancel auto-hide timer if active
+        if self.__auto_hide_timer is not None:
+            self.__canvas_ref.after_cancel(self.__auto_hide_timer)
+            self.__auto_hide_timer = None
+        
+        # Delete all shortcut guide items
+        self.__canvas_ref.delete(self.SHORTCUT_GUIDE_TAG)
+        
+        # Clear stored IDs
+        self.__shortcut_guide_ids = []
+        
+        # Update visibility flag
+        self.__shortcut_guide_visible = False
+    
+    def __fade_in_shortcut_guide(self, alpha: float = 0.0) -> None:
+        """Fade in the shortcut guide items.
+        
+        Args:
+            alpha: Current opacity level (0.0 to 1.0)
+        """
+        if self.__canvas_ref is None or not self.__shortcut_guide_ids:
+            return
             
-            # Set up auto-hide timer if delay is specified
-            if auto_hide_delay > 0:
-                # Cancel any existing auto-hide timer to prevent multiple timers
-                if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
-                    self.__shortcut_guide_timer.cancel()
-                    self.__shortcut_guide_timer = None
-                
-                # Create new timer to auto-hide the shortcut guide after specified delay
-                self.__shortcut_guide_timer = threading.Timer(
-                    auto_hide_delay,
-                    lambda: self.toggle_shortcut_guide(force_show=False)
-                )
-                self.__shortcut_guide_timer.daemon = True  # Make timer a daemon thread
-                self.__shortcut_guide_timer.start()
-                logger.debug(f"Shortcut guide auto-hide timer set for {auto_hide_delay} seconds.")
-
-        except Exception as e:
-            import traceback # Import traceback for detailed error logging
-            logger.error(self.__msg_mgr.get_message("L523").format(e, traceback.format_exc())) # L523: Error showing shortcut guide: {}\n{}
-            # Ensure timer is canceled in case of error
-            if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
-                self.__shortcut_guide_timer.cancel()
-                self.__shortcut_guide_timer = None
-
+        # Show items if they're hidden
+        for item_id in self.__shortcut_guide_ids:
+            self.__canvas_ref.itemconfig(item_id, state="normal")
+        
+        # Increase alpha
+        alpha += 0.1
+        
+        if alpha < 1.0:
+            # Schedule next fade step
+            self.__canvas_ref.after(50, lambda: self.__fade_in_shortcut_guide(alpha))
+    
+    # on_canvas_resize method is implemented below (around line 1719)
+    
     def toggle_shortcut_guide(self, event: Optional[tk.Event] = None, force_show: Optional[bool] = None) -> str | None:
         """Toggle the visibility of the shortcut guide.
 
@@ -1556,6 +1511,35 @@ class MouseEventHandler:
             self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation Mode: Drag to rotate.
             
         return "break"
+        
+
+            
+    def on_canvas_resize(self, event: Optional[tk.Event] = None) -> None:
+        """Handle canvas resize events.
+        
+        This method is called when the canvas is resized. It redraws the shortcut guide
+        if it is currently visible to ensure it remains properly positioned.
+        
+        Args:
+            event (Optional[tk.Event]): The resize event. Default is None.
+        """
+        # Only redraw if shortcut guide is visible
+        if self.__shortcut_guide_visible and self.__canvas_ref:
+            # Store current auto-hide settings
+            auto_hide_delay = 0  # Default to no auto-hide when redrawing due to resize
+            
+            # Get the current title and content
+            title = self.__msg_mgr.get_message("M050")  # Shortcut Guide Title
+            content = self.__msg_mgr.get_message("M049")  # Shortcut Guide Content
+            
+            # Redraw the shortcut guide with the same content but no auto-hide
+            self._draw_shortcut_guide_on_canvas(title, content, auto_hide_delay=auto_hide_delay)
+            
+            logger.debug("Shortcut guide redrawn after canvas resize.")
+            
+        # If in rotation mode, redraw the rotation guidance
+        if self.__rotation_mode and self.__canvas_ref:
+            self.show_guidance_text(self.__msg_mgr.get_message('M042'), is_rotation=True)  # Rotation Mode: Drag to rotate.
 
     def __cancel_all_timers(self) -> None:
         """Cancel all pending timers to prevent UI flicker and memory leaks.
@@ -1728,8 +1712,21 @@ class MouseEventHandler:
 
         assert self.__canvas_ref is not None # Ensure canvas_ref is not None for Mypy
         # Store last mouse position in canvas coordinates
-        self.__last_mouse_x = self.__canvas_ref.canvasx(event.x)
-        self.__last_mouse_y = self.__canvas_ref.canvasy(event.y)
+        raw_canvas_x = self.__canvas_ref.canvasx(event.x)
+        raw_canvas_y = self.__canvas_ref.canvasy(event.y)
+        
+        # Get canvas dimensions for boundary checking
+        canvas_width = self.__canvas_ref.winfo_width()
+        canvas_height = self.__canvas_ref.winfo_height()
+        
+        # Ensure coordinates are within canvas bounds
+        # This prevents issues at canvas edges and corners
+        self.__last_mouse_x = max(0, min(raw_canvas_x, canvas_width))
+        self.__last_mouse_y = max(0, min(raw_canvas_y, canvas_height))
+        
+        # Initialize rotation mouse position tracking
+        self.__last_rotation_mouse_x = self.__last_mouse_x
+        self.__last_rotation_mouse_y = self.__last_mouse_y
         # Set dragging flag to true, indicating a potential drag operation
         self.__dragging = True
 
@@ -1831,47 +1828,71 @@ class MouseEventHandler:
         # Calculate the movement delta using canvas coordinates
         # Ensure canvas reference is not None before calling methods
         if self.__canvas_ref is None:
+            # Log the missing canvas reference with L559 message code
+            logger.warning(self.__msg_mgr.get_message("L559")) # L559: [MOUSE] Canvas reference is not set in MouseEventHandler
             return
             
-        current_x = self.__canvas_ref.canvasx(event.x)
-        current_y = self.__canvas_ref.canvasy(event.y)
+        # Get raw canvas coordinates
+        raw_canvas_x = self.__canvas_ref.canvasx(event.x)
+        raw_canvas_y = self.__canvas_ref.canvasy(event.y)
+        
+        # Get canvas dimensions for boundary checking
+        canvas_width = self.__canvas_ref.winfo_width()
+        canvas_height = self.__canvas_ref.winfo_height()
+        
+        # Ensure coordinates are within canvas bounds
+        # This prevents issues at canvas edges and corners
+        current_x = max(0, min(raw_canvas_x, canvas_width))
+        current_y = max(0, min(raw_canvas_y, canvas_height))
+        
+        # Calculate movement delta
         delta_x = current_x - self.__last_mouse_x
         delta_y = current_y - self.__last_mouse_y
 
         # Check if in rotation mode
         if self.__rotation_mode:
+            # Always ensure the feedback circle is drawn at the original rotation center
+            # This prevents the red dot from moving during any mouse movement
+            if self.__canvas_ref:
+                # Redraw the feedback circle at the fixed rotation center coordinates
+                # This ensures the red dot stays in place even before rotation is activated
+                self.draw_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                
             # If rotation has not been activated yet, check if we've moved enough to start
             if not self.__rotation_active:
                 # Calculate distance from initial press point
                 distance = ((current_x - self.__rotation_center_x) ** 2 +
-                            (current_y - self.__rotation_center_y) ** 2) ** 0.5
+                             (current_y - self.__rotation_center_y) ** 2) ** 0.5
                 
                 # If moved enough distance, activate rotation
                 if distance > 10:  # 10 pixels threshold
                     self.__rotation_active = True
                     # Store initial angle for reference
                     self.__rotation_start_angle = math.atan2(current_y - self.__rotation_center_y,
-                                                            current_x - self.__rotation_center_x)
+                                                             current_x - self.__rotation_center_x)
                     
-                    # Redraw feedback circle at the original rotation center to ensure it stays fixed
-                    # This prevents the red dot from moving during rotation
-                    # Always use canvas coordinates for consistent positioning
+                    # Log that rotation has been activated
+                    logger.debug(self.__msg_mgr.get_message("L540").format("Rotation activated after threshold distance"))
+                    
+                    # Ensure the feedback circle is visible and properly positioned
                     if self.__canvas_ref:
-                        # Ensure we're using the exact rotation center coordinates
-                        # without any offset or transformation
-                        self.draw_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                        # Raise the rotation center tag to ensure it's visible
+                        self.__canvas_ref.tag_raise(self.ROTATION_CENTER_TAG)
             
             # If rotation is active, calculate angle and rotate
             if self.__rotation_active:
                 # Calculate angle from center to current position
+                # Use rotation center as the pivot point for all angle calculations
                 current_angle = math.atan2(current_y - self.__rotation_center_y,
                                           current_x - self.__rotation_center_x)
                 
-                # Calculate angle from center to previous position
-                prev_angle = math.atan2(self.__last_mouse_y - self.__rotation_center_y,
-                                       self.__last_mouse_x - self.__rotation_center_x)
+                # Calculate angle from center to previous position using rotation-specific tracking variables
+                # This ensures consistent angle calculation regardless of other mouse movements
+                prev_angle = math.atan2(self.__last_rotation_mouse_y - self.__rotation_center_y,
+                                       self.__last_rotation_mouse_x - self.__rotation_center_x)
                 
                 # Calculate angle difference in degrees
+                # This is the amount we need to rotate by in this frame
                 angle_diff = math.degrees(current_angle - prev_angle)
                 
                 # Apply smoothing to prevent jitter
@@ -1897,13 +1918,16 @@ class MouseEventHandler:
                     
                     # Show rotation feedback with current angle - always use the original rotation center
                     # This ensures the red dot stays fixed at the rotation center point
-                    # Do not show feedback circle for shortcut operations - prevent unwanted red dots
+                    # Redraw the feedback circle to ensure it remains visible during rotation
+                    self.draw_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
                     
                     # Update guidance text with current rotation angle
                     self.show_guidance_text(self.__msg_mgr.get_message('M043').format(total_angle_change), is_rotation=True)
                     
                     # Force canvas update to ensure feedback circle is visible at the correct position
                     if self.__canvas_ref:
+                        # Ensure the feedback circle is always on top
+                        self.__canvas_ref.tag_raise(self.ROTATION_CENTER_TAG)
                         self.__canvas_ref.update_idletasks()
         else:
             # Normal dragging - move all visible layers
@@ -1924,11 +1948,16 @@ class MouseEventHandler:
             # Update display
             self.__on_transform_update()
         
-        # Update last mouse position only if not in rotation mode
-        # In rotation mode, we want to keep the original center point fixed
-        if not self.__rotation_mode:
-            self.__last_mouse_x = current_x
-            self.__last_mouse_y = current_y
+        # Always update last mouse position for general tracking
+        self.__last_mouse_x = current_x
+        self.__last_mouse_y = current_y
+        
+        # Update rotation-specific mouse position only when in rotation mode
+        # This prevents the red dot from moving during rotation
+        if self.__rotation_mode and self.__rotation_active:
+            # Update rotation-specific last position for angle calculation
+            self.__last_rotation_mouse_x = current_x
+            self.__last_rotation_mouse_y = current_y
         
         # Log mouse drag with throttling to avoid excessive logs
         if self._transform_log_throttle.should_log(key="mouse_drag"):
@@ -1961,8 +1990,18 @@ class MouseEventHandler:
 
         # Update last mouse position to prevent angle calculation drift using canvas coordinates
         if self.__canvas_ref is not None:
-            self.__last_mouse_x = self.__canvas_ref.canvasx(event.x)
-            self.__last_mouse_y = self.__canvas_ref.canvasy(event.y)
+            # Get raw canvas coordinates
+            raw_canvas_x = self.__canvas_ref.canvasx(event.x)
+            raw_canvas_y = self.__canvas_ref.canvasy(event.y)
+            
+            # Get canvas dimensions for boundary checking
+            canvas_width = self.__canvas_ref.winfo_width()
+            canvas_height = self.__canvas_ref.winfo_height()
+            
+            # Ensure coordinates are within canvas bounds
+            # This prevents issues at canvas edges and corners
+            self.__last_mouse_x = max(0, min(raw_canvas_x, canvas_width))
+            self.__last_mouse_y = max(0, min(raw_canvas_y, canvas_height))
         
         # Reset dragging flag
         self.__dragging = False
@@ -2226,6 +2265,11 @@ class MouseEventHandler:
             event: Mouse wheel event
             layer_data: Optional layer data if provided externally
         """
+        # Ensure canvas reference is not None before proceeding
+        if self.__canvas_ref is None:
+            # Log the missing canvas reference with L559 message code
+            logger.warning(self.__msg_mgr.get_message("L559")) # L559: [MOUSE] Canvas reference is not set in MouseEventHandler
+            return
         # Determine the direction and amount of scrolling
         delta = 0
         
@@ -2296,7 +2340,8 @@ class MouseEventHandler:
             self._last_wheel_log_time = time.time()
             # Only log from here if we're called directly (not through wrapper)
             if self._wheel_log_throttle.should_log(key="direct_zoom_operation"):
-                logger.debug(self.__msg_mgr.get_message("L517").format(zoom_factor))
+                # Log with L561 for mouse wheel event processing
+                logger.debug(self.__msg_mgr.get_message("L561", delta, zoom_factor))
         
         # Update display
         self.__on_transform_update()
@@ -2307,24 +2352,18 @@ class MouseEventHandler:
         Args:
             canvas: The canvas to attach to
         """
+        # Store canvas reference
         self.__canvas_ref = canvas
         
-        # Bind mouse events
-        self.__canvas_ref.bind("<ButtonPress-1>", self.on_mouse_down)
-        self.__canvas_ref.bind("<B1-Motion>", self.on_mouse_drag)
-        self.__canvas_ref.bind("<ButtonRelease-1>", self.on_mouse_up)
-                # Bind keyboard events
-        self.__canvas_ref.bind("<KeyPress>", self.on_key_press)
-        self.__canvas_ref.bind("<KeyRelease>", self.on_key_release)
+        # Log successful attachment to canvas
+        logger.debug(self.__msg_mgr.get_message("L560")) # L560: [MOUSE] Successfully attached to canvas
         
-        # Bind specific Ctrl key release events to ensure rotation mode ends
-        self.__canvas_ref.bind("<KeyRelease-Control_L>", self.__exit_rotation_mode)
-        self.__canvas_ref.bind("<KeyRelease-Control_R>", self.__exit_rotation_mode)
-        
-        # Bind mouse wheel for zooming
-        self.__canvas_ref.bind("<MouseWheel>", self.on_mouse_wheel)
+        # Note: We don't bind events here anymore to avoid duplicate bindings.
+        # Event binding is now handled by the _setup_mouse_events method in the view class.
+        # This prevents duplicate event handlers and potential conflicts.
         
         # Make canvas focusable to receive keyboard events
+        # This is still needed here as it's a canvas property, not an event binding
         self.__canvas_ref.config(takefocus=1)
         
     # Note: This method was removed because it was a duplicate of the one defined at line 746
@@ -2452,4 +2491,7 @@ class MouseEventHandler:
         
         # Log the rotation operation (consider logging new_x, new_y as well if needed)
         logger.debug(self.__msg_mgr.get_message("L511").format(angle_degrees))
-
+        
+        # Update the display to reflect the rotation changes
+        # This ensures the rotated image is immediately visible on the canvas
+        self.__on_transform_update()

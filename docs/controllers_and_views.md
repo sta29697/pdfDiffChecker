@@ -8,13 +8,13 @@
 
 ### マウスイベント処理の基本構造
 
-`controllers/mouse_event_handler.py`に定義されている`MouseEventHandler`クラスは、アプリケーション全体のマウスイベント処理のコアロジックを提供する低レベルのコントローラーです。
+`controllers/mouse_event_handler.py`に定義されている`MouseEventHandler`クラスは、アプリケーション全体のマウスイベント処理のコアロジックを提供する低レベルのコントローラーです。このクラスは`TransformationManager`と連携して、PDFやTIFFファイルの表示レイヤーの変換データを管理します。
 
 ```python
 class MouseEventHandler:
-    def __init__(self, layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]], 
-                 current_page_index: int, visible_layers: Dict[int, bool], 
-                 on_transform_update: Callable[[], None]):
+    def __init__(self, transform_manager: TransformationManager, 
+                 visible_layers: Dict[int, bool], 
+                 msg_mgr: MessageManager, canvas_ref: tk.Canvas):
         # 初期化
     
     def on_mouse_down(self, event: tk.Event) -> None:
@@ -38,28 +38,45 @@ class MouseEventHandler:
 
 ```python
 class MouseEventHandler:
-    def __init__(self, parent: Any) -> None:
-        # 親ウィジェットへの参照を保持
-        self.parent = parent
-        self.transform_manager = TransformationManager()
-        # ログスロットリング用のインスタンスを初期化
+    def __init__(
+            self,
+            layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]],
+            current_page_index: int,
+            visible_layers: Dict[int, bool],
+            on_transform_update: Callable[[], None],
+            # transform_manager: TransformationManager, # この引数は実際には __init__ に直接渡されません
+            # msg_mgr: MessageManager, # MessageManagerはグローバルインスタンスを使用
+            # canvas_ref: tk.Canvas # canvas_refは attach_to_canvas で設定
+        ) -> None:
+        # 変換データ、ページインデックス、表示レイヤー、更新コールバックを初期化
+        self.__layer_transform_data = layer_transform_data
+        self.__current_page_index = current_page_index
+        self.__visible_layers = visible_layers
+        self.__on_transform_update = on_transform_update
+        # MessageManagerはモジュールレベルで取得
+        self.__msg_mgr = get_message_manager()
+        # Canvas参照は attach_to_canvas で設定
+        self.__canvas_ref: Optional[tk.Canvas] = None
+        # その他の初期化...
+
+    def attach_to_canvas(self, canvas: tk.Canvas) -> None:
+        # キャンバスへの参照を設定し、イベントバインドに必要な準備を行う
+        self.__canvas_ref = canvas
         
-    def initialize_mouse_handler(self) -> None:
-        # MouseEventHandlerインスタンスを初期化
+    def update_state(self, current_page_index: int, visible_layers: Dict[int, bool]) -> None:
+        # 状態を更新（ページ変更時など）
         
-    def setup_mouse_events(self) -> None:
-        # マウスイベントのバインディングをセットアップ
-    def on_mouse_wheel(self, event: Any) -> None:
-        # マウスホイールイベントを処理し、MouseEventHandlerに委譲
+    def on_mouse_wheel(self, event: tk.Event) -> None:
+        # マウスホイールイベントを処理（ズーム）
         
-    def on_mouse_down(self, event: Any) -> None:
-        # マウスボタン押下イベントを処理し、MouseEventHandlerに委譲
+    def on_mouse_down(self, event: tk.Event) -> str:
+        # マウスボタン押下イベントを処理
         
-    def on_mouse_move(self, event: Any) -> None:
-        # マウス移動イベントを処理し、MouseEventHandlerのon_mouse_dragに委譲
+    def on_mouse_drag(self, event: tk.Event) -> None:
+        # マウス移動イベントを処理（ドラッグ中）
         
-    def on_mouse_up(self, event: Any) -> None:
-        # マウスボタン解放イベントを処理し、MouseEventHandlerに委譲
+    def on_mouse_up(self, event: tk.Event) -> None:
+        # マウスボタン解放イベントを処理
 ```
 
 `MouseEventHandler`クラスは以下の機能を提供します：
@@ -83,48 +100,97 @@ class MouseEventHandler:
    - Ctrlキー状態の監視
    - 回転モードの開始と終了
    - 回転角度の平滑化処理
-   
-`PDFMouseHandler`クラスは以下の機能を提供します：
+
+5. **変換操作の委譲**
+   - TransformationManagerを使用して変換データを管理
+   - 複数のレイヤーと複数のページに対する変換操作を委譲
+
+### `TransformationManager` クラス
+
+`controllers/transform_manager.py`に定義されている`TransformationManager`クラスは、表示レイヤーの変換データを管理する専用のクラスです。このクラスは、MouseEventHandlerから使用され、PDFやTIFFファイルの表示に関する変換データ（回転、移動、拡大縮小、水平・垂直反転）を一元管理します。
+
+```python
+class TransformationManager:
+    def __init__(self) -> None:
+        # TransformationManagerを空のデータで初期化します。
+        
+    def get_transform_data(self, layer_id: int, page_index: int) -> Tuple[float, float, float, float, bool, bool]:
+        # 特定のレイヤーとページの変換データ（回転、X座標、Y座標、スケール、水平反転、垂直反転）を取得
+        
+    def set_transform_data(self, layer_id: int, page_index: int, rotation: float, 
+                           tx: float, ty: float, scale: float,
+                           flip_x: bool = False, flip_y: bool = False) -> None:
+        # 特定のレイヤーとページの変換データ（反転フラグを含む）を設定
+        
+    def update_transform_data(self, layer_id: int, page_index: int, rotation: Optional[float] = None, 
+                              tx: Optional[float] = None, ty: Optional[float] = None, 
+                              scale: Optional[float] = None, flip_x: Optional[bool] = None,
+                              flip_y: Optional[bool] = None) -> None:
+        # 特定のレイヤーとページの変換データ（反転フラグを含む）を更新
+```
+
+`TransformationManager`クラスは以下の機能を提供します：
 
 1. **高レベルのイベント処理**
    - エラーハンドリングの追加
    - ログ出力の最適化（スロットリング）
    - 一貫したインターフェースの提供
 
-2. **PDFビューアー特有の機能**
-   - PDFページのズーム処理
-   - PDFページの回転処理
-   - PDFページの移動処理
+2. **ページインデックス管理**
+   - 現在表示中のページインデックスを管理
+   - ページ切り替え時の状態保持
+
+3. **レイヤー管理**
+   - レイヤーの追加と削除
+   - 各レイヤーの変換データの初期化と更新
+
+4. **画像変換操作**
+   - 回転、移動、拡大縮小の管理
+   - 水平・垂直反転フラグの管理
 
 ### ビューからのイベント委譲
 
-各ビュークラスは、マウスイベントを`PDFMouseHandler`に委譲し、`PDFMouseHandler`が`MouseEventHandler`に委譲します：
+各ビュークラスは、マウスイベントを直接`MouseEventHandler`に委譲します：
 
 ```python
-# views/pdf_ope_tab.py の例
+# views/pdf_ope_tab.py の例 (簡略化・概念)
 def __init__(self, master: Optional[tk.Misc] = None, **kwargs: Any) -> None:
     # 他の初期化コード...
     
+    # TransformationManagerインスタンスを作成 (引数なしで初期化)
+    self.transform_manager = TransformationManager()
+    
     # MouseEventHandlerインスタンスを作成
-    self._initialize_mouse_handler()
+    self._initialize_mouse_handler() 
     
     # マウスイベントのセットアップ
     self._setup_mouse_events()
 
 def _initialize_mouse_handler(self) -> None:
     # MouseEventHandlerインスタンスを作成
-    self.mouse_handler = MouseEventHandler(self)
+    # 実際の引数はMouseEventHandlerの__init__定義に合わせる
+    self.mouse_handler = MouseEventHandler(
+        layer_transform_data=self.transform_manager.get_all_transform_data(), # 初期データを提供
+        current_page_index=self.transform_manager.get_current_page_index(),
+        visible_layers=self.visible_layers, # ビューが管理する表示状態
+        on_transform_update=self._on_transform_update # ビューの更新用コールバック
+    )
+    # MouseEventHandlerにCanvasをアタッチ
+    if hasattr(self, 'canvas'): # canvasウィジェットが存在する場合
+        self.mouse_handler.attach_to_canvas(self.canvas)
     
 def _setup_mouse_events(self) -> None:
     # キャンバスにマウスイベントをバインド
-    self.canvas.bind("<ButtonPress-1>", self._on_mouse_down)
-    self.canvas.bind("<B1-Motion>", self._on_mouse_move)
-    self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
+    self.canvas.bind("<ButtonPress-1>", self.mouse_handler.on_mouse_down)
+    self.canvas.bind("<B1-Motion>", self.mouse_handler.on_mouse_drag)
+    self.canvas.bind("<ButtonRelease-1>", self.mouse_handler.on_mouse_up)
+    self.canvas.bind("<MouseWheel>", self.mouse_handler.on_mouse_wheel)
+    self.canvas.bind("<Configure>", self.mouse_handler.on_canvas_resize)
 
 def _on_transform_update(self) -> None:
     # 変換データが更新された時のコールバック
     # 現在のページを再表示
-    self._display_page(self.current_page_index)
+    self._display_page(self.transform_manager.get_current_page_index())
 ```
 
 ## コンポーネント間の相互作用
@@ -133,21 +199,20 @@ def _on_transform_update(self) -> None:
 
 1. ユーザーがマウスイベント（ホイール、クリック、ドラッグなど）を実行
 2. tkinterがイベントをビュークラスのイベントハンドラに渡す
-3. ビュークラスが`PDFMouseHandler`にイベントを委譲
-4. `PDFMouseHandler`が`MouseEventHandler`にイベントを委譲
-5. `MouseEventHandler`がイベントを処理し、必要に応じて変換データを更新
-6. コールバック関数が呼び出され、ビューが更新される
+3. ビュークラスが`MouseEventHandler`にイベントを直接委譲
+4. `MouseEventHandler`がイベントを処理し、`TransformationManager`を通じて変換データを更新
+5. `TransformationManager`のコールバック関数が呼び出され、ビューが更新される
 
 ### 2. データの流れ
 
-```
-[ユーザーイベント] → [ビュークラス] → [PDFMouseHandler] → [MouseEventHandler] → [変換データ更新] → [コールバック] → [ビュー更新]
+```text
+[ユーザーイベント] → [ビュークラス] → [MouseEventHandler] → [TransformationManager] → [変換データ更新] → [コールバック] → [ビュー更新]
 ```
 
 ### 3. 責任分担
 
-- **MouseEventHandler**: 低レベルのイベント処理とデータ変換のコアロジック
-- **PDFMouseHandler**: PDFビューアー特有の高レベルイベント処理、エラーハンドリング、ログ出力の最適化
+- **MouseEventHandler**: マウスイベント処理と視覚的フィードバックの提供
+- **TransformationManager**: 変換データの管理と更新
 - **ビュークラス**: UI表示と更新、ユーザー入力の受け取り
 - **コールバック関数**: ビューとコントローラー間の通信
 
@@ -156,20 +221,20 @@ def _on_transform_update(self) -> None:
 ### PDFビューアーでのズーム操作
 
 1. ユーザーがマウスホイールを回転
-2. tkinterがイベントを`PDFMouseHandler.on_mouse_wheel`に直接渡す
-3. `PDFMouseHandler`がズーム係数を計算し、エラーハンドリングを行う
-4. `MouseEventHandler`の適切なメソッドにイベントが委譲される
-5. 変換データが更新される
-6. `_on_transform_update`コールバックが呼び出される
-7. PDFページが新しいスケールで再描画される
+2. tkinterがイベントを`MouseEventHandler.on_mouse_wheel`に直接渡す
+3. `MouseEventHandler`がズーム係数を計算し、マウス位置を中心にズーム処理を行う
+4. `MouseEventHandler`が`TransformationManager`を通じて変換データを更新
+5. `TransformationManager`の`on_transform_update`コールバックが呼び出される
+6. PDFページが新しいスケールで再描画される
 
 ### 比較モードでのズーム操作
 
 1. ユーザーがマウスホイールを回転
 2. イベントが`MouseEventHandler.on_mouse_wheel`に直接渡される
-3. `MouseEventHandler._process_wheel_zoom_multi_layer`が全ての表示レイヤーのスケール値を更新
-4. `__on_transform_update`コールバックが呼び出される
-5. 全てのレイヤーが新しいスケールで再描画される
+3. `MouseEventHandler`が全ての表示レイヤーに対して処理を行う
+4. `TransformationManager`を通じて各レイヤーの変換データが更新される
+5. `on_transform_update`コールバックが呼び出される
+6. 全てのレイヤーが新しいスケールで再描画される
 
 ## 設計上の利点
 
