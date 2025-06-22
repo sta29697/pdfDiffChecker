@@ -1047,14 +1047,15 @@ class MouseEventHandler:
                         logger.debug(self.__msg_mgr.get_message("L540").format(f"Auto-hide timer set for guidance text: {after_id}"))
                     else:
                         # Log warning if after_id is not an integer
-                        logger.debug(self.__msg_mgr.get_message("L552", "Invalid timer ID not added to active timers: {0}").format(after_id))
+                        # Skipping invalid timer ID
+                        logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID: {0}").format(after_id))
                 except Exception as e:
                     # Log error if setting timer fails
-                    logger.error(self.__msg_mgr.get_message("L553", "Error setting guidance text timer: {0}").format(e))
+                    logger.error(self.__msg_mgr.get_message("L562", "Error setting guidance text timer: {0}").format(e))
             
-            # Log successful display of guidance text
-            logger.debug(self.__msg_mgr.get_message("L510").format(message))
-            logger.debug(self.__msg_mgr.get_message("L540").format(f"Guidance text displayed successfully with IDs: {self.__guidance_text_id}, is_rotation: {is_rotation}"))
+            # Log successful display of guidance text only when DEBUG_TIMER_LOGS is enabled
+            if tool_settings.DEBUG_TIMER_LOGS:
+                logger.debug(self.__msg_mgr.get_message("L540").format(f"Guidance text displayed successfully with IDs: {self.__guidance_text_id}, is_rotation: {is_rotation}"))
         except Exception as e:
             # Log error if showing guidance text fails
             logger.error(self.__msg_mgr.get_message("L521").format(str(e)))
@@ -1185,7 +1186,8 @@ class MouseEventHandler:
                     logger.debug(self.__msg_mgr.get_message("L509").format(message, duration))
                 else:
                     # Log warning if after_id is not an integer
-                    logger.debug(self.__msg_mgr.get_message("L552", "Invalid timer ID not added to active timers: {0}").format(after_id))
+                    # Skipping invalid timer ID
+                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID: {0}").format(after_id))
 
             except Exception as e:
                 # Log error when showing notification
@@ -1251,7 +1253,8 @@ class MouseEventHandler:
                 # Check if after_id is a valid integer for after_cancel
                 if not isinstance(after_id, int):
                     # Log warning for invalid timer ID type
-                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID in hide_notification: {0}").format(after_id))
+                    # Skipping invalid timer ID
+                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID: {0}").format(after_id))
                     continue
                     
                 # Cast to int for internal use, but convert to string for after_cancel
@@ -1563,8 +1566,11 @@ class MouseEventHandler:
                         # Skip if after_id is not a valid integer for after_cancel
                         # Tkinter's after_cancel requires an integer ID
                         if not isinstance(after_id, int):
-                            # Use L552 message code for invalid timer ID
-                            logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid timer ID: {0}").format(after_id))
+                            # Skip invalid timer ID silently to reduce log spam
+                            # Only log at debug level if DEBUG_TIMER_LOGS is True
+                            if getattr(tool_settings, 'DEBUG_TIMER_LOGS', False):
+                                # Skipping invalid timer ID
+                                logger.debug(self.__msg_mgr.get_message("L552").format(after_id))
                             continue
                             
                         # Convert timer ID to string as after_cancel expects a string
@@ -1572,21 +1578,24 @@ class MouseEventHandler:
                         timers_cancelled = True
                     except Exception as e:
                         # Use L553 message code for timer cancellation errors
-                        logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling timer {0}: {1}").format(after_id, e))
+                        # Error cancelling timer
+                        logger.debug(self.__msg_mgr.get_message("L553").format(e))
         
         # Cancel Ctrl check timer if it exists
         if self.__ctrl_check_timer_id is not None and self.__canvas_ref:
             try:
                 # Check if timer ID is valid for after_cancel (must be int)
                 if not isinstance(self.__ctrl_check_timer_id, int):
-                    logger.debug(self.__msg_mgr.get_message("L552", "Skipping invalid Ctrl check timer ID: {0}").format(self.__ctrl_check_timer_id))
+                    # Skipping invalid timer ID
+                    logger.debug(self.__msg_mgr.get_message("L552").format(self.__ctrl_check_timer_id))
                 else:
                     # Convert timer ID to string as after_cancel expects a string
                     self.__canvas_ref.after_cancel(str(self.__ctrl_check_timer_id))
                     self.__ctrl_check_timer_id = None
                     timers_cancelled = True
             except Exception as e:
-                logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling Ctrl check timer: {0}").format(e))
+                # Error cancelling timer
+                logger.debug(self.__msg_mgr.get_message("L553").format(e))
         
         # Cancel shortcut guide auto-hide timer if it exists
         if hasattr(self, "__shortcut_guide_timer") and self.__shortcut_guide_timer:
@@ -1596,7 +1605,8 @@ class MouseEventHandler:
                 timers_cancelled = True
                 logger.debug(self.__msg_mgr.get_message("L554", "Shortcut guide auto-hide timer cancelled."))
             except Exception as e:
-                logger.debug(self.__msg_mgr.get_message("L553", "Error cancelling shortcut guide timer: {0}").format(e))
+                # Error cancelling timer
+                logger.debug(self.__msg_mgr.get_message("L553").format(e))
         
         # Only log if we actually cancelled something and it's a shortcut guide timer
         # This reduces log spam when multiple shortcuts are used in succession

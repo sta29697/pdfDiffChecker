@@ -6,11 +6,17 @@ from logging import getLogger
 from typing import Any, Dict, List, TypedDict, Literal, Optional, TypeVar, overload, cast
 from typing_extensions import Self
 from configurations.message_manager import get_message_manager
+import tkinter.font
 
 # Determine tool_settings lazily to avoid circular imports
-_helper_ts = __import__("configurations.tool_settings", fromlist=["DEFAULT_USER_SET","USER_SETTINGS_FILE"])  # noqa: E402
+_helper_ts = __import__("configurations.tool_settings", fromlist=["DEFAULT_USER_SET","USER_SETTINGS_FILE", "PREFERRED_FONT_FAMILIES", "DEFAULT_FONT_FAMILY", "SECOND_FALLBACK_FONT_FAMILY", "DEFAULT_GUIDANCE_SETTINGS", "DEFAULT_NOTIFICATION_SETTINGS"])  # noqa: E402
 DEFAULT_USER_SET = _helper_ts.DEFAULT_USER_SET
 USER_SETTINGS_FILE = _helper_ts.USER_SETTINGS_FILE
+PREFERRED_FONT_FAMILIES = _helper_ts.PREFERRED_FONT_FAMILIES
+DEFAULT_FONT_FAMILY = _helper_ts.DEFAULT_FONT_FAMILY
+SECOND_FALLBACK_FONT_FAMILY = _helper_ts.SECOND_FALLBACK_FONT_FAMILY
+DEFAULT_GUIDANCE_SETTINGS = _helper_ts.DEFAULT_GUIDANCE_SETTINGS
+DEFAULT_NOTIFICATION_SETTINGS = _helper_ts.DEFAULT_NOTIFICATION_SETTINGS
 
 
 logger = getLogger(__name__)
@@ -128,6 +134,7 @@ class UserSettingManager:
     _instance: Optional[Self] = None
     _user_settings: Dict[str, Any] = {}
     _settings_status: Literal["default", "user_settings"] = "default"
+    _selected_font_family: Optional[str] = None  # Cache for the selected font family
 
     def __new__(cls: type[Self], *args: Any, **kwargs: Any) -> Self:
         """Create a new instance of UserSettingManager using singleton pattern.
@@ -242,6 +249,60 @@ class UserSettingManager:
             logger.debug(get_message_manager().get_log_message("L026"))
 
     @classmethod
+    def _get_available_font_family(cls) -> str:
+        """
+        Selects an available font family from the preferred list.
+
+        Checks system fonts against PREFERRED_FONT_FAMILIES from tool_settings.
+        Caches the result for subsequent calls.
+
+        Returns:
+            str: The selected font family name.
+        """
+        if cls._selected_font_family is None:
+            try:
+                # Ensure a Tk root window exists for font operations, common in non-GUI contexts or early init
+                # This is a simplified check; in a real app, Tk root might be managed elsewhere.
+                try:
+                    _ = tkinter.font.families() # Try to access families to see if Tk is initialized
+                except tkinter.TclError:
+                    # If Tk is not initialized (e.g. no root window), font.families() might fail.
+                    # In such cases, we might have to fall back to the default without checking.
+                    # This situation is less common if UserSettingManager is used after Tkinter app init.
+                    # Log: Tkinter not fully initialized for font checking, falling back.
+                    logger.warning(get_message_manager().get_log_message("L533", SECOND_FALLBACK_FONT_FAMILY))
+                    cls._selected_font_family = SECOND_FALLBACK_FONT_FAMILY
+                    return cls._selected_font_family
+                
+                available_fonts = set(tkinter.font.families())
+                selected_font = SECOND_FALLBACK_FONT_FAMILY  # Start with the ultimate fallback
+
+                for preferred_font in PREFERRED_FONT_FAMILIES:
+                    if preferred_font in available_fonts:
+                        selected_font = preferred_font
+                        # Log: Selected font family from preferred list.
+                        logger.info(get_message_manager().get_log_message("L534", selected_font, PREFERRED_FONT_FAMILIES))
+                        break
+                else: # Loop completed without break (no preferred font found)
+                    # Log: None of the preferred fonts are available, falling back to second fallback.
+                    logger.warning(get_message_manager().get_log_message("L535", PREFERRED_FONT_FAMILIES, SECOND_FALLBACK_FONT_FAMILY, list(available_fonts)[:20]))
+                    # selected_font is already SECOND_FALLBACK_FONT_FAMILY
+                
+                cls._selected_font_family = selected_font
+                # Log: Cached selected font family.
+                logger.debug(get_message_manager().get_log_message("L536", cls._selected_font_family))
+            except Exception as e:
+                # Log: Error getting available font families, falling back to second fallback.
+                logger.error(get_message_manager().get_log_message("L537", e, SECOND_FALLBACK_FONT_FAMILY))
+                cls._selected_font_family = SECOND_FALLBACK_FONT_FAMILY
+
+        # At this point, _selected_font_family is guaranteed to be a str.
+        # If it was None, the block above would have set it.
+        # If it wasn't None (i.e., already str from a previous call), the block was skipped.
+        assert cls._selected_font_family is not None, "Font family should have been set to a string value."
+        return cls._selected_font_family
+
+    @classmethod
     @overload
     def get_setting(cls, key: str) -> Any: ...
 
@@ -260,13 +321,26 @@ class UserSettingManager:
         Returns:
             Any: Setting value
         """
+        if key == "font_family":
+            # Get the dynamically selected font family
+            return cls._get_available_font_family()
+        
         section = (
             "user_settings" if cls._settings_status == "user_settings" else "default"
         )
         try:
             return cls._user_settings[section][key]
         except KeyError as e:
-            logger.error(get_message_manager().get_log_message("L027", key, e))
+            # Check if the key exists in DEFAULT_GUIDANCE_SETTINGS
+            if key in DEFAULT_GUIDANCE_SETTINGS:
+                return DEFAULT_GUIDANCE_SETTINGS[key]
+            
+            # Check if the key exists in DEFAULT_NOTIFICATION_SETTINGS
+            if key in DEFAULT_NOTIFICATION_SETTINGS:
+                return DEFAULT_NOTIFICATION_SETTINGS[key]
+                
+            # Changed from error to debug level to reduce log noise for missing settings
+            logger.debug(get_message_manager().get_message("L027", key, e))
             return default_value
 
     @classmethod

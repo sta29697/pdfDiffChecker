@@ -18,6 +18,10 @@ PRODUCTION_MODE: bool = True
 DEVELOP_MODE: bool = False
 program_mode: bool = PRODUCTION_MODE if getattr(sys, "frozen", False) else DEVELOP_MODE
 
+# Debug settings
+# Controls whether timer-related debug logs are output
+DEBUG_TIMER_LOGS: bool = False
+
 # Application title - Using message code instead of hardcoded string
 APP_TITLE_CODE: str = "U009"  # "PDF Difference Checker"
 
@@ -163,6 +167,52 @@ DEFAULT_USER_SET: Dict[str, Dict[str, Any]] = {
         "guidance_border_color": "#0000FF",
         "guidance_stipple": "gray25",
     },
+}
+
+# Global keyboard shortcut patterns (for bind_all / unbind_all)
+GLOBAL_SHORTCUT_PATTERNS: dict[str, list[str]] = {
+    # Toggle shortcut guide (Ctrl + ?) - US / JP layouts
+    "TOGGLE_GUIDE": [
+        "<Control-Shift-/>",   # US layout Ctrl+?
+        "<Control-question>",  # JP layout Ctrl+?
+        "<Control-Key-question>"  # Fallback pattern
+    ],
+    # Rotation shortcuts
+    "ROTATE_RIGHT": ["<Control-r>"],
+    "ROTATE_LEFT": ["<Control-l>"],
+    # Flip shortcuts
+    "FLIP_HORIZONTAL": ["<Control-h>"],
+    "FLIP_VERTICAL": ["<Control-v>"],
+    # Reset transformations
+    "RESET_TRANSFORM": ["<Control-b>"],
+    # Detect Ctrl key held down (left / right)
+    "CTRL_ONLY": ["<Control_L>", "<Control_R>"]
+}
+
+# Default guidance and warning settings
+DEFAULT_GUIDANCE_SETTINGS: Dict[str, Any] = {
+    # Shortcut guide UI settings
+    "ui_shortcut_guide_padding": 10,
+    "ui_shortcut_guide_width": 300,
+    "ui_shortcut_guide_line_spacing": 5,
+    "ui_shortcut_guide_title_color": "#FFFFFF",
+    "ui_shortcut_guide_content_color": "#FFFFFF",
+    "ui_shortcut_guide_bg_color": "#333333",
+    "ui_shortcut_guide_outline_color": "#FFFFFF",
+    "ui_shortcut_guide_outline_width": 2,
+    "ui_shortcut_guide_animation": True,
+    # Warning notification settings
+    "warning_text_color": "#FFFFFF",
+    "warning_bg_color": "#FF0000",
+    "warning_border_color": "#FFFFFF"
+}
+
+# Default notification settings
+DEFAULT_NOTIFICATION_SETTINGS: Dict[str, Any] = {
+    # Standard notification colors
+    "notification_text_color": "#FFFFFF",
+    "notification_bg_color": "#333333",
+    "notification_border_color": "#FFFFFF"
 }
 
 # Default color theme settings only dark theme
@@ -357,22 +407,4 @@ DEFAULT_COLOR_THEME_SET: Dict[str, Dict[str, Any]] = {
     "dpi_entry": {"fg": "#db57c4", "bg": "#27283a", "highlightcolor": "#43c0cd", "highlightbackground": "#27283a", "insertbackground": "#db57c4"}
 }
 
-# Global keyboard shortcut patterns (for bind_all / unbind_all)
-GLOBAL_SHORTCUT_PATTERNS: dict[str, list[str]] = {
-    # Toggle shortcut guide (Ctrl + ?) - US / JP layouts
-    "TOGGLE_GUIDE": [
-        "<Control-Shift-/>",   # US layout Ctrl+?
-        "<Control-question>",  # JP layout Ctrl+?
-        "<Control-Key-question>"  # Fallback pattern
-    ],
-    # Rotation shortcuts
-    "ROTATE_RIGHT": ["<Control-r>"],
-    "ROTATE_LEFT": ["<Control-l>"],
-    # Flip shortcuts
-    "FLIP_HORIZONTAL": ["<Control-h>"],
-    "FLIP_VERTICAL": ["<Control-v>"],
-    # Reset transformations
-    "RESET_TRANSFORM": ["<Control-b>"],
-    # Detect Ctrl key held down (left / right)
-    "CTRL_ONLY": ["<Control_L>", "<Control_R>"]
-}
+

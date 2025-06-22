@@ -1463,8 +1463,8 @@
             "ja": "[UI] ページ数 {0} のページコントロールフレームを作成しています"
         },
         "L353": {
-            "en": "[PDF] Navigated to page {0} of {1}",
-            "ja": "[PDF] ページ {0}/{1} に移動しました"
+            "en": "[UI] Navigated to page {0} of {1}",
+            "ja": "[UI] ページ {0}/{1} に移動しました"
         },
         "L354": {
             "en": "[UI] Page entry event detected: {0}",
@@ -1999,8 +1999,184 @@
             "ja": "ズーム操作が適用されました、倍率: {0}"
         },
         "L518": {
-            "en": "Mouse handler state updated: page_index={0}, total_layers={1}, visible_layers={2}",
-            "ja": "マウスハンドラの状態が更新されました: ページインデックス={0}, 全レイヤー数={1}, 表示レイヤー数={2}"
+            "en": "[MOUSE] Image moved by delta: x={0}, y={1}",
+            "ja": "[マウス] 画像がデルタで移動しました: x={0}, y={1}"
+        },
+        "L519": {
+            "en": "Attempting to exit rotation mode.",
+            "ja": "回転モードの終了を試みています。"
+        },
+        "L520": {
+            "en": "Ctrl key ({0}) released, rotation mode deactivated.",
+            "ja": "Ctrlキー ({0}) が解放され、回転モードが非アクティブ化されました。"
+        },
+        "L521": {
+            "en": "[CANVAS] {0} image cleared.",
+            "ja": "[キャンバス] {0} 画像がクリアされました。"
+        },
+        "L522": {
+            "en": "[CANVAS] Both Base and Comp images cleared.",
+            "ja": "[キャンバス] ベース画像と比較画像の両方がクリアされました。"
+        },
+        "L523": {
+            "en": "[CANVAS] Mouse position updated: {0}",
+            "ja": "[キャンバス] マウス位置が更新されました: {0}"
+        },
+        "L524": {
+            "en": "[CANVAS] Mouse left canvas area. Last position: {0}",
+            "ja": "[キャンバス] マウスがキャンバス領域を離れました。最終位置: {0}"
+        },
+        "L525": {
+            "en": "[CANVAS] Mouse entered canvas area. Position: {0}",
+            "ja": "[キャンバス] マウスがキャンバス領域に入りました。位置: {0}"
+        },
+        "L526": {
+            "en": "[CANVAS] Mouse wheel scroll event: delta={0}",
+            "ja": "[キャンバス] マウスホイールスクロールイベント: デルタ={0}"
+        },
+        "L527": {
+            "en": "[CANVAS] Mouse button {0} pressed at ({1}, {2})",
+            "ja": "[キャンバス] マウスボタン {0} が ({1}, {2}) で押されました"
+        },
+        "L528": {
+            "en": "[CANVAS] Mouse button {0} released at ({1}, {2})",
+            "ja": "[キャンバス] マウスボタン {0} が ({1}, {2}) で離されました"
+        },
+        "L529": {
+            "en": "[CANVAS] Mouse dragged to ({0}, {1})",
+            "ja": "[キャンバス] マウスが ({0}, {1}) へドラッグされました"
+        },
+        "L530": {
+            "en": "[MOUSE] A key was released.",
+            "ja": "[マウス] キーが離されました。"
+        },
+        "L531": {
+            "en": "[SCALE] Scale is zero for {0} image. Displaying 1x1 transparent image. Original scale: {1}",
+            "ja": "[スケール] {0}画像のスケールがゼロです。1x1の透明画像を表示します。元のスケール: {1}"
+        },
+        "L532": {
+            "en": "[SCALE] Invalid image dimensions for {0} image after scaling. Original width: {1}, scale: {2}, new_w: {3}, new_h: {4}. Displaying 1x1 transparent image.",
+            "ja": "[スケール] {0}画像のスケーリング後の画像寸法が無効です。元の幅: {1}, スケール: {2}, 新しい幅: {3}, 新しい高さ: {4}。1x1の透明画像を表示します。"
+        },
+        "L533": {
+            "en": "[FONT] Tkinter not fully initialized for font checking. Falling back to second fallback font: {0}",
+            "ja": "[フォント] Tkinterがフォントチェックのために完全に初期化されていません。セカンドフォールバックフォントにフォールバックします: {0}"
+        },
+        "L534": {
+            "en": "[FONT] Selected font family: {0} (from preferred list: {1})",
+            "ja": "[フォント] フォントファミリーを選択しました: {0} (優先リストから: {1})"
+        },
+        "L535": {
+            "en": "[FONT] None of the preferred fonts {0} are available. Falling back to second fallback font: {1}. Available system fonts (sample): {2}",
+            "ja": "[フォント] 優先フォント {0} のいずれも利用できません。セカンドフォールバックフォントにフォールバックします: {1}。利用可能なシステムフォント (サンプル): {2}"
+        },
+        "L536": {
+            "en": "[FONT] Cached selected font family: {0}",
+            "ja": "[フォント] キャッシュされた選択フォントファミリー: {0}"
+        },
+        "L537": {
+            "en": "[FONT] Error getting available font families. Falling back to second fallback font: {0}. Error: {1}",
+            "ja": "[フォント] 利用可能なフォントファミリーの取得中にエラーが発生しました。セカンドフォールバックフォントにフォールバックします: {0}。エラー: {1}"
+        },
+        "L538": {
+            "en": "[MOUSE] Page state updated: Base {0}/{1}, Comp {2}/{3}",
+            "ja": "[マウス] ページ状態更新: ベース {0}/{1}, 比較 {2}/{3}"
+        },
+        "L539": {
+            "en": "[UI] {0}",
+            "ja": "[UI] {0}"
+        },
+        "L540": {
+            "en": "[DEBUG] {0}",
+            "ja": "[デバッグ] {0}"
+        },
+        "L541": {
+            "en": "[IMAGE] Horizontal flip operation performed",
+            "ja": "[画像] 水平反転操作が実行されました"
+        },
+        "L542": {
+            "en": "[IMAGE] Vertical flip operation performed",
+            "ja": "[画像] 垂直反転操作が実行されました"
+        },
+        "L543": {
+            "en": "[MOUSE] MouseEventHandler cleanup initiated",
+            "ja": "[マウス] マウスイベントハンドラのクリーンアップを開始しました"
+        },
+        "L544": {
+            "en": "[MOUSE] MouseEventHandler cleanup completed",
+            "ja": "[マウス] マウスイベントハンドラのクリーンアップが完了しました"
+        },
+        "L545": {
+            "en": "[TRANSFORM] TransformationManager initialized",
+            "ja": "[変換] 変換マネージャーが初期化されました"
+        },
+        "L546": {
+            "en": "[TRANSFORM] Transform data updated for layer {0}, page {1}: rotation={2}, x={3}, y={4}, scale={5}, flip_x={6}, flip_y={7}",
+            "ja": "[変換] レイヤー{0}、ページ{1}の変換データが更新されました: 回転={2}、x={3}、y={4}、スケール={5}、水平反転={6}、垂直反転={7}"
+        },
+        "L547": {
+            "en": "[TRANSFORM] Transform data reset for layer {0}, page {1}",
+            "ja": "[変換] レイヤー{0}、ページ{1}の変換データがリセットされました"
+        },
+        "L548": {
+            "en": "[TRANSFORM] All transform data reset",
+            "ja": "[変換] すべての変換データがリセットされました"
+        },
+        "L549": {
+            "en": "[TRANSFORM] Current page index changed to {0}",
+            "ja": "[変換] 現在のページインデックスが{0}に変更されました"
+        },
+        "L550": {
+            "en": "[TRANSFORM] Layer {0} added with {1} pages",
+            "ja": "[変換] レイヤー{0}が{1}ページで追加されました"
+        },
+        "L551": {
+            "en": "[TRANSFORM] Layer {0} removed",
+            "ja": "[変換] レイヤー{0}が削除されました"
+        },
+        "L552": {
+            "en": "[TIMER] Skipping invalid timer ID: {0}",
+            "ja": "[タイマー] 無効なタイマーIDをスキップします: {0}"
+        },
+        "L553": {
+            "en": "[TIMER] Error cancelling timer: {0}",
+            "ja": "[タイマー] タイマーのキャンセル中にエラーが発生しました: {0}"
+        },
+        "L554": {
+            "en": "[TIMER] Shortcut guide auto-hide timer cancelled",
+            "ja": "[タイマー] ショートカットガイドの自動非表示タイマーがキャンセルされました"
+        },
+        "L555": {
+            "en": "[TIMER] All timers cancelled",
+            "ja": "[タイマー] すべてのタイマーがキャンセルされました"
+        },
+        "L556": {
+            "en": "[CANVAS] Invalid canvas dimensions detected: width={0}, height={1}, using fallback dimensions",
+            "ja": "[キャンバス] 無効なキャンバスサイズが検出されました: 幅={0}, 高さ={1}, フォールバックサイズを使用します"
+        },
+        "L557": {
+            "en": "[CANVAS] Failed to display image on canvas: {0}",
+            "ja": "[キャンバス] キャンバスに画像を表示できませんでした: {0}"
+        },
+        "L558": {
+            "en": "[CANVAS] Image display retry successful with dimensions: width={0}, height={1}",
+            "ja": "[キャンバス] 画像表示の再試行が成功しました: 幅={0}, 高さ={1}"
+        },
+        "L559": {
+            "en": "[MOUSE] Canvas reference is not set in MouseEventHandler",
+            "ja": "[マウス] MouseEventHandlerでキャンバス参照が設定されていません"
+        },
+        "L560": {
+            "en": "[MOUSE] Successfully attached to canvas",
+            "ja": "[マウス] キャンバスへの接続に成功しました"
+        },
+        "L561": {
+            "en": "[MOUSE] Mouse wheel event processed: delta={0}, scale={1}",
+            "ja": "[マウス] マウスホイールイベント処理: 変化量={0}, スケール={1}"
+        },
+        "L562": {
+            "en": "[TIMER] Error setting guidance text timer: {0}",
+            "ja": "[タイマー] ガイダンステキストタイマーの設定中にエラーが発生しました: {0}"
         }
     },
     "message_codes": {
@@ -2197,12 +2373,12 @@
             "ja": "元の状態にリセット"
         },
         "M049": {
-            "en": "Keyboard Shortcuts:\nCtrl+R: Rotate right 90°\nCtrl+L: Rotate left 90°\nCtrl+V: Flip vertical\nCtrl+H: Flip horizontal\nCtrl+B: Reset all transformations\nCtrl+?: Show/hide this help",
-            "ja": "キーボードショートカット:\nCtrl+R: 右に90°回転\nCtrl+L: 左に90°回転\nCtrl+V: 垂直反転\nCtrl+H: 水平反転\nCtrl+B: すべての変換をリセット\nCtrl+?: このヘルプを表示/非表示"
+            "en": "Ctrl+R: Rotate right 90°\nCtrl+L: Rotate left 90°\nCtrl+V: Flip vertical\nCtrl+H: Flip horizontal\nCtrl+B: Reset all transformations\nCtrl+?: Show/hide this help",
+            "ja": "Ctrl+R: 右に90°回転\nCtrl+L: 左に90°回転\nCtrl+V: 垂直反転\nCtrl+H: 水平反転\nCtrl+B: すべての変換をリセット\nCtrl+?: このヘルプを表示/非表示"
         },
         "M050": {
-            "en": "File name: {0}, Error: {1}",
-            "ja": "ファイル名: {0}, エラー: {1}"
+            "en": "Keyboard Shortcuts",
+            "ja": "キーボードショートカット"
         },
         "M051": {
             "en": "Page: {0}, Error: {1}",
@@ -2219,6 +2395,14 @@
         "M054": {
             "en": "Shortcut help hidden",
             "ja": "ショートカットヘルプを非表示にしました"
+        },
+        "M055": {
+            "en": "Shortcut Guide",
+            "ja": "ショートカットガイド"
+        },
+        "M056": {
+            "en": "Please wait a moment before next operation",
+            "ja": "次の操作まで少しお待ちください"
         }
     },
     "ui_codes": {
