@@ -9,15 +9,10 @@ __pycache__/
 .python-version
 memo.py
 .windsurfrules
+pdfium.dll
 sample01.pdf
 sample02.pdf
 sample01.tiff
 sample02.tiff
 logs/debug.log
-licences_tree.txt
-licences.txt
-pdf_to_images_with_metadata.dll
-pdf_to_images_with_metadata.c
-/configurations/tool_settings.py
-MyREADME.md
-tasks.md
+
