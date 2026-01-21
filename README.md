@@ -12,32 +12,33 @@ A Tkinter-based application for comparing PDF files page by page, supporting adv
 - Tabbed interface: PDF comparison, PDF operations, file extension/size tools, description, licenses
 - User settings saved to JSON
 - Logging with throttling and debug log output
-- DLL support for external dependencies (C language)
 - Temporary files managed in a dedicated directory
 - Pytest-based testing ("tests" directory)
 - ER diagrams in "docs" directory
 
 ## Requirements
 - Python 3.12
-- pip
+- uv
 - numpy
 - pillow
 - pdf2image
 - tkinterdnd2
 - matplotlib
-- pytest-cov >= 4.0.0
 - pypdfium2
 - pypdf
 
 ## Usage
-1. Install dependencies:
+1. Install uv (if needed):
    ```sh
-   python -m pip install --upgrade pip
-   pip install numpy pillow pdf2image tkinterdnd2 matplotlib pytest-cov pypdfium2 pypdf
+   irm https://astral.sh/uv/install.ps1 | iex
    ```
-2. Run the application:
+2. Install dependencies:
    ```sh
-   python main.py
+   uv sync
+   ```
+3. Run the application:
+   ```sh
+   uv run python main.py
    ```
 
 ## Coding Guidelines
