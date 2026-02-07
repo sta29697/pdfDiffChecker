@@ -67,6 +67,14 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
         # Convert TypedDict theme to plain dict for safe get()
         theme_dict: Dict[str, Any] = dict(ctm.get_current_theme())
         base_image_theme_config: Dict[str, Any] = theme_dict.get(self.__color_key, {})
+        if not base_image_theme_config:
+            # Main processing: use a stable fallback theme key for dialog buttons.
+            base_image_theme_config = theme_dict.get("process_button", {})
+
+        themed_btn_config = dict(base_image_theme_config)
+        themed_btn_config.pop("relief", None)
+        themed_btn_config.pop("bd", None)
+        themed_btn_config.pop("borderwidth", None)
 
         try:
             # Determine button text and command
@@ -78,8 +86,9 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
                 self,
                 text=btn_text,
                 command=btn_command,
-                **base_image_theme_config,
+                **themed_btn_config,
             )
+            self._apply_visual_shading()
             self.path_select_btn.pack(fill="both", expand=True)
             # Successfully created path select button
             logger.debug(message_manager.get_log_message("L083"))
@@ -153,7 +162,11 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
             theme_colors (dict[str, Any]): Theme color data from ColorThemeManager. Accepts ThemeColors type or dict.
         """
         theme_data = theme_colors.get(self.__color_key, {})
+        if not theme_data:
+            # Main processing: keep dialog buttons theme-follow even if key is missing.
+            theme_data = theme_colors.get("process_button", {})
         self.path_select_btn.configure(**theme_data)
+        self._apply_visual_shading()
 
     def _config_widget(self, theme_settings: dict[str, Any]) -> None:
         """
@@ -163,3 +176,19 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
             theme_settings (dict[str, Any]): Theme settings to apply.
         """
         self.path_select_btn.configure(**theme_settings)
+        self._apply_visual_shading()
+
+    def _apply_visual_shading(self) -> None:
+        """Apply a consistent 3D shading to the Select button.
+
+        This app uses `tk.Button` for path selection buttons. Some theme keys
+        (e.g., `process_button`) set `relief='flat'`, which makes the Select
+        button hard to recognize as a clickable control. This helper enforces
+        a raised relief and border so the button remains visually distinct
+        across all themes.
+        """
+        # Main processing: enforce a visible border/relief for better affordance.
+        try:
+            self.path_select_btn.configure(relief=tk.RAISED, bd=2)
+        except Exception:
+            pass

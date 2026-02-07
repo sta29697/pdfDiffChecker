@@ -83,10 +83,24 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             self.__theme_dict: Dict[str, Any] = cast(
                 Dict[str, Any], current_theme.get(self.__color_key, {})
             )
+            self.__entry_theme_dict: Dict[str, Any] = cast(
+                Dict[str, Any],
+                current_theme.get(
+                    "page_number_entry",
+                    current_theme.get(
+                        "output_folder_path_entry",
+                        current_theme.get(
+                            "base_file_path_entry",
+                            current_theme.get("dpi_entry", {}),
+                        ),
+                    ),
+                ),
+            )
         except Exception as e:
             # Failed to get theme color: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
             self.__theme_dict = DEFAULT_COLOR_THEME_SET.get(self.__color_key, {})
+            self.__entry_theme_dict = {}
 
         # Base color settings
         self.__swfg: str = self.__theme_dict.get("base_font_color", "#43c0cd")
@@ -114,7 +128,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Page navigation buttons
         self.prev_page_btn = BasePageChangeButton(
             fr=self,
-            color_key="page_control",
+            color_key="change_previous_page_button",
             text="<",
             command=on_prev_page if on_prev_page else lambda: None,
         )
@@ -126,12 +140,15 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             textvariable=self.page_var,
             width=5,
             font=btw.base_font,
-            bg=self.__acbg,  # Use active background color for better visibility
-            fg=self.__acfg,  # Use active foreground color for better visibility
-            highlightcolor=self.__hlfg,
-            highlightbackground=self.__hlbg,
+            bg=self.__entry_theme_dict.get("bg", self.__acbg),  # Use themed Entry background
+            fg=self.__entry_theme_dict.get("fg", self.__acfg),  # Use themed Entry foreground
+            highlightcolor=self.__entry_theme_dict.get("highlightcolor", self.__hlfg),
+            highlightbackground=self.__entry_theme_dict.get("highlightbackground", self.__hlbg),
+            insertbackground=self.__entry_theme_dict.get("insertbackground", self.__acfg),
             justify='center', # Center the text for better appearance
-            relief='flat'     # Flat appearance like a label when not focused
+            relief='sunken',  # Keep visible border like other input fields
+            bd=1,
+            highlightthickness=1,
         )
         self.current_page_label.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
         
@@ -149,7 +166,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Total pages display
         self.total_pages_label = BaseLabelClass(
             fr=self,
-            color_key="page_control",
+            color_key="total_pages_label",
             text="/ 0",
         )
         self.total_pages_label.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
@@ -157,7 +174,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Next page button
         self.next_page_btn = BasePageChangeButton(
             fr=self,
-            color_key="page_control",
+            color_key="change_new_page_button",
             text=">",
             command=on_next_page if on_next_page else lambda: None,
         )
@@ -168,7 +185,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Insert blank page button
         self.insert_blank_btn = InsertBlankPageButton(
             master=self,
-            color_key="page_control",
+            color_key="insert_blank_page_button",
             command=on_insert_blank if on_insert_blank else lambda: None,
         )
         self.insert_blank_btn.grid(row=4, column=0, padx=5, pady=5, sticky="ew")
@@ -231,8 +248,8 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         Args:
             event: Focus out event
         """
-        # Restore flat appearance when not focused
-        self.current_page_label.config(relief='flat')
+        # Keep sunken appearance so the field is recognizable as an input.
+        self.current_page_label.config(relief='sunken')
         
     def _handle_page_entry(self, event: tk.Event) -> None:
         """Handle Enter key press in the page entry field.
@@ -290,12 +307,26 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             # Apply to frame
             self.configure(bg=self.__base_bg)
 
-            # Update Entry widget colors
+            # Update Entry widget colors (use the same style as other input entries)
+            entry_theme = theme_data.get(
+                "page_number_entry",
+                theme_data.get(
+                    "output_folder_path_entry",
+                    theme_data.get(
+                        "base_file_path_entry",
+                        theme_data.get("dpi_entry", {}),
+                    ),
+                ),
+            )
             self.current_page_label.configure(
-                bg=self.__acbg,
-                fg=self.__acfg,
-                highlightcolor=self.__hlfg,
-                highlightbackground=self.__hlbg,
+                bg=entry_theme.get("bg", self.__acbg),
+                fg=entry_theme.get("fg", self.__acfg),
+                highlightcolor=entry_theme.get("highlightcolor", self.__hlfg),
+                highlightbackground=entry_theme.get("highlightbackground", self.__hlbg),
+                insertbackground=entry_theme.get("insertbackground", self.__acfg),
+                relief="sunken",
+                bd=1,
+                highlightthickness=1,
             )
 
             # Apply theme to component widgets that implement ThemeColorApplicable
@@ -351,7 +382,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             self.current_page_label.configure(
                 bg=theme_settings.get("bg", self.__acbg),
                 fg=theme_settings.get("fg", self.__acfg),
-                relief=theme_settings.get("relief", "flat")
+                relief=theme_settings.get("relief", "sunken"),
+                bd=theme_settings.get("bd", 1),
+                highlightthickness=theme_settings.get("highlightthickness", 1),
             )
         except Exception as e:
             logger.error(message_manager.get_log_message("L175", str(e)))

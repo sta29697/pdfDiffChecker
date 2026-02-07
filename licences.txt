@@ -1245,3 +1245,7 @@ six==1.17.0
 License: MIT
 Home-page: https://github.com/benjaminp/six
 
+typing-extensions==4.15.0
+License: PSF-2.0 (Python Software Foundation License 2.0)
+Home-page: https://github.com/python/typing_extensions
+

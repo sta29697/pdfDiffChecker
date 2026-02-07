@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import shutil
+from pathlib import Path
 from logging import getLogger
 import tkinter as tk
 from tkinter import messagebox
@@ -64,9 +65,13 @@ def get_temp_dir() -> str:
         from configurations import tool_settings
         base_dir = str(tool_settings.BASE_DIR)
         temp_dir = os.path.join(base_dir, "temp")
+        exists_temp = os.path.exists(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
-        # L012: Temporary directory created
-        logger.debug(message_manager.get_log_message("L012", temp_dir))
+        if exists_temp:
+            logger.debug(message_manager.get_log_message("L192", temp_dir))
+        else:
+            # L012: Temporary directory created
+            logger.debug(message_manager.get_log_message("L012", temp_dir))
         return temp_dir
     except Exception as e:
         # L013: Error occurred while creating temporary directory
@@ -121,17 +126,29 @@ def create_directories(file_name: str | None = None) -> str:
 
         # If file_name is provided, create a subdirectory for this file
         if file_name:
-            # Create a safe directory name from the file name
-            safe_name = os.path.basename(file_name)
-            safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
+            # Main processing: create a per-source-file subdirectory under ./temp.
+            # Use the original filename (stem) as a reference and append '(1)' on conflicts.
+            original_stem = Path(os.path.basename(file_name)).stem
+            safe_name = "".join(c for c in original_stem if c.isalnum() or c in "._- ()")
             safe_name = safe_name.replace(" ", "_")
+            if not safe_name:
+                safe_name = "file"
 
-            # Create a unique directory name to avoid conflicts
-            file_temp_dir = os.path.join(temp_dir, f"{safe_name}_{os.getpid()}")
-            os.makedirs(file_temp_dir, exist_ok=True)
-            logger.debug(message_manager.get_log_message("L009", file_temp_dir))
+            candidate_dir = os.path.join(temp_dir, safe_name)
+            if not os.path.exists(candidate_dir):
+                os.makedirs(candidate_dir)
+                logger.debug(message_manager.get_log_message("L009", candidate_dir))
+                return candidate_dir
 
-            return file_temp_dir
+            index = 1
+            while True:
+                numbered_name = f"{safe_name}({index})"
+                numbered_dir = os.path.join(temp_dir, numbered_name)
+                if not os.path.exists(numbered_dir):
+                    os.makedirs(numbered_dir)
+                    logger.debug(message_manager.get_log_message("L009", numbered_dir))
+                    return numbered_dir
+                index += 1
 
         # Log completion of temporary directory setup
         logger.info(message_manager.get_log_message("L016"))

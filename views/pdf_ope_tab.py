@@ -28,6 +28,8 @@ from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
 from controllers.file2png_by_page import Pdf2PngByPages
 from models.class_dictionary import FilePathInfo
 from themes.coloring_theme_interface import ColoringThemeIF
+from controllers.widgets_tracker import WidgetsTracker
+from configurations.user_setting_manager import UserSettingManager
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
@@ -43,6 +45,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             **kwargs: Additional keyword arguments
         """
         super().__init__(master, **kwargs)
+        WidgetsTracker().add_widgets(self)
         self.base_widgets = BaseTabWidgets(self)
         
         # Configure frame to expand
@@ -77,9 +80,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Create canvas
         self.canvas = tk.Canvas(
             self.frame_main2,
-            bg="#1a1a1a",  # Dark background for canvas
-            relief=tk.SUNKEN,
-            borderwidth=1
+            bg="#ffffff",  # Default canvas background (will be themed)
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground="#e0e0e0",
+            highlightcolor="#e0e0e0",
         )
         self.canvas.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         # Make canvas expand with frame_main2
@@ -94,16 +100,45 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Initialize page data structures
         self.base_pages: list[str] = []  # List of file paths for base pages
+        self.base_page_paths: list[Path] = []
         self.base_transform_data: list[Tuple[float, float, float, float]] = []  # For storing transform data for each page
         self.comp_transform_data: list[Tuple[float, float, float, float]] = []  # For comparison transform data
         
         # UI components
         self.mouse_handler: Optional[MouseEventHandler] = None
         self.page_control_frame: Optional[PageControlFrame] = None
+        self.visualized_image: tk.StringVar = tk.StringVar(value="base")
 
         # Setup UI
         self._setup_ui()
         self._setup_drag_and_drop()
+
+    def _get_initial_dir_from_setting(self, setting_key: str) -> str:
+        """Return an initial directory path for dialogs based on saved settings.
+
+        Args:
+            setting_key (str): UserSettingManager key (e.g., "base_file_path").
+
+        Returns:
+            str: Existing directory path suitable for dialog initialdir.
+        """
+        try:
+            saved_value = UserSettingManager().get_setting(setting_key)
+        except Exception:
+            saved_value = None
+
+        if isinstance(saved_value, str) and saved_value:
+            try:
+                path = Path(saved_value)
+                if path.is_dir() and path.exists():
+                    return str(path)
+                parent = path.parent
+                if parent.exists() and parent.is_dir():
+                    return str(parent)
+            except Exception:
+                return os.getcwd()
+
+        return os.getcwd()
 
     def _setup_ui(self) -> None:
         """Setup the user interface."""
@@ -121,7 +156,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             text=message_manager.get_ui_message("U025"),
         )
         self._color_theme_change_btn.grid(
-            row=0, column=2, padx=5, pady=1, sticky="e", ipadx=1  # Reduce size with smaller padx/pady/ipadx
+            row=0, column=2, padx=5, pady=5, sticky="e"
         )
 
         # Base file path label and entry
@@ -144,7 +179,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._base_file_path_entry.grid(
             column=1, row=1, padx=5, pady=8, sticky="ew"
         )
+        # Main processing: clear persisted path display on startup (placeholder only)
         self._base_file_path_entry.path_var.set(self.base_path.get())
+        self.base_path.set(self._base_file_path_entry.path_var.get())
 
         # Base file path select button
         # Button for base file path selection
@@ -179,7 +216,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._output_folder_path_entry.grid(
             column=1, row=3, padx=5, pady=8, sticky="ew"
         )
+        # Main processing: clear persisted path display on startup (placeholder only)
         self._output_folder_path_entry.path_var.set(self.output_path.get())
+        self.output_path.set(self._output_folder_path_entry.path_var.get())
 
         # Output folder path button
         # Button for output folder selection
@@ -197,8 +236,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_base_file_select(self) -> None:
         """Handle base file selection event using common dialog."""
+        initial_dir = self._get_initial_dir_from_setting("base_file_path")
         file_path = ask_file_dialog(
-            initialdir=self._base_file_path_entry.path_var.get(),
+            initialdir=initial_dir,
             title_code="U022",
             filetypes=[("PDF files", "*.pdf")],
         )
@@ -207,12 +247,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.base_path.set(file_path)
             # Try to display PDF when file is selected
             self._load_and_display_pdf(file_path)
-            logger.debug(message_manager.get_log_message("L070", file_path))
+            logger.debug(message_manager.get_log_message("L071", file_path))
 
     def _on_output_folder_select(self) -> None:
         """Handle output folder selection event using common dialog."""
+        initial_dir = self._get_initial_dir_from_setting("output_folder_path")
         folder_path = ask_folder_dialog(
-            initialdir=self._output_folder_path_entry.path_var.get(),
+            initialdir=initial_dir,
             title_code="U024",
         )
         if folder_path:
@@ -269,6 +310,17 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Generate base_pages list for display and reference
             self.base_pages = [f"Page {i+1}" for i in range(self.page_count)]
+
+            # Main processing: build actual PNG path list from converter output.
+            self.base_page_paths = []
+            try:
+                temp_dir_path = Path(str(temp_dir))
+                for page_num in range(1, self.page_count + 1):
+                    candidate = temp_dir_path / f"base_{page_num:04d}.png"
+                    if candidate.exists():
+                        self.base_page_paths.append(candidate)
+            except Exception:
+                self.base_page_paths = []
             
             # Set up page control frame first to ensure page numbers are visible
             self._create_page_control_frame(self.page_count)
@@ -311,17 +363,17 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                              str(page_index), str(self.page_count-1)))
                 return
             
-            # Generate the PNG filename for this page (1-based index in filename)
-            # Use the correct temp directory from the PDF converter if available
-            if hasattr(self, 'current_pdf_converter') and self.current_pdf_converter and hasattr(self.current_pdf_converter, '_temp_dir'):
-                temp_dir = self.current_pdf_converter._temp_dir
+            # Main processing: prefer actual path list from converter output.
+            png_path: Path
+            if hasattr(self, 'base_page_paths') and self.base_page_paths and page_index < len(self.base_page_paths):
+                png_path = self.base_page_paths[page_index]
             else:
-                temp_dir = get_temp_dir()
-                
-            # Use only one temporary directory - the converter's directory
-            png_filename = f"base_{page_index + 1:04d}.png"
-            # Ensure path is a Path object for proper path handling
-            png_path = Path(str(temp_dir)) / png_filename
+                if hasattr(self, 'current_pdf_converter') and self.current_pdf_converter and hasattr(self.current_pdf_converter, '_temp_dir'):
+                    temp_dir = self.current_pdf_converter._temp_dir
+                else:
+                    temp_dir = get_temp_dir()
+                png_filename = f"base_{page_index + 1:04d}.png"
+                png_path = Path(str(temp_dir)) / png_filename
             
             # Use LogThrottle to prevent excessive logging of the same PNG path
             # Only log once per file path every 5 seconds
@@ -446,7 +498,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
                 # Update the page control UI (1-based index for display)
-                self.page_control_frame.update_page_label(self.current_page_index + 1, page_count)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
                 
             # Log page movement
             logger.info(message_manager.get_log_message("L290", self.current_page_index + 1, page_count))
@@ -507,7 +559,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
                 # Update the page control UI (1-based index for display)
-                self.page_control_frame.update_page_label(self.current_page_index + 1, page_count)
+                self.page_control_frame.update_page_label(self.current_page_index, page_count)
                 
             # Log page movement
             logger.info(message_manager.get_log_message("L294", self.current_page_index + 1, page_count))
@@ -542,7 +594,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._display_page(self.current_page_index)
             
             # Update page label (page_num is already 1-based)
-            self.page_control_frame.update_page_label(page_num, self.page_count)
+            self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
             
             # Log success
             logger.info(message_manager.get_log_message("L308", str(page_num), str(self.page_count)))
@@ -623,6 +675,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     def _on_transform_update(self) -> None:
         """Callback when transform data is updated."""
         # Redisplay the current page with updated transform data
+        # Main processing: guard against invalid state during initialization.
+        if not hasattr(self, 'page_count') or self.page_count <= 0:
+            return
         self._display_page(self.current_page_index)
     
     def _reset_transform(self) -> None:
@@ -672,6 +727,47 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self._display_page(self.current_page_index)
             if self.page_control_frame:
                 self.page_control_frame.update_page_label(self.current_page_index, self.page_count)
+
+    def _create_page_control_frame(self, page_count: int) -> None:
+        """Create or recreate the page control frame.
+
+        Args:
+            page_count (int): Number of pages in the loaded document.
+        """
+        try:
+            # Main processing: destroy previous frame to avoid duplicated controls.
+            if self.page_control_frame is not None:
+                try:
+                    self.page_control_frame.destroy()
+                except Exception:
+                    pass
+                self.page_control_frame = None
+
+            # Main processing: place controls next to the canvas without changing the canvas grid.
+            self.frame_main2.grid_columnconfigure(1, weight=0)
+
+            self.page_control_frame = PageControlFrame(
+                parent=self.frame_main2,
+                color_key="page_control",
+                base_pages=self.base_pages,
+                comp_pages=[],
+                base_transform_data=self.base_transform_data,
+                comp_transform_data=[],
+                visualized_image=self.visualized_image,
+                page_amount_limit=max(1, int(page_count)),
+                on_prev_page=self._on_prev_page,
+                on_next_page=self._on_next_page,
+                on_insert_blank=self._on_insert_blank_page,
+                on_export=self._on_complete_edit,
+                on_page_entry=self._on_page_entry,
+            )
+            self.page_control_frame.grid(row=0, column=1, sticky="ns", padx=(0, 5), pady=5)
+
+            self.page_control_frame.update_page_label(self.current_page_index, page_count)
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L285", str(e)))
+            import traceback
+            logger.error(traceback.format_exc())
     
     def _on_drop(self, file_path: str) -> None:
         """Handle file drop event.
@@ -800,13 +896,19 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         """
         try:
             # Apply theme to frame backgrounds
+            window_settings = theme_data.get("Window", {})
+            window_bg = window_settings.get("bg", "#ffffff")
             frame_settings = theme_data.get("Frame", {})
-            for frame in [self.frame_main0, self.frame_main1, self.frame_main2]:
-                frame.configure(bg=frame_settings.get("bg", "#1d1d29"))
+            frame_bg = frame_settings.get("bg", window_bg)
+            for attr_name in ["frame_main0", "frame_main1", "frame_main2"]:
+                if hasattr(self, attr_name):
+                    frame = getattr(self, attr_name)
+                    if frame is not None:
+                        frame.configure(bg=frame_bg)
                 
             # Apply theme to canvas
-            canvas_settings = theme_data.get("Canvas", {})
-            if canvas_settings and hasattr(self, 'canvas'):
+            canvas_settings = theme_data.get("canvas", {})
+            if canvas_settings and hasattr(self, "canvas"):
                 self._config_widget(canvas_settings)
                 
             logger.debug(message_manager.get_log_message("L211", "PDF operation tab"))
@@ -820,9 +922,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             theme_settings (Dict[str, Any]): Widget-specific theme settings
         """
         try:
-            if hasattr(self, 'canvas'):
-                self.canvas.configure(bg=theme_settings.get("bg", "#1a1a1a"))
-                # Additional canvas-specific configuration can be added here
+            if hasattr(self, "canvas"):
+                self.canvas.configure(
+                    background=theme_settings.get("background", "#ffffff"),
+                    highlightbackground=theme_settings.get("highlightbackground", "#e0e0e0"),
+                    highlightcolor=theme_settings.get("highlightcolor", "#e0e0e0"),
+                )
                 
             logger.debug(message_manager.get_log_message("L200", self.__class__.__name__, theme_settings))
         except Exception as e:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import tkinter as tk
-from logging import getLogger
-from typing import Any, Optional, cast
 import os
+from logging import getLogger
 from pathlib import Path
+import tkinter as tk
+from typing import Any, Optional, cast
+
+from PIL import Image, ImageColor, ImageTk
 
 from configurations import tool_settings
 from configurations.tool_settings import DEFAULT_USER_SET
@@ -63,6 +65,9 @@ class ColorThemeChangeButton(tk.Frame):
             # Log error for missing theme name, fallback to dark
             logger.error(message_manager.get_log_message("L132"))
 
+        # Main processing: show the icon for the *current* theme (dark/light/pastel)
+        self.__color_theme_change_btn_status_on = True
+
         # Set the initial button image based on the current theme color
         self.color_theme_change_btn_img: (
             SwitchPaths
@@ -77,8 +82,12 @@ class ColorThemeChangeButton(tk.Frame):
         # Configure fully transparent background - use system default background
         parent_bg = self.__fr.cget("background")
         if parent_bg == "SystemButtonFace" or parent_bg == "":
-            # Use a safer default if system color is returned
-            parent_bg = "#f0f0f0"  # Light gray that works well with both themes
+            # Main processing: prefer theme Window.bg over system default.
+            try:
+                theme = ColorThemeManager.get_instance().get_current_theme()
+                parent_bg = str(theme.get("Window", {}).get("bg", "#f0f0f0"))
+            except Exception:
+                parent_bg = "#f0f0f0"  # Fallback
         
         self.configure(bg=parent_bg)
         logger.debug(message_manager.get_log_message("L255", parent_bg))
@@ -96,35 +105,9 @@ class ColorThemeChangeButton(tk.Frame):
             highlightthickness=0,  # Remove highlight border
             bd=0,  # Remove border
             relief=tk.FLAT,  # Make button flat (no 3D effect)
-            padx=2,  # Reduce horizontal padding
-            pady=2   # Reduce vertical padding
+            padx=0,  # Avoid image clipping
+            pady=0   # Avoid image clipping
         )
-        
-        # Set button size based on image dimensions directly in the constructor
-        if self._toggle_image:
-            # Get image dimensions
-            img_width = self._toggle_image.width()
-            img_height = self._toggle_image.height()
-            
-            # Get parent frame height to properly size the button
-            frame_height = self.winfo_reqheight()
-            
-            # Calculate appropriate button size based on frame height
-            # Leave some padding for the frame
-            target_height = max(20, frame_height - 8)  # Ensure minimum height
-            scale_factor = target_height / img_height
-            
-            # Configure button size to match frame height while maintaining aspect ratio
-            # Add moderate padding to width to prevent rounded corners from being clipped
-            # but keep button reasonably small
-            width_padding = 15  # Reduced padding for smaller button size
-            self.color_theme_change_btn.configure(
-                width=int(img_width * scale_factor) + width_padding,
-                height=target_height
-            )
-            
-            logger.debug(message_manager.get_log_message("L257", 
-                f"Adjusted size: {int(img_width * scale_factor)}x{target_height}, Frame height: {frame_height}"))
         
         # Pack button with center alignment for vertical centering
         # Use more constrained packing to avoid excessive size
@@ -138,32 +121,53 @@ class ColorThemeChangeButton(tk.Frame):
     def _load_button_image(self) -> None:
         """Load the appropriate button image based on current state."""
         try:
-            image_path = (
-                self.color_theme_change_btn_img.on_img_path
-                if self.__color_theme_change_btn_status_on
-                else self.color_theme_change_btn_img.off_img_path
-            )
-            # Adjust subsample factor based on state
-            subsample_factor = 76 if self.__color_theme_change_btn_status_on else 36
+            image_path = self.color_theme_change_btn_img.on_img_path
+            subsample_factor = 76
             
             logger.debug(message_manager.get_log_message("L253", str(image_path)))
 
             if image_path:
                 try:
-                    # Load the image with appropriate subsampling
-                    original_img = tk.PhotoImage(file=image_path).subsample(
-                        subsample_factor, subsample_factor
-                    )
-                    
-                    # Create a larger version (2x) of the image for the button
-                    # We'll use zoom to make the image larger
-                    # First subsample to make it small, then zoom to make it clearer (prevents pixelation)
-                    img = tk.PhotoImage(file=image_path).subsample(
-                        subsample_factor // 2, subsample_factor // 2
-                    )
+                    # Main processing: resize image to match UI height (pixel-accurate)
+                    try:
+                        parent_height = int(self.__fr.winfo_height())
+                    except Exception:
+                        parent_height = 0
+
+                    target_height = 40
+                    if parent_height > 0:
+                        target_height = max(32, min(48, parent_height - 6))
+
+                    pil_img = Image.open(image_path)
+                    if pil_img.mode != "RGBA":
+                        pil_img = pil_img.convert("RGBA")
+
+                    # Main processing: avoid black artifacts by compositing alpha onto parent background.
+                    try:
+                        raw_bg = str(self.__fr.cget("background"))
+                        if raw_bg in {"SystemButtonFace", ""}:
+                            try:
+                                theme = ColorThemeManager.get_instance().get_current_theme()
+                                raw_bg = str(theme.get("Window", {}).get("bg", "#f0f0f0"))
+                            except Exception:
+                                raw_bg = "#f0f0f0"
+                        bg_color = ImageColor.getrgb(raw_bg)
+                    except Exception:
+                        bg_color = (240, 240, 240)
+                    bg = Image.new("RGBA", pil_img.size, (*bg_color[:3], 255))
+                    try:
+                        bg.alpha_composite(pil_img)
+                        pil_img = bg
+                    except Exception:
+                        pil_img = bg
+                    if pil_img.height > 0:
+                        scale = target_height / float(pil_img.height)
+                        target_width = max(1, int(pil_img.width * scale))
+                        pil_img = pil_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                    img = ImageTk.PhotoImage(pil_img)
                     
                     logger.debug(message_manager.get_log_message("L254", 
-                        f"Original: {original_img.width()}x{original_img.height()}, Resized: {img.width()}x{img.height()}"))
+                        f"Resized: {img.width()}x{img.height()}"))
                     
                     if self.__color_theme_change_btn_status_on:
                         self._toggle_image_on = img
@@ -176,21 +180,8 @@ class ColorThemeChangeButton(tk.Frame):
                     if hasattr(self, 'color_theme_change_btn'):
                         self.color_theme_change_btn.configure(image=self._toggle_image)
                         
-                        # Update button size directly (instead of calling _update_button_size)
-                        if self._toggle_image:
-                            # Get image dimensions
-                            img_width = self._toggle_image.width()
-                            img_height = self._toggle_image.height()
-                            
-                            # Log the image and button dimensions
-                            logger.debug(message_manager.get_log_message("L257", 
-                                f"Image: {img_width}x{img_height}"))
-                            
-                            # Configure button dimensions
-                            self.color_theme_change_btn.configure(
-                                width=img_width,
-                                height=img_height
-                            )
+                        # Main processing: keep the pre-calculated button size
+                        # (do not override width/height based on image pixels)
                         
                 except Exception as e:
                     # Failed to load image: {error}
@@ -204,6 +195,14 @@ class ColorThemeChangeButton(tk.Frame):
             # Error in _load_button_image: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
             self._create_empty_image()
+
+        # Refresh once after geometry is ready so initial size is correct
+        try:
+            if not hasattr(self, "_image_refreshed"):
+                self._image_refreshed = True
+                self.after_idle(self._load_button_image)
+        except Exception:
+            return
 
     def _load_fallback_image(self, subsample_factor: int) -> None:
         """
@@ -266,6 +265,7 @@ class ColorThemeChangeButton(tk.Frame):
         """
         try:
             self.__current_theme_color_name = theme_color
+            self.__color_theme_change_btn_status_on = True
             self.color_theme_change_btn_img = (
                 ImageSwPaths().set_color_theme_change_btn_image(
                     program_mode=tool_settings.program_mode == "PRODUCTION_MODE",
@@ -275,6 +275,12 @@ class ColorThemeChangeButton(tk.Frame):
             
             # Get parent background color for consistent styling
             parent_bg = self.__fr.cget("background")
+            if parent_bg == "SystemButtonFace" or parent_bg == "":
+                try:
+                    theme = ColorThemeManager.get_instance().get_current_theme()
+                    parent_bg = str(theme.get("Window", {}).get("bg", parent_bg))
+                except Exception:
+                    pass
             logger.debug(message_manager.get_log_message("L256", parent_bg))
             
             # Update button background to match parent frame

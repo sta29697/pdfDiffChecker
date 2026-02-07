@@ -16,7 +16,7 @@
     "Notebook": {
         "bg": "#f0f0f0",
         "fg": "#000000",
-        "tab_bg": "#e0e0e0",
+        "tab_bg": "#ffffff",
         "tab_fg": "#000000"
     },
     "primary_combobox": {
@@ -61,6 +61,13 @@
         "highlightcolor": "#0000ff",
         "highlightbackground": "#ffffff",
         "insertbackground": "#000000"
+    },
+    "page_number_entry": {
+        "fg": "#3e77d2",
+        "bg": "#f0f4ff",
+        "highlightcolor": "#3e77d2",
+        "highlightbackground": "#f0f4ff",
+        "insertbackground": "#3e77d2"
     },
     "width_size_set_label": {
         "fg": "#000000",
@@ -158,21 +165,27 @@
     },
     "total_pages_label": {
         "fg": "#3e77d2",
-        "bg": "#ffffff"
+        "bg": "#f0f4ff"
     },
     "change_previous_page_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
         "disabledforeground": "#ffffff",
         "disabledbackground": "#22a9e9",
         "activeforeground": "#574ed6",
         "activebackground": "#0fd2d6"
     },
     "change_new_page_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
         "disabledforeground": "#ffffff",
         "disabledbackground": "#22a9e9",
         "activeforeground": "#574ed6",
         "activebackground": "#0fd2d6"
     },
     "insert_blank_page_button": {
+        "bg": "#ffffff",
+        "fg": "#000000",
         "disabledforeground": "#ffffff",
         "disabledbackground": "#22a9e9",
         "activeforeground": "#574ed6",

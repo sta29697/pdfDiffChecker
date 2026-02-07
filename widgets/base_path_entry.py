@@ -60,6 +60,10 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
         self.path_var = tk.StringVar()
         self._suppress_callback: bool = True
         self.path_var.trace_add("write", self._on_path_var_write)
+
+        # Initialize entry display.
+        # Main processing: do not restore persisted paths on startup (UX spec).
+
         # Enable callback after widget initialization
         self.after_idle(lambda: setattr(self, "_suppress_callback", False))
 
