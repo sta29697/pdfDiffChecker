@@ -9,7 +9,9 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
 from pathlib import Path
-from typing import Final
+from typing import Final, Optional
+
+from PIL import Image, ImageTk
 
 # Core utilities and configuration
 from configurations import tool_settings
@@ -17,6 +19,13 @@ from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
 from configurations.user_setting_manager import get_user_setting_manager as usm
 from controllers.color_theme_manager import ColorThemeManager
+from utils.utils import get_resource_path
+from controllers.widgets_tracker import (
+    WidgetsTracker,
+    adjust_hex_color,
+    ensure_contrast_color,
+    refresh_combobox_popdown_listboxes,
+)
 
 # View components
 from views.description import DescriptionApp
@@ -380,7 +389,8 @@ def create_main_window() -> tk.Tk:
 def change_logo_icon() -> str:
     """Get path to the application logo icon using resource resolver."""
     # Resolve icon path from project resources
-    return "images/LOGO_032.ico"
+    # Main processing: prefer the runtime-generated transparent ICO.
+    return get_resource_path("temp/LOGOm.ico")
 
 
 def cleanup() -> None:
@@ -403,24 +413,17 @@ def cleanup() -> None:
         temp_dir = Path(tool_settings.BASE_DIR) / "temp"
         if temp_dir.exists():
             try:
-                # First delete files, then delete directories
-                # Delete files
-                for file in temp_dir.glob("**/*"):
-                    if file.is_file():
-                        try:
-                            file.unlink()
-                        except Exception as e:
-                            # Log but continue if a file can't be deleted
-                            logger.warning(message_manager.get_log_message("L227", str(e)))
-                
-                # Delete directories (using shutil to remove non-empty directories)
-                for dir_path in temp_dir.glob("*/"):
-                    if dir_path.is_dir() and dir_path != temp_dir:
-                        try:
-                            shutil.rmtree(dir_path)
-                            logger.debug(f"Removed directory: {dir_path}")
-                        except Exception as e:
-                            logger.warning(message_manager.get_log_message("L227", str(e)))
+                for entry in temp_dir.iterdir():
+                    try:
+                        # Main processing: keep the cached transparent icon ICO across runs.
+                        if entry.is_file() and entry.name.strip().lower() == "logom.ico":
+                            continue
+                        if entry.is_file() or entry.is_symlink():
+                            entry.unlink()
+                        elif entry.is_dir():
+                            shutil.rmtree(entry)
+                    except Exception as e:
+                        logger.warning(message_manager.get_log_message("L227", str(e)))
                 # Use the global message_manager
                 logger.info(message_manager.get_log_message("L225", ""))
             except Exception as e:
@@ -493,7 +496,11 @@ def main() -> None:
             
         # Directory creation log with directory path
         temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
-        logger.info(message_manager.get_log_message("L014", temp_dir))
+        exists_temp_dir = os.path.exists(temp_dir)
+        if exists_temp_dir:
+            logger.info(message_manager.get_log_message("L192", temp_dir))
+        else:
+            logger.info(message_manager.get_log_message("L014", temp_dir))
 
         # Create main window (WindowEventManager is initialized inside create_main_window)
         main_window = create_main_window()
@@ -503,31 +510,409 @@ def main() -> None:
         main_window.title(f"PDF Diff Checker {version_info}")
         
         # Set window icon
-        icon_path = change_logo_icon()
-        if os.path.exists(icon_path):
+        icon_png_path = get_resource_path("images/LOGOm.png")
+        icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
+        runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+        icon_path = ""
+        base_img: Optional[Image.Image] = None
+
+        if (not os.path.exists(icon_multi_ico_path)) and os.path.exists(icon_png_path):
+            try:
+                with Image.open(icon_png_path) as img:
+                    base_img = img.convert("RGBA")
+
+                # Main processing: generate the runtime ICO only when missing or stale.
+                try:
+                    os.makedirs(os.path.dirname(runtime_ico_path), exist_ok=True)
+                    png_mtime = os.path.getmtime(icon_png_path)
+                    ico_is_fresh = (
+                        os.path.exists(runtime_ico_path)
+                        and os.path.getsize(runtime_ico_path) > 0
+                        and os.path.getmtime(runtime_ico_path) >= png_mtime
+                    )
+
+                    if not ico_is_fresh:
+                        ico_sizes = (16, 32, 48, 64, 128, 256)
+                        try:
+                            base_img.save(
+                                runtime_ico_path,
+                                format="ICO",
+                                sizes=[(s, s) for s in ico_sizes],
+                                bitmap_format="png",
+                            )
+                        except TypeError:
+                            base_img.save(
+                                runtime_ico_path,
+                                format="ICO",
+                                sizes=[(s, s) for s in ico_sizes],
+                            )
+                except Exception as e:
+                    logger.warning(
+                        message_manager.get_log_message(
+                            "L227",
+                            f"Failed to generate transparent ICO from PNG: {str(e)}",
+                        )
+                    )
+            except Exception as e:
+                logger.warning(
+                    message_manager.get_log_message(
+                        "L227", f"Failed to load icon PNG (iconphoto): {str(e)}"
+                    )
+                )
+
+        if os.path.exists(runtime_ico_path):
+            icon_path = runtime_ico_path
+
+        if os.path.exists(icon_multi_ico_path):
+            icon_path = icon_multi_ico_path
+
+        if icon_path and os.path.exists(icon_path):
             try:
                 main_window.iconbitmap(icon_path)
             except Exception as e:
-                logger.warning(message_manager.get_log_message("L227", f"Failed to set window icon: {str(e)}"))
+                logger.warning(
+                    message_manager.get_log_message(
+                        "L227", f"Failed to set window icon: {str(e)}"
+                    )
+                )
+
+        # Main processing: also apply PNG icons via iconphoto for better alpha handling.
+        icon_png_candidates = (
+            (256, get_resource_path("images/icon_256x256.png")),
+            (128, get_resource_path("images/icon_128x128.png")),
+            (64, get_resource_path("images/icon_64x64.png")),
+            (48, get_resource_path("images/icon_48x48.png")),
+            (32, get_resource_path("images/icon_32x32.png")),
+            (24, get_resource_path("images/icon_24x24.png")),
+            (16, get_resource_path("images/icon_16x16.png")),
+        )
+        try:
+            icon_imgs = [
+                tk.PhotoImage(file=p)
+                for _, p in icon_png_candidates
+                if os.path.exists(p)
+            ]
+            if icon_imgs:
+                main_window.iconphoto(True, *icon_imgs)
+                setattr(main_window, "_icon_photos", icon_imgs)
+            elif base_img is not None:
+                resample = (
+                    Image.Resampling.LANCZOS
+                    if hasattr(Image, "Resampling")
+                    else Image.LANCZOS
+                )
+                icon_sizes = (16, 24, 32, 48, 64, 128)
+                icon_imgs = [
+                    ImageTk.PhotoImage(base_img.resize((s, s), resample))
+                    for s in icon_sizes
+                ]
+                main_window.iconphoto(True, *icon_imgs)
+                setattr(main_window, "_icon_photos", icon_imgs)
+        except Exception as e:
+            logger.warning(
+                message_manager.get_log_message(
+                    "L227", f"Failed to set window icon (iconphoto): {str(e)}"
+                )
+            )
         
         # Set window geometry
         main_window.geometry("800x600")
         
-        # Initialize color theme manager for theme control and force dark theme
+        # Initialize color theme manager for theme control
+        WidgetsTracker()
         theme_manager = ColorThemeManager.get_instance()
         theme_manager.init_color_theme()
-        # Force apply dark theme
-        theme_manager.load_theme("dark", force_reload=True)
-        
-        # Setup ttk style for dark theme
+
+        class NotebookStyleUpdater:
+            """Update ttk.Notebook styles when the theme changes.
+
+            This class exists to provide a stable, long-lived subscriber for
+            EventBus callbacks. EventBus uses weak references; therefore the
+            subscriber must remain strongly referenced for the lifetime of the
+            application.
+            """
+
+            def __init__(self, style: ttk.Style, root_window: tk.Tk) -> None:
+                """Initialize the updater.
+
+                Args:
+                    style (ttk.Style): The ttk.Style instance to configure.
+                    root_window (tk.Tk): The root window to configure.
+                """
+                self._style = style
+                self._root_window = root_window
+
+            def handle_theme_changed(self, theme: dict, theme_name: str) -> None:
+                """Apply Notebook tab styles from theme data.
+
+                Args:
+                    theme (dict): Theme data published by ColorThemeManager.
+                    theme_name (str): Theme name (e.g., "dark", "light").
+                """
+                try:
+                    logger.debug(f"[THEME] ttk style update: theme_name={theme_name}")
+                except Exception:
+                    pass
+
+                # Main processing: update ttk.Notebook / ttk.Notebook.Tab colors
+                notebook_theme = theme.get("Notebook", {}) if isinstance(theme, dict) else {}
+                notebook_bg = notebook_theme.get("bg", "#2d2d2d")
+                tab_bg = notebook_theme.get("tab_bg", notebook_bg)
+                tab_fg = notebook_theme.get("tab_fg", "#ffffff")
+
+                frame_theme = theme.get("Frame", {}) if isinstance(theme, dict) else {}
+                window_theme = theme.get("Window", {}) if isinstance(theme, dict) else {}
+                window_bg = window_theme.get("bg", notebook_bg)
+
+                frame_bg = frame_theme.get("bg", window_bg)
+
+                # Main processing: derive tab colors and border contrast for clear selection visibility.
+                border_color_base = frame_theme.get("highlightbackground", notebook_bg)
+                theme_key = str(theme_name or "").strip().lower()
+                border_color = border_color_base
+
+                if theme_key in ("light", "pastel"):
+                    try:
+                        base_norm = str(border_color_base).strip().lower()
+                        frame_bg_norm = str(frame_bg).strip().lower()
+                        tab_bg_norm = str(tab_bg).strip().lower()
+                        notebook_bg_norm = str(notebook_bg).strip().lower()
+                        if base_norm in {frame_bg_norm, tab_bg_norm, notebook_bg_norm}:
+                            border_color = adjust_hex_color(str(notebook_bg), -0.12)
+                    except Exception:
+                        pass
+
+                # Main processing: compute selected/unselected backgrounds per theme.
+                selected_tab_bg = tab_bg
+                active_tab_bg = tab_bg
+                unselected_tab_bg = notebook_bg
+
+                if theme_key == "dark":
+                    selected_tab_bg = window_bg
+                    unselected_tab_bg = adjust_hex_color(str(tab_bg), 0.06)
+                    active_tab_bg = adjust_hex_color(str(tab_bg), 0.10)
+                elif theme_key in ("light", "pastel"):
+                    unselected_tab_bg = adjust_hex_color(str(notebook_bg), -0.05)
+
+                # Main processing: unify tab edge rendering to avoid thin/bright borders.
+                tab_borderwidth = 1
+                relief_map = [("selected", "solid"), ("active", "solid"), ("!selected", "flat")]
+
+                try:
+                    self._style.configure("TNotebook", background=notebook_bg)
+                except Exception:
+                    pass
+                try:
+                    self._style.configure(
+                        "TNotebook",
+                        bordercolor=border_color,
+                        lightcolor=border_color,
+                        darkcolor=border_color,
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._style.configure(
+                        "TNotebook.Tab",
+                        background=unselected_tab_bg,
+                        foreground=tab_fg,
+                        padding=[10, 2],
+                        borderwidth=tab_borderwidth,
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._style.configure(
+                        "TNotebook.Tab",
+                        bordercolor=border_color,
+                        lightcolor=border_color,
+                        darkcolor=border_color,
+                        focuscolor=border_color,
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._style.map(
+                        "TNotebook.Tab",
+                        background=[("selected", selected_tab_bg), ("active", active_tab_bg), ("!selected", unselected_tab_bg)],
+                        foreground=[("selected", tab_fg), ("active", tab_fg), ("!selected", tab_fg)],
+                        borderwidth=[("selected", tab_borderwidth), ("active", tab_borderwidth), ("!selected", tab_borderwidth)],
+                        bordercolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                        lightcolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                        darkcolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                        focuscolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    self._style.map(
+                        "TNotebook.Tab",
+                        relief=relief_map,
+                    )
+                except Exception:
+                    pass
+
+                label_theme = theme.get("Label", {}) if isinstance(theme, dict) else {}
+                button_theme = theme.get("Button", {}) if isinstance(theme, dict) else {}
+                entry_theme = theme.get("Entry", {}) if isinstance(theme, dict) else {}
+                combobox_theme = theme.get("primary_combobox", {}) if isinstance(theme, dict) else {}
+                progress_theme = theme.get("primary_progressbar", {}) if isinstance(theme, dict) else {}
+
+                # Main processing: keep root background consistent
+                try:
+                    self._root_window.configure(bg=window_bg)
+                except Exception:
+                    pass
+
+                self._style.configure(
+                    "TFrame",
+                    background=frame_bg,
+                )
+                self._style.configure(
+                    "TLabel",
+                    background=label_theme.get("bg", frame_bg),
+                    foreground=label_theme.get("fg", tab_fg),
+                )
+                self._style.configure(
+                    "TButton",
+                    background=button_theme.get("bg", frame_bg),
+                    foreground=button_theme.get("fg", tab_fg),
+                )
+                self._style.configure(
+                    "TEntry",
+                    fieldbackground=entry_theme.get("bg", frame_theme.get("bg", notebook_bg)),
+                    foreground=entry_theme.get("fg", tab_fg),
+                )
+
+                # Main processing: style combobox consistently across themes
+                try:
+                    self._style.configure(
+                        "TCombobox",
+                        fieldbackground=combobox_theme.get("bg", entry_theme.get("bg", "#ffffff")),
+                        background=combobox_theme.get("bg", entry_theme.get("bg", "#ffffff")),
+                        foreground=combobox_theme.get("fg", entry_theme.get("fg", "#000000")),
+                        selectbackground=combobox_theme.get("selectbackground", combobox_theme.get("bg", "#ffffff")),
+                        selectforeground=combobox_theme.get("selectforeground", combobox_theme.get("fg", "#000000")),
+                    )
+                except Exception:
+                    pass
+
+                # Main processing: map combobox/button state colors to avoid OS-theme black overrides
+                combo_bg = combobox_theme.get("bg", entry_theme.get("bg", "#ffffff"))
+                combo_fg = combobox_theme.get("fg", entry_theme.get("fg", "#000000"))
+                combo_border_base = combobox_theme.get(
+                    "bordercolor",
+                    frame_theme.get("highlightbackground", combo_bg),
+                )
+                combo_border = ensure_contrast_color(combo_border_base, combo_bg, 0.25)
+                combo_light = adjust_hex_color(combo_border, 0.25)
+                combo_dark = adjust_hex_color(combo_border, -0.25)
+                combo_focus = combobox_theme.get("highlightcolor", combo_border)
+                combo_arrow_bg = ensure_contrast_color(combobox_theme.get("arrowbackground", combo_bg), combo_bg, 0.06)
+                try:
+                    self._style.configure(
+                        "TCombobox",
+                        arrowcolor=combo_fg,
+                        bordercolor=combo_border,
+                        lightcolor=combo_light,
+                        darkcolor=combo_dark,
+                        focuscolor=combo_focus,
+                        background=combo_arrow_bg,
+                    )
+                except Exception:
+                    pass
+                try:
+                    self._style.map(
+                        "TCombobox",
+                        fieldbackground=[("readonly", combo_bg), ("disabled", combo_bg)],
+                        background=[("readonly", combo_arrow_bg), ("disabled", combo_arrow_bg), ("active", combo_arrow_bg)],
+                        foreground=[("readonly", combo_fg), ("disabled", combo_fg), ("active", combo_fg)],
+                        selectbackground=[("readonly", combobox_theme.get("selectbackground", combo_bg))],
+                        selectforeground=[("readonly", combobox_theme.get("selectforeground", combo_fg))],
+                        arrowcolor=[("readonly", combo_fg), ("active", combo_fg), ("disabled", combo_fg)],
+                        bordercolor=[("readonly", combo_border), ("active", combo_border), ("disabled", combo_border)],
+                        focuscolor=[("readonly", combo_focus), ("active", combo_focus)],
+                    )
+                except Exception:
+                    pass
+
+                # Main processing: style combobox dropdown list (Listbox) via option database.
+                try:
+                    listbox_bg = combobox_theme.get("list_bg", combo_bg)
+                    listbox_fg = combobox_theme.get("list_fg", combo_fg)
+                    listbox_sel_bg = combobox_theme.get(
+                        "list_selectbackground",
+                        combobox_theme.get("selectbackground", combo_bg),
+                    )
+                    listbox_sel_fg = combobox_theme.get(
+                        "list_selectforeground",
+                        combobox_theme.get("selectforeground", combo_fg),
+                    )
+
+                    listbox_sel_bg = ensure_contrast_color(str(listbox_sel_bg), str(listbox_bg), 0.08)
+
+                    self._root_window.option_add("*TCombobox*Listbox.background", listbox_bg)
+                    self._root_window.option_add("*TCombobox*Listbox.foreground", listbox_fg)
+                    self._root_window.option_add("*TCombobox*Listbox.selectBackground", listbox_sel_bg)
+                    self._root_window.option_add("*TCombobox*Listbox.selectForeground", listbox_sel_fg)
+
+                    refresh_combobox_popdown_listboxes(
+                        self._root_window,
+                        str(listbox_bg),
+                        str(listbox_fg),
+                        str(listbox_sel_bg),
+                        str(listbox_sel_fg),
+                    )
+                except Exception:
+                    pass
+
+                btn_bg = button_theme.get("bg", frame_bg)
+                btn_border_base = frame_theme.get("highlightbackground", btn_bg)
+                btn_border = ensure_contrast_color(btn_border_base, btn_bg, 0.25)
+                btn_light = adjust_hex_color(btn_border, 0.25)
+                btn_dark = adjust_hex_color(btn_border, -0.25)
+                try:
+                    self._style.configure(
+                        "TButton",
+                        bordercolor=btn_border,
+                        lightcolor=btn_light,
+                        darkcolor=btn_dark,
+                        focuscolor=btn_border,
+                    )
+                except Exception:
+                    pass
+                btn_fg = button_theme.get("fg", tab_fg)
+                self._style.map(
+                    "TButton",
+                    background=[("active", btn_bg), ("pressed", btn_bg), ("disabled", btn_bg)],
+                    foreground=[("active", btn_fg), ("pressed", btn_fg), ("disabled", btn_fg)],
+                )
+
+                # Main processing: style progressbar using theme colors
+                self._style.configure(
+                    "Primary.Horizontal.TProgressbar",
+                    background=progress_theme.get("bg", "#000000"),
+                    troughcolor=progress_theme.get("troughcolor", window_theme.get("bg", "#ffffff")),
+                    bordercolor=progress_theme.get("bordercolor", progress_theme.get("bg", "#000000")),
+                    lightcolor=progress_theme.get("bg", "#000000"),
+                    darkcolor=progress_theme.get("bg", "#000000"),
+                )
+
+        # Setup ttk style for themeable widgets
         style = ttk.Style()
-        style.configure('TFrame', background='#2d2d2d')
-        style.configure('TNotebook', background='#2d2d2d')
-        style.configure('TNotebook.Tab', background='#2d2d2d', foreground='white', padding=[10, 2])
-        style.map('TNotebook.Tab', background=[('selected', '#3d3d3d')], foreground=[('selected', 'white')])
-        style.configure('TLabel', background='#2d2d2d', foreground='white')
-        style.configure('TButton', background='#3d3d3d', foreground='white')
-        style.configure('TEntry', fieldbackground='#3d3d3d', foreground='white')
+        try:
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+        except Exception:
+            pass
+        notebook_style_updater = NotebookStyleUpdater(style, main_window)
+        EventBus().subscribe(EventNames.THEME_CHANGED, notebook_style_updater.handle_theme_changed)
+        # Initialize Notebook styles from the currently loaded theme
+        notebook_style_updater.handle_theme_changed(
+            theme=theme_manager.get_current_theme(),
+            theme_name=theme_manager.get_current_theme_name(),
+        )
         
         # Apply all widget colors
         theme_manager.apply_color_theme_all_widgets()
@@ -545,6 +930,48 @@ def main() -> None:
         # image_ope_tab = tk.Frame(notebook)  # Image Operation tab is still disabled
         description_tab = tk.Frame(notebook)  # Description tab
         licenses_tab = tk.Frame(notebook)  # Licenses tab
+
+        class TabContainerBgUpdater:
+            """Update tab container backgrounds when the theme changes.
+
+            EventBus uses weak references, so this object must be strongly
+            referenced for the lifetime of the application.
+            """
+
+            def __init__(self, containers: list[tk.Frame]) -> None:
+                """Initialize updater.
+
+                Args:
+                    containers (list[tk.Frame]): Notebook tab container frames.
+                """
+                self._containers = containers
+
+            def handle_theme_changed(self, theme: dict, theme_name: str) -> None:
+                """Apply background to notebook tab containers.
+
+                Args:
+                    theme (dict): Theme data published by ColorThemeManager.
+                    theme_name (str): Theme name.
+                """
+                # Main processing: keep tab container background consistent
+                window_theme = theme.get("Window", {}) if isinstance(theme, dict) else {}
+                window_bg = window_theme.get("bg", "#ffffff")
+                frame_theme = theme.get("Frame", {}) if isinstance(theme, dict) else {}
+                frame_bg = frame_theme.get("bg", window_bg)
+                for container in self._containers:
+                    try:
+                        container.configure(bg=frame_bg)
+                    except Exception:
+                        continue
+
+        tab_container_bg_updater = TabContainerBgUpdater(
+            containers=[pdf_ope_tab, description_tab, licenses_tab]
+        )
+        EventBus().subscribe(EventNames.THEME_CHANGED, tab_container_bg_updater.handle_theme_changed)
+        tab_container_bg_updater.handle_theme_changed(
+            theme=theme_manager.get_current_theme(),
+            theme_name=theme_manager.get_current_theme_name(),
+        )
         
         # Add tabs to notebook (text only, no icons)
         # notebook.add(main_tab, text=message_manager.get_ui_message("U001"))  # Main tab
@@ -571,6 +998,9 @@ def main() -> None:
         # Initialize Licenses tab
         license_app = LicensesApp(licenses_tab)
         license_app.pack(expand=True, fill="both")
+
+        # Main processing: re-apply theme after tab contents are created.
+        theme_manager.apply_color_theme_all_widgets()
         
         # Language is fixed to Japanese, so language switching buttons are not needed
         # Set default language to Japanese

@@ -492,18 +492,14 @@ class Pdf2PngByPages(BaseImageConverter):
                     # Convert to PIL image - API changed in newer versions
                     logger.debug(message_manager.get_log_message("L331"))
                     try:
-                        # Try with color parameter (older versions)
-                        try:
-                            pil_image = bitmap.to_pil(colour=(255, 255, 255, 0))
-                            logger.debug(message_manager.get_log_message("L329"))
-                        except TypeError:
-                            # Newer versions don't accept colour parameter
-                            pil_image = bitmap.to_pil()
-                            logger.debug(message_manager.get_log_message("L330"))
-                            
-                            # If we need transparency, convert to RGBA
-                            if pil_image.mode != 'RGBA':
-                                pil_image = pil_image.convert('RGBA')
+                        # Main processing: render normally and compose later.
+                        # The 'colour' parameter can yield fully transparent results on some environments.
+                        pil_image = bitmap.to_pil()
+                        logger.debug(message_manager.get_log_message("L330"))
+
+                        # If we need transparency, convert to RGBA
+                        if pil_image.mode != 'RGBA':
+                            pil_image = pil_image.convert('RGBA')
                     except Exception as e:
                         # Error converting PDF bitmap to PIL
                         logger.error(message_manager.get_log_message("L341", str(e)))
@@ -515,6 +511,16 @@ class Pdf2PngByPages(BaseImageConverter):
                         pil_image = ImageOps.grayscale(pil_image)
                         # Convert back to RGBA after grayscale conversion to preserve transparency
                         pil_image = pil_image.convert('RGBA')
+
+                    # Main processing: ensure the rendered page is visible on white background
+                    if pil_image.mode != "RGBA":
+                        pil_image = pil_image.convert("RGBA")
+                    white_bg = Image.new("RGBA", pil_image.size, (255, 255, 255, 255))
+                    try:
+                        white_bg.alpha_composite(pil_image)
+                        pil_image = white_bg
+                    except Exception:
+                        pil_image = white_bg
                     
                     # Save the rendered page to both required paths
                     pil_image.save(target_path, format="PNG")

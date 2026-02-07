@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+import os
 
 from typing import Dict, Any, Optional, Callable, Union
 from logging import getLogger
@@ -15,6 +16,7 @@ from configurations.user_setting_manager import get_user_setting_manager
 from controllers.widgets_tracker import WidgetsTracker
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
+from utils.utils import get_resource_path
 
 
 logger = getLogger(__name__)
@@ -167,6 +169,55 @@ class CreateSubGraphWindowButton(tk.Button, ColoringThemeIF):
                     )
                 )
                 self.subwin.config(bg=self.__current_setting_keys.get("base_bg_color", "#1d1d29"))
+
+                # Main processing: apply application icon to this Toplevel window.
+                icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
+                runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+                ico_path = (
+                    icon_multi_ico_path
+                    if os.path.exists(icon_multi_ico_path)
+                    else runtime_ico_path
+                )
+                if os.path.exists(ico_path):
+                    try:
+                        self.subwin.iconbitmap(ico_path)
+                    except Exception as e:
+                        logger.warning(
+                            message_manager.get_log_message(
+                                "L227", f"Failed to set subwindow icon: {str(e)}"
+                            )
+                        )
+
+                icon_png_candidates = (
+                    get_resource_path("images/icon_256x256.png"),
+                    get_resource_path("images/icon_128x128.png"),
+                    get_resource_path("images/icon_64x64.png"),
+                    get_resource_path("images/icon_48x48.png"),
+                    get_resource_path("images/icon_32x32.png"),
+                    get_resource_path("images/icon_24x24.png"),
+                    get_resource_path("images/icon_16x16.png"),
+                )
+                try:
+                    icon_imgs = [
+                        tk.PhotoImage(file=p)
+                        for p in icon_png_candidates
+                        if os.path.exists(p)
+                    ]
+                    if icon_imgs:
+                        self.subwin.iconphoto(True, *icon_imgs)
+                        setattr(self.subwin, "_icon_photos", icon_imgs)
+                    else:
+                        icon_png_path = get_resource_path("images/LOGOm.png")
+                        if os.path.exists(icon_png_path):
+                            icon_img = tk.PhotoImage(file=icon_png_path)
+                            self.subwin.iconphoto(True, icon_img)
+                            setattr(self.subwin, "_icon_photo", icon_img)
+                except Exception as e:
+                    logger.warning(
+                        message_manager.get_log_message(
+                            "L227", f"Failed to set subwindow icon (iconphoto): {str(e)}"
+                        )
+                    )
 
             # Define on-close function
             def on_close() -> None:

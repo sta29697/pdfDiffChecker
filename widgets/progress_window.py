@@ -35,6 +35,49 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
             parent: The parent widget.
         """
         super().__init__(parent)
+
+        # Main processing: apply application icon to this Toplevel window.
+        icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
+        runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+
+        ico_path = icon_multi_ico_path if os.path.exists(icon_multi_ico_path) else runtime_ico_path
+        if os.path.exists(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except Exception as e:
+                logger.warning(
+                    message_manager.get_log_message(
+                        "L227", f"Failed to set window icon: {str(e)}"
+                    )
+                )
+
+        # Main processing: also apply PNG icons via iconphoto for better alpha handling.
+        icon_png_candidates = (
+            get_resource_path("images/icon_256x256.png"),
+            get_resource_path("images/icon_128x128.png"),
+            get_resource_path("images/icon_64x64.png"),
+            get_resource_path("images/icon_48x48.png"),
+            get_resource_path("images/icon_32x32.png"),
+            get_resource_path("images/icon_24x24.png"),
+            get_resource_path("images/icon_16x16.png"),
+        )
+        try:
+            icon_imgs = [tk.PhotoImage(file=p) for p in icon_png_candidates if os.path.exists(p)]
+            if icon_imgs:
+                self.iconphoto(True, *icon_imgs)
+                setattr(self, "_icon_photos", icon_imgs)
+            else:
+                icon_png_path = get_resource_path("images/LOGOm.png")
+                if os.path.exists(icon_png_path):
+                    icon_img = tk.PhotoImage(file=icon_png_path)
+                    self.iconphoto(True, icon_img)
+                    setattr(self, "_icon_photo", icon_img)
+        except Exception as e:
+            logger.warning(
+                message_manager.get_log_message(
+                    "L227", f"Failed to set window icon (iconphoto): {str(e)}"
+                )
+            )
         
         # Flag to track if theme has been initialized
         self._theme_initialized = False
@@ -162,20 +205,37 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
             return
             
         try:
-            # Apply theme to window
-            window_theme = theme_data.get("window", {})
-            if window_theme:
-                self.configure(**window_theme)  # type: ignore[arg-type]
+            window_theme = theme_data.get("Window", {})
+            label_theme = theme_data.get("Label", {})
+            progress_theme = theme_data.get("primary_progressbar", {})
 
-            # Apply theme to main frame
-            frame_theme = theme_data.get("frame", {})
-            if frame_theme:
-                self._apply_theme_to_widget(self.main_frame, frame_theme)
+            window_bg = window_theme.get("bg", "#ffffff")
+            label_fg = label_theme.get("fg", "#000000")
 
-            # Apply theme to status label
-            label_theme = theme_data.get("label", {})
-            if label_theme:
-                self._apply_theme_to_widget(self.status_label, label_theme)
+            # Apply theme to the toplevel background
+            self.configure(bg=window_bg)
+
+            # Apply ttk styles (required on Windows for consistent theming)
+            style = ttk.Style(self)
+            style.configure("ProgressWindow.TFrame", background=window_bg)
+            style.configure("ProgressWindow.TLabel", background=window_bg, foreground=label_fg)
+
+            # Main processing: configure progressbar colors from theme
+            pb_bg = progress_theme.get("bg", "#000000")
+            pb_trough = progress_theme.get("troughcolor", window_bg)
+            pb_border = progress_theme.get("bordercolor", pb_bg)
+            style.configure(
+                "Primary.Horizontal.TProgressbar",
+                background=pb_bg,
+                troughcolor=pb_trough,
+                bordercolor=pb_border,
+                lightcolor=pb_bg,
+                darkcolor=pb_bg,
+            )
+
+            self.main_frame.configure(style="ProgressWindow.TFrame")
+            self.status_label.configure(style="ProgressWindow.TLabel")
+            self.progress_bar.configure(style="Primary.Horizontal.TProgressbar")
 
             # Mark theme as initialized
             self._theme_initialized = True

@@ -3,10 +3,13 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 import tkinter as tk
+import tkinter.font as tkfont
 from logging import getLogger
 
+from configurations import tool_settings
 from utils.utils import get_resource_path
 from widgets.base_button import BaseButton
+from widgets.base_tab_widgets import BaseTabWidgets as btw
 from controllers.widgets_tracker import WidgetsTracker
 from configurations.message_manager import get_message_manager
 
@@ -34,6 +37,41 @@ class BasePageChangeButton(BaseButton):
         __acfg (str): Active font color
         __acbg (str): Active background color
     """
+
+    _bold_font: tkfont.Font | None = None
+
+    @classmethod
+    def _get_bold_font(cls) -> tkfont.Font | None:
+        """Get a bold font instance used for arrow buttons.
+
+        Returns:
+            tkinter.font.Font | None: Bold font if available, otherwise None.
+        """
+        # Main processing: derive a bold font from the app's base font.
+        try:
+            if cls._bold_font is not None:
+                return cls._bold_font
+
+            base_font = getattr(btw, "base_font", None)
+            if base_font is None:
+                try:
+                    btw.base_font = tkfont.Font(
+                        family=tool_settings.font_family,
+                        size=tool_settings.font_size,
+                    )
+                except Exception:
+                    return None
+
+                base_font = getattr(btw, "base_font", None)
+                if base_font is None:
+                    return None
+
+            base_actual = base_font.actual()
+            base_actual["weight"] = "bold"
+            cls._bold_font = tkfont.Font(**base_actual)
+            return cls._bold_font
+        except Exception:
+            return None
 
     def __init__(
         self,
@@ -71,7 +109,12 @@ class BasePageChangeButton(BaseButton):
             else:
                 # This is direct text
                 button_text = text
-            
+
+        if "font" not in kwargs:
+            bold_font = self._get_bold_font()
+            if bold_font is not None:
+                kwargs["font"] = bold_font
+
         # Initialize the button with text
         super().__init__(fr=fr, color_key=color_key, text=button_text, command=command, **kwargs)
         self.__color_key = color_key

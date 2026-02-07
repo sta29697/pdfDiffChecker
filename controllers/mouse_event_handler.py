@@ -179,7 +179,7 @@ class MouseEventHandler:
                 self.__rotation_active = False
                 self.__rotation_start_time = time.time()
                 self._show_feedback_circle(event.x, event.y)
-                self._show_guidance_text(self.__msg_mgr.get_message('M048'))  # Rotation mode active
+                self._show_guidance_text(self.__msg_mgr.get_message('M042'))  # M042: Rotation mode - drag to rotate
             else:
                 # Already in rotation mode, update center point
                 self.__rotation_center_x = event.x
@@ -187,7 +187,7 @@ class MouseEventHandler:
                 self.__rotation_active = False
                 self.__rotation_start_time = time.time()
                 self._show_feedback_circle(event.x, event.y)
-                self._show_guidance_text(self.__msg_mgr.get_message('M049'))  # Center point updated
+                self._show_guidance_text(self.__msg_mgr.get_message('M042'))  # M042: Rotation mode - drag to rotate
 
     def on_mouse_drag(self, event: tk.Event) -> None:
         """Handle mouse drag.
@@ -301,7 +301,7 @@ class MouseEventHandler:
                 
                 # Update UI with rotation information - round to nearest degree for better readability
                 rounded_angle = round(angle)
-                self._show_notification(self.__msg_mgr.get_message('M046', str(rounded_angle)))  # Rotation completed
+                self._show_notification(self.__msg_mgr.get_message('M043'))  # M043: Rotation complete
                 
                 # Keep feedback circle visible briefly before fading out
                 if self.__canvas_ref is not None:
@@ -309,7 +309,7 @@ class MouseEventHandler:
                     self.__canvas_ref.after(500, self._hide_feedback_circle)
                     
                     # Also update guidance text to confirm rotation is complete
-                    self._show_guidance_text(self.__msg_mgr.get_message('M047'))  # Rotation completed
+                    self._show_guidance_text(self.__msg_mgr.get_message('M043'))  # M043: Rotation complete
                     # Schedule guidance text to be hidden after 800ms
                     self.__canvas_ref.after(800, self._hide_guidance_text)
                 
@@ -418,7 +418,7 @@ class MouseEventHandler:
         
         # Log zoom operation only if throttle allows (0.5秒間隔)
         if should_log:
-            logger.debug(message_manager.get_log_message("L332", f"zoom_factor={zoom_factor}"))
+            logger.debug(f"{message_manager.get_log_message('L299')} zoom_factor={zoom_factor}")
             
     def _clear_feedback(self) -> None:
         """Clear all visual feedback elements."""
@@ -577,7 +577,7 @@ class MouseEventHandler:
         self.__on_transform_update()
         
         # Show notification
-        self._show_notification(self.__msg_mgr.get_message('M043'))  # Rotated 90° right
+        self._show_notification(self.__msg_mgr.get_message('M044'))  # M044: Rotated right 90°
         
         # Log rotation
         logger.debug(message_manager.get_log_message("L337", "right"))
@@ -604,7 +604,7 @@ class MouseEventHandler:
         self.__on_transform_update()
         
         # Show notification
-        self._show_notification(self.__msg_mgr.get_message('M044'))  # Rotated 90° left
+        self._show_notification(self.__msg_mgr.get_message('M045'))  # M045: Rotated left 90°
         
         # Log rotation
         logger.debug(message_manager.get_log_message("L337", "left"))
@@ -631,7 +631,7 @@ class MouseEventHandler:
         self.__on_transform_update()
         
         # Show notification
-        self._show_notification(self.__msg_mgr.get_message('M045'))  # Flipped vertically
+        self._show_notification(self.__msg_mgr.get_message('M046'))  # M046: Flipped vertically
         
         # Log flip
         logger.debug(message_manager.get_log_message("L338", "vertical"))
@@ -658,7 +658,7 @@ class MouseEventHandler:
         self.__on_transform_update()
         
         # Show notification
-        self._show_notification(self.__msg_mgr.get_message('M051'))  # Flipped horizontally
+        self._show_notification(self.__msg_mgr.get_message('M047'))  # M047: Flipped horizontally
         
         # Log flip
         logger.debug(message_manager.get_log_message("L338", "horizontal"))
@@ -680,7 +680,7 @@ class MouseEventHandler:
         self.__on_transform_update()
         
         # Show notification
-        self._show_notification(self.__msg_mgr.get_message('M052'))  # Reset to default view
+        self._show_notification(self.__msg_mgr.get_message('M048'))  # M048: Reset to original
         
         # Log reset
         logger.debug(message_manager.get_log_message("L339", "reset_transform"))
@@ -726,7 +726,7 @@ class MouseEventHandler:
         )
         
         # Create help text with high contrast color
-        help_text = self.__msg_mgr.get_message('M053')  # Keyboard shortcuts help text
+        help_text = self.__msg_mgr.get_message('M049')  # M049: Keyboard Shortcuts (help overlay)
         self.__help_display_id = self.__canvas_ref.create_text(
             canvas_width / 2, canvas_height / 2,
             text=help_text, fill="#ffff00", font=("Helvetica", 12, "bold"), justify=tk.CENTER

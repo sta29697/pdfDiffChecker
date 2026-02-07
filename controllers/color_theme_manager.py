@@ -349,9 +349,9 @@ class ColorThemeManager:
         try:
             current = cls.__current_theme_name
             if current == "dark":
-                # 80% -> light, 20% -> pastel
+                # 70% -> light, 30% -> pastel
                 new_theme = cast(
-                    ThemeType, "pastel" if random.random() < 0.2 else "light"
+                    ThemeType, "pastel" if random.random() < 0.3 else "light"
                 )
             else:
                 # from 'light' or 'pastel' to 'dark'

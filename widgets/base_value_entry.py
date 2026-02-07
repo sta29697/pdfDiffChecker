@@ -83,6 +83,9 @@ class BaseValueEntry(BaseEntry):
         _new_th = self._fb_th.get()
         if _new_th != self.__current_fb_th:
             self.fb_threshold = _new_th
+            # Persist threshold to user settings
+            usm.update_setting(self.__setting_key, _new_th)
+            usm.save_settings()
             # Foreground/Background threshold updated to: {threshold}
             logger.info(message_manager.get_log_message("L128", _new_th))
 

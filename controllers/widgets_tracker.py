@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from tkinter import ttk
 from collections.abc import Iterator
 from logging import getLogger
 from typing import List, Protocol, runtime_checkable, Dict, Any, Final
@@ -15,6 +16,184 @@ THEME_COMPONENT_NAME: Final[str] = "ColorThemeManager"
 message_manager = get_message_manager()
 
 logger = getLogger(__name__)
+
+
+def adjust_hex_color(hex_color: str, amount: float) -> str:
+    """Adjust a hex color by the given amount.
+
+    Positive values lighten the color, negative values darken it.
+
+    Args:
+        hex_color (str): Color in '#RRGGBB' format.
+        amount (float): Adjustment amount in range [-1.0, 1.0].
+
+    Returns:
+        str: Adjusted color in '#RRGGBB' format.
+    """
+    # Main processing: parse '#RRGGBB' and adjust each RGB channel.
+    if not isinstance(hex_color, str):
+        return "#000000"
+
+    color = hex_color.strip()
+    if not color.startswith("#"):
+        return hex_color
+    if len(color) != 7:
+        return hex_color
+
+    try:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+    except Exception:
+        return hex_color
+
+    amt = max(-1.0, min(1.0, float(amount)))
+
+    def _adjust_channel(v: int) -> int:
+        if amt >= 0:
+            v2 = v + int((255 - v) * amt)
+        else:
+            v2 = v + int(v * amt)
+        return max(0, min(255, v2))
+
+    r2 = _adjust_channel(r)
+    g2 = _adjust_channel(g)
+    b2 = _adjust_channel(b)
+    return f"#{r2:02x}{g2:02x}{b2:02x}"
+
+
+def get_hex_color_luminance(hex_color: str) -> float:
+    """Get relative luminance of a hex color.
+
+    Args:
+        hex_color (str): Color in '#RRGGBB' format.
+
+    Returns:
+        float: Luminance in range [0.0, 1.0].
+    """
+    # Main processing: approximate luminance based on RGB channels.
+    if not isinstance(hex_color, str):
+        return 0.0
+
+    color = hex_color.strip().lower()
+    if not color.startswith("#"):
+        return 0.0
+    if len(color) != 7:
+        return 0.0
+
+    try:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+    except Exception:
+        return 0.0
+
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+
+
+def ensure_contrast_color(color: str, background: str, fallback_amount: float = -0.2) -> str:
+    """Ensure the returned color is distinct from the given background.
+
+    Args:
+        color (str): Base color candidate.
+        background (str): Background color to compare against.
+        fallback_amount (float): Adjustment amount applied to background when colors match.
+
+    Returns:
+        str: A color string that differs from background when possible.
+    """
+    # Main processing: if colors match, derive a contrasting shade from the background.
+    if not isinstance(color, str) or not isinstance(background, str):
+        return color
+
+    c = color.strip().lower()
+    bg = background.strip().lower()
+    if c == bg and bg.startswith("#") and len(bg) == 7:
+        magnitude = abs(float(fallback_amount))
+        lum = get_hex_color_luminance(background)
+        amount = magnitude if lum < 0.5 else -magnitude
+        return adjust_hex_color(background, amount)
+    return color
+
+
+def refresh_combobox_popdown_listboxes(
+    root: tk.Misc,
+    listbox_bg: str,
+    listbox_fg: str,
+    listbox_sel_bg: str,
+    listbox_sel_fg: str,
+) -> None:
+    """Refresh ttk.Combobox dropdown Listbox colors for already created popdowns.
+
+    Tk's option database (`option_add`) affects widgets created after the option is set.
+    If a combobox dropdown popdown was created earlier (e.g., before a theme switch),
+    its internal Listbox may keep the old colors. This helper re-applies the colors
+    directly to existing Listbox instances under combobox popdown windows.
+
+    Args:
+        root (tk.Misc): Root widget (typically Tk) used as the traversal start point.
+        listbox_bg (str): Background color for normal rows.
+        listbox_fg (str): Foreground color for normal rows.
+        listbox_sel_bg (str): Background color for selected rows.
+        listbox_sel_fg (str): Foreground color for selected rows.
+    """
+    # Main processing: traverse Tcl widget paths and update Listbox under combobox popdown windows.
+    try:
+        if root is None:
+            return
+
+        tkapp = getattr(root, "tk", None)
+        if tkapp is None:
+            return
+
+        def _iter_descendant_paths(widget_path: str) -> Iterator[str]:
+            try:
+                children_raw = tkapp.call("winfo", "children", widget_path)
+            except Exception:
+                children_raw = ()
+
+            try:
+                children = tkapp.splitlist(children_raw)
+            except Exception:
+                children = children_raw if isinstance(children_raw, (list, tuple)) else ()
+
+            for child_path in children:
+                child_str = str(child_path)
+                yield child_str
+                yield from _iter_descendant_paths(child_str)
+
+        for w_path in _iter_descendant_paths("."):
+            try:
+                w_class = str(tkapp.call("winfo", "class", w_path) or "").lower()
+                if w_class != "listbox":
+                    continue
+
+                top_path_raw = str(tkapp.call("winfo", "toplevel", w_path) or "")
+                top_path_lc = top_path_raw.lower()
+                top_class = ""
+                try:
+                    top_class = str(tkapp.call("winfo", "class", top_path_raw) or "").lower()
+                except Exception:
+                    top_class = ""
+                if "popdown" not in top_path_lc and "popdown" not in top_class:
+                    continue
+
+                tkapp.call(
+                    w_path,
+                    "configure",
+                    "-background",
+                    listbox_bg,
+                    "-foreground",
+                    listbox_fg,
+                    "-selectbackground",
+                    listbox_sel_bg,
+                    "-selectforeground",
+                    listbox_sel_fg,
+                )
+            except Exception:
+                continue
+    except Exception:
+        return
 
 
 @runtime_checkable
@@ -157,11 +336,285 @@ class WidgetsTracker:
         # Store the current theme 
         self.__current_theme = theme 
         self.__theme_initialized = True
+
+        # Main processing: apply ttk global styles (Notebook/Combobox/etc.) on theme change.
+        # Some ttk widgets are not registered in WidgetsTracker, so ttk.Style must be updated globally.
+        self._apply_ttk_global_styles(theme, theme_name)
         
         # Apply theme to all registered widgets
         self.apply_colors_to_widgets(theme)
         # Use the appropriate message code for theme application to multiple widgets
         logger.debug(message_manager.get_log_message("L231", theme_name, len(self.__registered_widgets)))
+
+    def _apply_ttk_global_styles(self, theme: Dict[str, Any], theme_name: str) -> None:
+        """Apply ttk global styles (ttk.Style) based on the current theme.
+
+        This method updates ttk widget appearances such as Notebook tabs and Combobox
+        colors. It is called from the THEME_CHANGED event handler to ensure ttk
+        widgets also reflect theme changes even if they are not explicitly tracked.
+
+        Args:
+            theme (Dict[str, Any]): Theme dictionary published by ColorThemeManager.
+            theme_name (str): Theme name (e.g., "dark", "light", "pastel").
+        """
+        try:
+            logger.debug(f"[THEME] ttk global style apply (WidgetsTracker): theme_name={theme_name}")
+        except Exception:
+            pass
+
+        # Main processing: configure ttk.Style safely across platforms/themes.
+        try:
+            style = ttk.Style()
+        except Exception:
+            return
+
+        try:
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+        except Exception:
+            pass
+
+        notebook_theme = theme.get("Notebook", {}) if isinstance(theme, dict) else {}
+        notebook_bg = notebook_theme.get("bg", "#2d2d2d")
+
+        frame_theme = theme.get("Frame", {}) if isinstance(theme, dict) else {}
+        window_theme = theme.get("Window", {}) if isinstance(theme, dict) else {}
+        window_bg = window_theme.get("bg", notebook_bg)
+        frame_bg = frame_theme.get("bg", window_bg)
+
+        tab_bg = notebook_theme.get("tab_bg", frame_bg)
+        tab_fg = notebook_theme.get("tab_fg", "#ffffff")
+        # Main processing: derive tab colors and border contrast for clear selection visibility.
+        border_color_base = frame_theme.get("highlightbackground", notebook_bg)
+        theme_key = str(theme_name or "").strip().lower()
+        border_color = border_color_base
+
+        if theme_key in ("light", "pastel"):
+            try:
+                base_norm = str(border_color_base).strip().lower()
+                frame_bg_norm = str(frame_bg).strip().lower()
+                tab_bg_norm = str(tab_bg).strip().lower()
+                notebook_bg_norm = str(notebook_bg).strip().lower()
+                if base_norm in {frame_bg_norm, tab_bg_norm, notebook_bg_norm}:
+                    border_color = adjust_hex_color(str(notebook_bg), -0.12)
+            except Exception:
+                pass
+
+        # Main processing: compute selected/unselected backgrounds per theme.
+        selected_tab_bg = tab_bg
+        active_tab_bg = tab_bg
+        unselected_tab_bg = notebook_bg
+
+        if theme_key == "dark":
+            selected_tab_bg = window_bg
+            unselected_tab_bg = adjust_hex_color(str(tab_bg), 0.06)
+            active_tab_bg = adjust_hex_color(str(tab_bg), 0.10)
+        elif theme_key in ("light", "pastel"):
+            unselected_tab_bg = adjust_hex_color(str(notebook_bg), -0.05)
+
+        # Main processing: unify tab edge rendering to avoid thin/bright borders.
+        tab_borderwidth = 1
+        relief_map = [("selected", "solid"), ("active", "solid"), ("!selected", "flat")]
+        try:
+            root = getattr(tk, "_default_root", None)
+            if root is not None:
+                root.configure(bg=window_bg)
+        except Exception:
+            pass
+
+        try:
+            style.configure("TNotebook", background=notebook_bg)
+        except Exception:
+            pass
+        try:
+            style.configure(
+                "TNotebook",
+                bordercolor=border_color,
+                lightcolor=border_color,
+                darkcolor=border_color,
+            )
+        except Exception:
+            pass
+        try:
+            style.configure(
+                "TNotebook.Tab",
+                background=unselected_tab_bg,
+                foreground=tab_fg,
+                padding=[10, 2],
+                borderwidth=tab_borderwidth,
+            )
+        except Exception:
+            pass
+        try:
+            # Main processing: minimize visual mismatch caused by ttk theme bevel/shading.
+            style.configure(
+                "TNotebook.Tab",
+                bordercolor=border_color,
+                lightcolor=border_color,
+                darkcolor=border_color,
+                focuscolor=border_color,
+            )
+        except Exception:
+            pass
+        try:
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", selected_tab_bg), ("active", active_tab_bg), ("!selected", unselected_tab_bg)],
+                foreground=[("selected", tab_fg), ("active", tab_fg), ("!selected", tab_fg)],
+                borderwidth=[("selected", tab_borderwidth), ("active", tab_borderwidth), ("!selected", tab_borderwidth)],
+                bordercolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                lightcolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                darkcolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+                focuscolor=[("selected", border_color), ("active", border_color), ("!selected", border_color)],
+            )
+        except Exception:
+            pass
+
+        try:
+            style.map(
+                "TNotebook.Tab",
+                relief=relief_map,
+            )
+        except Exception:
+            pass
+
+        label_theme = theme.get("Label", {}) if isinstance(theme, dict) else {}
+        button_theme = theme.get("Button", {}) if isinstance(theme, dict) else {}
+        entry_theme = theme.get("Entry", {}) if isinstance(theme, dict) else {}
+        combobox_theme = theme.get("primary_combobox", {}) if isinstance(theme, dict) else {}
+        progress_theme = theme.get("primary_progressbar", {}) if isinstance(theme, dict) else {}
+
+        try:
+            style.configure("TFrame", background=frame_bg)
+        except Exception:
+            pass
+        try:
+            style.configure(
+                "TLabel",
+                background=label_theme.get("bg", frame_bg),
+                foreground=label_theme.get("fg", tab_fg),
+            )
+        except Exception:
+            pass
+        try:
+            style.configure(
+                "TButton",
+                background=button_theme.get("bg", frame_bg),
+                foreground=button_theme.get("fg", tab_fg),
+            )
+        except Exception:
+            pass
+        try:
+            style.configure(
+                "TEntry",
+                fieldbackground=entry_theme.get("bg", frame_theme.get("bg", notebook_bg)),
+                foreground=entry_theme.get("fg", tab_fg),
+            )
+        except Exception:
+            pass
+
+        combo_bg = combobox_theme.get("bg", entry_theme.get("bg", "#ffffff"))
+        combo_fg = combobox_theme.get("fg", entry_theme.get("fg", "#000000"))
+        combo_border_base = combobox_theme.get(
+            "bordercolor",
+            frame_theme.get("highlightbackground", combo_bg),
+        )
+        combo_border = ensure_contrast_color(combo_border_base, combo_bg, 0.25)
+        combo_light = adjust_hex_color(combo_border, 0.25)
+        combo_dark = adjust_hex_color(combo_border, -0.25)
+        combo_focus = combobox_theme.get("highlightcolor", combo_border)
+        combo_arrow_bg = ensure_contrast_color(combobox_theme.get("arrowbackground", combo_bg), combo_bg, 0.06)
+
+        try:
+            style.configure(
+                "TCombobox",
+                fieldbackground=combo_bg,
+                background=combo_arrow_bg,
+                foreground=combo_fg,
+                selectbackground=combobox_theme.get("selectbackground", combo_bg),
+                selectforeground=combobox_theme.get("selectforeground", combo_fg),
+                arrowcolor=combo_fg,
+                bordercolor=combo_border,
+                lightcolor=combo_light,
+                darkcolor=combo_dark,
+                focuscolor=combo_focus,
+            )
+        except Exception:
+            pass
+        try:
+            style.map(
+                "TCombobox",
+                fieldbackground=[("readonly", combo_bg), ("disabled", combo_bg)],
+                background=[("readonly", combo_arrow_bg), ("disabled", combo_arrow_bg), ("active", combo_arrow_bg)],
+                foreground=[("readonly", combo_fg), ("disabled", combo_fg), ("active", combo_fg)],
+                selectbackground=[("readonly", combobox_theme.get("selectbackground", combo_bg))],
+                selectforeground=[("readonly", combobox_theme.get("selectforeground", combo_fg))],
+                arrowcolor=[("readonly", combo_fg), ("active", combo_fg), ("disabled", combo_fg)],
+                bordercolor=[("readonly", combo_border), ("active", combo_border), ("disabled", combo_border)],
+                focuscolor=[("readonly", combo_focus), ("active", combo_focus)],
+            )
+        except Exception:
+            pass
+
+        # Main processing: style combobox dropdown list (Listbox) via option database.
+        try:
+            root = getattr(tk, "_default_root", None)
+            if root is not None:
+                listbox_bg = combobox_theme.get("list_bg", combo_bg)
+                listbox_fg = combobox_theme.get("list_fg", combo_fg)
+                listbox_sel_bg = combobox_theme.get(
+                    "list_selectbackground",
+                    combobox_theme.get("selectbackground", combo_bg),
+                )
+                listbox_sel_fg = combobox_theme.get(
+                    "list_selectforeground",
+                    combobox_theme.get("selectforeground", combo_fg),
+                )
+
+                listbox_sel_bg = ensure_contrast_color(str(listbox_sel_bg), str(listbox_bg), 0.08)
+
+                root.option_add("*TCombobox*Listbox.background", listbox_bg)
+                root.option_add("*TCombobox*Listbox.foreground", listbox_fg)
+                root.option_add("*TCombobox*Listbox.selectBackground", listbox_sel_bg)
+                root.option_add("*TCombobox*Listbox.selectForeground", listbox_sel_fg)
+
+                refresh_combobox_popdown_listboxes(
+                    root,
+                    str(listbox_bg),
+                    str(listbox_fg),
+                    str(listbox_sel_bg),
+                    str(listbox_sel_fg),
+                )
+        except Exception:
+            pass
+
+        btn_bg = button_theme.get("bg", frame_bg)
+        btn_border_base = frame_theme.get("highlightbackground", btn_bg)
+        btn_border = ensure_contrast_color(btn_border_base, btn_bg, 0.25)
+        btn_light = adjust_hex_color(btn_border, 0.25)
+        btn_dark = adjust_hex_color(btn_border, -0.25)
+        try:
+            style.configure(
+                "TButton",
+                bordercolor=btn_border,
+                lightcolor=btn_light,
+                darkcolor=btn_dark,
+                focuscolor=btn_border,
+            )
+        except Exception:
+            pass
+
+        try:
+            style.configure(
+                "Primary.Horizontal.TProgressbar",
+                background=progress_theme.get("bg", "#000000"),
+                troughcolor=progress_theme.get("troughcolor", window_bg),
+                bordercolor=progress_theme.get("bordercolor", progress_theme.get("bg", "#000000")),
+                lightcolor=progress_theme.get("bg", "#000000"),
+                darkcolor=progress_theme.get("bg", "#000000"),
+            )
+        except Exception:
+            pass
     
     def _handle_phase1_completed(self) -> None:
         """Handle phase 1 completion event.

@@ -10,9 +10,6 @@ __pycache__/
 memo.py
 .windsurfrules
 pdfium.dll
-sample01.pdf
-sample02.pdf
-sample01.tiff
-sample02.tiff
+sample*
 logs/debug.log
 

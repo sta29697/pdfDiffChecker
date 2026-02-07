@@ -267,7 +267,13 @@ class UserSettingManager:
             return cls._user_settings[section][key]
         except KeyError as e:
             logger.error(get_message_manager().get_log_message("L027", key, e))
-            return default_value
+            if default_value is not None:
+                return default_value
+
+            try:
+                return DEFAULT_USER_SET["default"][key]
+            except KeyError:
+                return None
 
     @classmethod
     def get_setting_list(
