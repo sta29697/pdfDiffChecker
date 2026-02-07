@@ -3,11 +3,11 @@
         "user_settings_status": "user_settings"
     },
     "user_settings": {
-        "theme_color": "dark",
+        "theme_color": "light",
         "language": "japanese",
         "input_file_path": "直接入力、参照選択",
         "comparison_file_path": "直接入力、参照選択",
-        "output_folder_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker\\temp",
+        "output_folder_path": "C:\\Users\\haya-\\Downloads",
         "window_position_x": 500,
         "window_position_y": 10,
         "window_width": 800,
@@ -39,6 +39,6 @@
         "comparison_file_graph_subwindow_width": 500,
         "comparison_file_graph_subwindow_height": 10,
         "comparison_file_graph_subwindow_geometry": "500x10+300+300",
-        "base_file_path": "C:\\Users\\haya-\\Study\\Python\\workspace\\Project04\\pdfDiffChecker\\sample01.pdf"
+        "base_file_path": "C:\\Users\\haya-\\Lab\\PrivateProject\\01_DiffChecker\\pdfDiffChecker\\sample01.pdf"
     }
 }
