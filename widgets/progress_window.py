@@ -36,6 +36,9 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         """
         super().__init__(parent)
 
+        # Main processing: hide immediately to prevent initial geometry flash.
+        self.withdraw()
+
         # Main processing: apply application icon to this Toplevel window.
         icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
         runtime_ico_path = get_resource_path("temp/LOGOm.ico")
@@ -91,9 +94,6 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         self.transient(cast(tk.Wm, parent))  # Make window modal
         self.grab_set()  # Make window modal
 
-        # Hide window initially
-        self.withdraw()
-
         # Create main frame
         self.main_frame = ttk.Frame(self, padding=10)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
@@ -121,7 +121,7 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         WidgetsTracker().add_widgets(self)
 
         # Progress window initialized
-        logger.debug(message_manager.get_log_message("L083"))
+        logger.debug(message_manager.get_log_message("L083", "ProgressWindow"))
 
     def _center_on_parent(self) -> None:
         """Center the window on its parent."""
@@ -144,7 +144,18 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
 
     def show(self) -> None:
         """Show the progress window."""
+        try:
+            self.update_idletasks()
+            self._center_on_parent()
+        except Exception:
+            pass
+
         self.deiconify()
+        try:
+            self.lift()
+        except Exception:
+            pass
+
         self.update()
 
     def hide(self) -> None:

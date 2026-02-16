@@ -197,6 +197,14 @@
         "activeforeground": "#7b4fae",
         "activebackground": "#dcb8ff"
     },
+    "delete_page_button": {
+        "bg": "#ead2ff",
+        "fg": "#7b4fae",
+        "disabledforeground": "#ffffff",
+        "disabledbackground": "#b6e2c1",
+        "activeforeground": "#7b4fae",
+        "activebackground": "#dcb8ff"
+    },
     "create_image_color_select_button": {
         "bg": "#ffe1ea",
         "fg": "#ff5a74",

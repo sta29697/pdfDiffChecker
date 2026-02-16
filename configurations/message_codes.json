@@ -443,8 +443,8 @@
             "ja": "[PDF] 比較ファイルの解析でエラーが発生しました: {0}"
         },
         "L083": {
-            "en": "[UI] Mouse events bound successfully",
-            "ja": "[UI] マウスイベントのバインドに成功しました"
+            "en": "[UI] Mouse events bound successfully ({0})",
+            "ja": "[UI] マウスイベントのバインドに成功しました ({0})"
         },
         "L084": {
             "en": "[PDF] Inserted blank page into base: {0}",
@@ -1651,6 +1651,14 @@
         "M054": {
             "en": "Shortcut help hidden",
             "ja": "ショートカットヘルプを非表示にしました"
+        },
+        "M055": {
+            "en": "Operation not possible due to copy-protected file",
+            "ja": "コピー保護ファイルのため操作できません"
+        },
+        "M056": {
+            "en": "This PDF is copy-protected. \"Insert Blank Page\" and \"Finish\" are disabled. Click OK to enable rotation and other visual adjustments.",
+            "ja": "このPDFはコピー保護されています。『空白ページ挿入』『完了』は無効です。OKで回転などの表示調整を有効化します。"
         }
     },
     "ui_codes": {
@@ -1799,8 +1807,8 @@
             "ja": "お待ちください..."
         },
         "U037": {
-            "en": "Complete",
-            "ja": "完了"
+            "en": "Save",
+            "ja": "保存"
         },
         "U038": {
             "en": "Insert blank page",
@@ -1893,6 +1901,62 @@
         "U060": {
             "en": "Shortcut Keys",
             "ja": "ショートカットキー"
+        },
+        "U061": {
+            "en": "Delete Page",
+            "ja": "ページ削除"
+        },
+        "U062": {
+            "en": "Are you sure you want to delete this page?",
+            "ja": "このページを削除してよろしいですか？"
+        },
+        "U063": {
+            "en": "Cannot delete the only remaining page.",
+            "ja": "最後の1ページは削除できません。"
+        },
+        "U064": {
+            "en": "Transform",
+            "ja": "変換情報"
+        },
+        "U065": {
+            "en": "X :",
+            "ja": "X :"
+        },
+        "U066": {
+            "en": "Y :",
+            "ja": "Y :"
+        },
+        "U067": {
+            "en": "Angle:",
+            "ja": "角度:"
+        },
+        "U068": {
+            "en": "Scale:",
+            "ja": "倍率:"
+        },
+        "U069": {
+            "en": "Apply",
+            "ja": "適用"
+        },
+        "U070": {
+            "en": "Batch Edit",
+            "ja": "一括編集"
+        },
+        "U071": {
+            "en": "Batch edit is disabled because page sizes differ.",
+            "ja": "ページサイズが異なるため一括編集は無効です。"
+        },
+        "U072": {
+            "en": "Pixel size:",
+            "ja": "ピクセルサイズ:"
+        },
+        "U073": {
+            "en": "Pixel density:",
+            "ja": "ピクセル密度:"
+        },
+        "U074": {
+            "en": "Paper size:",
+            "ja": "用紙サイズ:"
         }
     }
 }

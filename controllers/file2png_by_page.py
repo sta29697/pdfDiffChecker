@@ -251,6 +251,10 @@ class BaseImageConverter:
         finally:
             # Hide progress window after a short delay
             if progress_window:
+                try:
+                    progress_window.grab_release()
+                except Exception:
+                    pass
                 parent_widget.after(1000, progress_window.hide)
                 parent_widget.after(1500, progress_window.destroy)
 
@@ -333,12 +337,14 @@ class Pdf2PngByPages(BaseImageConverter):
                         "Keywords": getattr(info, "keywords", None),
                         "NumberOfPages": len(reader.pages),
                         "Encrypted": reader.is_encrypted,
+                        "CopyProtected": bool(reader.is_encrypted),
                     }
                 else:
                     # Fallback if metadata is not available
                     metadata = {
                         "NumberOfPages": len(reader.pages),
                         "Encrypted": reader.is_encrypted,
+                        "CopyProtected": bool(reader.is_encrypted),
                     }
                 
                 # Update file_info metadata
@@ -366,13 +372,41 @@ class Pdf2PngByPages(BaseImageConverter):
                 logger.info(message_manager.get_log_message("L317"))
                 pdf = pdfium.PdfDocument(str(self.file_info.file_path))
                 page_count = len(pdf)
+
+                encrypted = False
+                copy_protected = False
+                try:
+                    import pypdfium2.raw as pdfium_raw
+
+                    security_rev = int(pdfium_raw.FPDF_GetSecurityHandlerRevision(pdf.raw))
+                    encrypted = security_rev != -1
+
+                    permissions: int | None = None
+                    try:
+                        permissions = int(pdfium_raw.FPDF_GetDocUserPermissions(pdf.raw))
+                    except Exception:
+                        try:
+                            permissions = int(pdfium_raw.FPDF_GetDocPermissions(pdf.raw))
+                        except Exception:
+                            permissions = None
+
+                    if encrypted and permissions is not None:
+                        copy_allowed = bool(permissions & 0x10)
+                        copy_protected = not copy_allowed
+                    else:
+                        copy_protected = encrypted
+                except Exception:
+                    encrypted = False
+                    copy_protected = False
                 
                 # Basic metadata from PyPDFium2
                 logger.info(message_manager.get_log_message("L337"))
                 metadata = {
                     "NumberOfPages": page_count,
                     "Library": "PyPDFium2",
-                    "Pages": page_count  # Duplicate for uniformity
+                    "Pages": page_count,  # Duplicate for uniformity
+                    "Encrypted": encrypted,
+                    "CopyProtected": copy_protected,
                 }
                 
                 # Update file_info metadata

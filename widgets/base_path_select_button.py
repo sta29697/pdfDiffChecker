@@ -91,7 +91,7 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
             self._apply_visual_shading()
             self.path_select_btn.pack(fill="both", expand=True)
             # Successfully created path select button
-            logger.debug(message_manager.get_log_message("L083"))
+            logger.debug(message_manager.get_log_message("L083", self.__color_key))
         except Exception as e:
             # Failed to create path select button: {0}
             logger.error(message_manager.get_log_message("L067", str(e)))

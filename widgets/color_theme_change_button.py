@@ -300,8 +300,7 @@ class ColorThemeChangeButton(tk.Frame):
                 # Log message for failed button image update
                 logger.error(message_manager.get_log_message("L134"))
             
-            # Button theme updated to: {theme}
-            logger.info(message_manager.get_log_message("L121", theme_color))
+            # Note: L121 log is already emitted by _on_click(); no duplicate here.
         except Exception as e:
             # Failed to update button theme: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))

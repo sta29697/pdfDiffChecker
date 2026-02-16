@@ -101,8 +101,7 @@ class BaseLabel(tk.Label, ThemeColorApplicable, ColoringThemeIF):
         """
         try:
             self.configure(**theme_settings)  # type: ignore[arg-type]
-            # Configured label with settings: {settings}
-            logger.debug(message_manager.get_log_message("L049", theme_settings))
+            # Note: L087 in apply_theme_color() already logs caller/key info.
         except Exception as e:
             # Failed to configure label: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))

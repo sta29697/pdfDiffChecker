@@ -30,37 +30,8 @@ class InsertBlankPageButton(BaseButton):
         """
         message_manager = get_message_manager()
         label = message_manager.get_ui_message("U038")
+        # Note: BaseButton.__init__ sets __color_key, registers with
+        # WidgetsTracker, and provides apply_theme_color / _config_widget.
+        # No need to duplicate them here (doing so caused AttributeError
+        # due to Python name mangling + initialization order).
         super().__init__(master, color_key=color_key, text=label, command=command, **kwargs)  # type: ignore[arg-type]
-        # All theme/color handling is managed by BaseButton.
-        # The button label is managed via MessageManager for i18n.
-        self.__color_key = color_key
-        # Apply the current theme to the button at initialization
-        # Explicit theme application removed; managed globally
-
-    def apply_theme_color(self, theme_data: dict[str, Any]) -> None:
-        """
-        Applies theme colors to the button.
-
-        Args:
-            theme_data (dict[str, Any]): Theme color data from ColorThemeManager. Accepts ThemeColors type or dict.
-        """
-        theme_settings = theme_data.get(self.__color_key, {})
-        # Remove unsupported options before applying theme
-        filtered = {k: v for k, v in {
-            "fg": theme_settings.get("fg", "#27283a"),
-            "bg": theme_settings.get("bg", "#22a9e9"),
-            "activeforeground": theme_settings.get("activeforeground", "#574ed6"),
-            "activebackground": theme_settings.get("activebackground", "#0fd2d6"),
-            "disabledforeground": theme_settings.get("disabledforeground", "#27283a"),
-            "disabledbackground": theme_settings.get("disabledbackground", "#22a9e9"),
-        }.items() if k != "disabledbackground"}
-        self._config_widget(filtered)
-
-    def _config_widget(self, theme_settings: dict[str, Any]) -> None:
-        """
-        Applies theme settings to the button widget.
-
-        Args:
-            theme_settings (dict[str, Any]): Theme settings to apply.
-        """
-        self.configure(**theme_settings)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+import unicodedata
 from logging import getLogger
 from typing import Dict, Any, Callable, List, Optional, Tuple, cast
 
@@ -45,8 +46,10 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         on_prev_page: Optional[Callable[[], None]] = None,
         on_next_page: Optional[Callable[[], None]] = None,
         on_insert_blank: Optional[Callable[[], None]] = None,
+        on_delete_page: Optional[Callable[[], None]] = None,
         on_export: Optional[Callable[[], None]] = None,
         on_page_entry: Optional[Callable[[tk.Event], None]] = None,
+        on_transform_value_change: Optional[Callable[[float, float, float, float], None]] = None,
     ) -> None:
         """
         Initialize the page control frame.
@@ -63,6 +66,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_prev_page: Callback for previous page button
             on_next_page: Callback for next page button
             on_insert_blank: Callback for blank page insertion
+            on_delete_page: Callback for delete page button
             on_export: Callback for export button
             on_page_entry: Callback for page number entry
         """
@@ -103,8 +107,12 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             self.__entry_theme_dict = {}
 
         # Base color settings
-        self.__swfg: str = self.__theme_dict.get("base_font_color", "#43c0cd")
-        self.__swbg: str = self.__theme_dict.get("base_bg_color", "#1d1d29")
+        # Fall back to Frame.fg when component-specific key is absent from theme
+        frame_theme_init = current_theme.get("Frame", {})
+        self.__swfg: str = self.__theme_dict.get(
+            "base_font_color", frame_theme_init.get("fg", "#43c0cd"))
+        self.__swbg: str = self.__theme_dict.get(
+            "base_bg_color", frame_theme_init.get("bg", "#1d1d29"))
         self.__fg: str = self.__theme_dict.get("button_inactive_font_color", "#27283a")
         self.__bg: str = self.__theme_dict.get("button_inactive_bg_color", "#22a9e9")
         self.__acfg: str = self.__theme_dict.get("button_active_font_color", "#574ed6")
@@ -124,6 +132,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Page variables
         self.page_var = tk.IntVar(value=1)  # Current page (1-based)
         self.current_file_page_amount = tk.IntVar(value=0)  # Total pages
+
+        # Main processing: keep desired edit button enabled state across theme updates.
+        self.__edit_buttons_enabled: bool = True
 
         # Page navigation buttons
         self.prev_page_btn = BasePageChangeButton(
@@ -190,10 +201,20 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         )
         self.insert_blank_btn.grid(row=4, column=0, padx=5, pady=5, sticky="ew")
 
-        # Export button ("完成")
+        # Delete current page button (M1-007)
+        from widgets.base_button import BaseButton
+        self.delete_page_btn = BaseButton(
+            fr=self,
+            color_key="delete_page_button",
+            text=message_manager.get_ui_message("U061"),  # "Delete Page"
+            command=on_delete_page if on_delete_page else lambda: None,
+        )
+        self.delete_page_btn.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
+
+        # Export button
         self.export_btn: tk.Button = tk.Button(
             self,
-            text=message_manager.get_ui_message("U037"), # Complete
+            text=message_manager.get_ui_message("U037"), # Save
             font=btw.base_font,
             bg=self.__bg,
             fg=self.__fg,
@@ -201,7 +222,103 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             activebackground=self.__acbg,
             command=on_export if on_export else lambda: None,
         )
-        self.export_btn.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
+        self.export_btn.grid(row=6, column=0, padx=5, pady=5, sticky="ew")
+
+        # --- Batch edit checkbox (M1-010) ---
+        self.batch_edit_var = tk.BooleanVar(value=False)
+        self.__batch_edit_cb = tk.Checkbutton(
+            self,
+            text=message_manager.get_ui_message("U070"),  # "Batch Edit" / "一括編集"
+            variable=self.batch_edit_var,
+            font=("", 8),
+            bg=self.__base_bg,
+            fg=self.__swfg,
+            selectcolor=self.__base_bg,
+            activebackground=self.__base_bg,
+            activeforeground=self.__swfg,
+            anchor="center",
+        )
+        self.__batch_edit_cb.grid(row=7, column=0, padx=5, pady=(5, 0), sticky="ew")
+
+        # Store transform value change callback
+        self.__on_transform_value_change = on_transform_value_change
+
+        # --- Transform info section (M1-008) ---
+        # Separator line
+        self.__transform_separator = tk.Frame(self, height=1, bg=self.__swfg)
+        self.__transform_separator.grid(row=8, column=0, padx=3, pady=(8, 2), sticky="ew")
+
+        # Header label
+        self.__transform_header = tk.Label(
+            self,
+            text=message_manager.get_ui_message("U064"),  # "Transform" / "変換情報"
+            font=("", 8),
+            bg=self.__base_bg,
+            fg=self.__swfg,
+            anchor="center",
+        )
+        self.__transform_header.grid(row=9, column=0, padx=2, pady=(0, 2), sticky="ew")
+
+        # Entry style settings
+        entry_font = ("", 8)
+        entry_width = 8
+        label_width = 5
+
+        # Lists to hold sub-frame and label references for theme updates
+        self.__transform_sub_frames: List[tk.Frame] = []
+        self.__transform_labels: List[tk.Label] = []
+
+        # Helper to create a label+entry row
+        def _make_transform_row(parent_frame: tk.Frame, row: int,
+                                label_text: str) -> tk.Entry:
+            """Create a labeled entry row for transform info.
+
+            Args:
+                parent_frame: Parent frame to place widgets in.
+                row: Grid row number.
+                label_text: Label text for the entry.
+
+            Returns:
+                The created Entry widget.
+            """
+            sub = tk.Frame(parent_frame, bg=self.__base_bg)
+            sub.grid(row=row, column=0, padx=2, pady=1, sticky="ew")
+            sub.grid_columnconfigure(1, weight=1)
+            self.__transform_sub_frames.append(sub)
+            lbl = tk.Label(
+                sub, text=label_text, font=entry_font, width=label_width,
+                bg=self.__base_bg, fg=self.__swfg, anchor="e",
+            )
+            lbl.grid(row=0, column=0, sticky="e")
+            self.__transform_labels.append(lbl)
+            ent = tk.Entry(
+                sub, font=entry_font, width=entry_width, justify="right",
+                bg=self.__entry_theme_dict.get("bg", self.__acbg),
+                fg=self.__entry_theme_dict.get("fg", self.__acfg),
+                insertbackground=self.__entry_theme_dict.get("insertbackground", self.__acfg),
+                relief="sunken", bd=1,
+            )
+            ent.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+            return ent
+
+        # Create transform entry fields
+        self.__transform_x_entry = _make_transform_row(self, 10,
+            message_manager.get_ui_message("U065"))   # "X:"
+        self.__transform_y_entry = _make_transform_row(self, 11,
+            message_manager.get_ui_message("U066"))   # "Y:"
+        self.__transform_angle_entry = _make_transform_row(self, 12,
+            message_manager.get_ui_message("U067"))   # "Angle:" / "角度:"
+        self.__transform_scale_entry = _make_transform_row(self, 13,
+            message_manager.get_ui_message("U068"))   # "Scale:" / "倍率:"
+
+        # Bind Enter key to apply transform values
+        for ent in (self.__transform_x_entry, self.__transform_y_entry,
+                    self.__transform_angle_entry, self.__transform_scale_entry):
+            ent.bind("<Return>", self._on_transform_entry_submit)
+            ent.bind("<KP_Enter>", self._on_transform_entry_submit)
+
+        # Initialize entries with default values
+        self._set_transform_entries(0.0, 0.0, 0.0, 1.0)
 
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
@@ -232,6 +349,87 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         except Exception as e:
             # Failed to update page labels: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
+
+    def set_edit_buttons_enabled(self, enabled: bool) -> None:
+        """Enable or disable edit-related buttons.
+
+        This method controls the availability of:
+        - Insert Blank Page
+        - Finish (export)
+
+        When disabled, buttons are visually grayed out so they are clearly
+        distinguishable from active buttons in every theme (including pastel).
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        self.__edit_buttons_enabled = bool(enabled)
+        # Main processing: disable edit operations for copy-protected PDFs.
+        state = tk.NORMAL if enabled else tk.DISABLED
+        # Disabled appearance: uniform gray to make inactivity obvious
+        disabled_bg = "#b0b0b0"
+        disabled_fg = "#808080"
+        try:
+            if hasattr(self, "insert_blank_btn"):
+                if enabled:
+                    self.insert_blank_btn.configure(
+                        state=state, bg=self.__bg, fg=self.__fg,
+                        disabledforeground=disabled_fg,
+                    )
+                else:
+                    self.insert_blank_btn.configure(
+                        state=state, bg=disabled_bg,
+                        disabledforeground=disabled_fg,
+                    )
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "delete_page_btn"):
+                if enabled:
+                    self.delete_page_btn.configure(
+                        state=state, bg=self.__bg, fg=self.__fg,
+                        disabledforeground=disabled_fg,
+                    )
+                else:
+                    self.delete_page_btn.configure(
+                        state=state, bg=disabled_bg,
+                        disabledforeground=disabled_fg,
+                    )
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "export_btn"):
+                if enabled:
+                    self.export_btn.configure(
+                        state=state, bg=self.__bg, fg=self.__fg,
+                        disabledforeground=disabled_fg,
+                    )
+                else:
+                    self.export_btn.configure(
+                        state=state, bg=disabled_bg,
+                        disabledforeground=disabled_fg,
+                    )
+        except Exception:
+            pass
+
+    def set_batch_edit_enabled(self, enabled: bool) -> None:
+        """Enable or disable the batch edit checkbox (M1-010).
+
+        When page sizes differ, batch edit should be disabled.
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        try:
+            if hasattr(self, '_PageControlFrame__batch_edit_cb'):
+                state = tk.NORMAL if enabled else tk.DISABLED
+                self.__batch_edit_cb.configure(state=state)
+                if not enabled:
+                    self.batch_edit_var.set(False)
+        except Exception:
+            pass
 
     def _on_entry_focus_in(self, event: tk.Event) -> None:
         """Handle entry focus in event to change appearance.
@@ -290,20 +488,26 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             theme_data (Dict[str, Dict[str, Any]]): Theme data from ColorThemeManager
         """
         try:
-            # Get frame theme settings
+            # Get frame / button / component-specific theme settings
             frame_theme = theme_data.get("Frame", {})
             button_theme = theme_data.get("Button", {})
+            component_theme: Dict[str, Any] = theme_data.get(self.__color_key, {})
 
-            # Update color variables
+            # Update color variables from theme
             self.__base_bg = frame_theme.get("bg", self.__base_bg)
             self.__base_fg = frame_theme.get("fg", self.__base_fg)
             self.__bg = button_theme.get("bg", self.__bg)
             self.__fg = button_theme.get("fg", self.__fg)
             self.__acbg = button_theme.get("activebackground", self.__acbg)
             self.__acfg = button_theme.get("activeforeground", self.__acfg)
-            self.__base_bg = frame_theme.get("bg", self.__base_bg)
-            self.__base_fg = frame_theme.get("fg", self.__base_fg)
-            
+
+            # Update component-specific colors (used by transform info section)
+            # Fall back to Frame.fg/bg when page_control key is absent from theme
+            self.__swfg = component_theme.get(
+                "base_font_color", frame_theme.get("fg", self.__swfg))
+            self.__swbg = component_theme.get(
+                "base_bg_color", frame_theme.get("bg", self.__swbg))
+
             # Apply to frame
             self.configure(bg=self.__base_bg)
 
@@ -329,24 +533,46 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 highlightthickness=1,
             )
 
-            # Apply theme to component widgets that implement ThemeColorApplicable
-            for widget in [
-                self.total_pages_label,
-                self.prev_page_btn,
-                self.next_page_btn,
-                self.insert_blank_btn,
-                self.current_page_label,
-            ]:
-                if hasattr(widget, "apply_theme_color"):
-                    widget.apply_theme_color(theme_data)
+            # Note: total_pages_label, prev/next_page_btn, insert_blank_btn
+            # are self-registered with WidgetsTracker and receive
+            # apply_theme_color calls automatically. No explicit loop needed.
 
-            # Apply theme to export button
+            # Apply theme to export button (plain tk.Button, not self-registered)
             self.export_btn.configure(
                 bg=self.__bg,
                 fg=self.__fg,
                 activeforeground=self.__acfg,
                 activebackground=self.__acbg,
             )
+
+            # Apply theme to batch edit checkbox (M1-010)
+            if hasattr(self, '_PageControlFrame__batch_edit_cb'):
+                self.__batch_edit_cb.configure(
+                    bg=self.__base_bg, fg=self.__swfg,
+                    selectcolor=self.__base_bg,
+                    activebackground=self.__base_bg,
+                    activeforeground=self.__swfg,
+                )
+
+            # Apply theme to transform info section (M1-008)
+            if hasattr(self, '_PageControlFrame__transform_separator'):
+                self.__transform_separator.configure(bg=self.__swfg)
+                self.__transform_header.configure(
+                    bg=self.__base_bg, fg=self.__swfg)
+                for sub in self.__transform_sub_frames:
+                    sub.configure(bg=self.__base_bg)
+                for lbl in self.__transform_labels:
+                    lbl.configure(bg=self.__base_bg, fg=self.__swfg)
+                for ent in (self.__transform_x_entry, self.__transform_y_entry,
+                            self.__transform_angle_entry, self.__transform_scale_entry):
+                    ent.configure(
+                        bg=entry_theme.get("bg", self.__acbg),
+                        fg=entry_theme.get("fg", self.__acfg),
+                        insertbackground=entry_theme.get("insertbackground", self.__acfg),
+                    )
+
+            # Main processing: re-apply edit buttons state (e.g. copy-protected mode).
+            self.set_edit_buttons_enabled(self.__edit_buttons_enabled)
 
             logger.debug(message_manager.get_log_message("L173"))
         except Exception as e:
@@ -389,3 +615,104 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         except Exception as e:
             logger.error(message_manager.get_log_message("L175", str(e)))
             raise
+
+    # --- Transform info methods (M1-008) ---
+
+    def _set_transform_entries(self, tx: float, ty: float,
+                               angle: float, scale: float) -> None:
+        """Set the text content of all transform entry fields.
+
+        Args:
+            tx: X translation offset.
+            ty: Y translation offset.
+            angle: Rotation angle in degrees.
+            scale: Scale factor.
+        """
+        for ent, val, fmt in (
+            (self.__transform_x_entry, tx, "{:.1f}"),
+            (self.__transform_y_entry, ty, "{:.1f}"),
+            (self.__transform_angle_entry, angle, "{:.1f}"),
+            (self.__transform_scale_entry, scale, "{:.3f}"),
+        ):
+            ent.delete(0, tk.END)
+            ent.insert(0, fmt.format(val))
+
+    def update_transform_info(self, rotation: float, tx: float,
+                              ty: float, scale: float) -> None:
+        """Update the transform info display with current values.
+
+        Called externally (e.g. from pdf_ope_tab) whenever the transform
+        data for the active page changes.
+
+        Args:
+            rotation: Rotation angle in degrees.
+            tx: X translation offset.
+            ty: Y translation offset.
+            scale: Scale factor.
+        """
+        # Only update if the entry does not currently have keyboard focus
+        # (to avoid overwriting user input in progress).
+        focused = self.focus_get()
+        transform_entries = (
+            self.__transform_x_entry, self.__transform_y_entry,
+            self.__transform_angle_entry, self.__transform_scale_entry,
+        )
+        if focused in transform_entries:
+            return
+        self._set_transform_entries(tx, ty, rotation, scale)
+
+    @staticmethod
+    def _normalize_fullwidth(text: str) -> str:
+        """Convert full-width characters to half-width equivalents.
+
+        Handles full-width digits (０-９), minus (−/ー), period (．),
+        and plus (＋) which users may accidentally type with Japanese IME.
+
+        Args:
+            text: Input string potentially containing full-width characters.
+
+        Returns:
+            String with full-width numeric characters converted to half-width.
+        """
+        # Use NFKC normalization to convert full-width ASCII to half-width
+        normalized = unicodedata.normalize("NFKC", text)
+        # Also handle katakana prolonged sound mark (ー) used as minus
+        normalized = normalized.replace("\u30FC", "-")
+        return normalized.strip()
+
+    def _on_transform_entry_submit(self, event: tk.Event) -> None:
+        """Handle Enter key press in any transform entry field.
+
+        Reads the current values from all four entries, validates them,
+        and invokes the on_transform_value_change callback.
+        Full-width characters are automatically converted to half-width.
+
+        Args:
+            event: Key event from the Entry widget.
+        """
+        try:
+            # Main processing: convert full-width to half-width before parsing
+            tx = float(self._normalize_fullwidth(self.__transform_x_entry.get()))
+            ty = float(self._normalize_fullwidth(self.__transform_y_entry.get()))
+            angle = float(self._normalize_fullwidth(self.__transform_angle_entry.get()))
+            scale = float(self._normalize_fullwidth(self.__transform_scale_entry.get()))
+        except ValueError:
+            # Invalid input; restore previous display values
+            logger.warning("Transform entry: invalid numeric input ignored")
+            return
+
+        # Clamp scale to a reasonable range
+        if scale < 0.01:
+            scale = 0.01
+        elif scale > 10.0:
+            scale = 10.0
+
+        # Update display with validated values
+        self._set_transform_entries(tx, ty, angle, scale)
+
+        # Invoke callback to apply the new transform
+        if self.__on_transform_value_change is not None:
+            self.__on_transform_value_change(angle, tx, ty, scale)
+
+        # Move focus away from entry so subsequent updates are not blocked
+        self.focus_set()

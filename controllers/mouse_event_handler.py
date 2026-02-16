@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys
 import tkinter as tk
 import math
 import time
@@ -23,6 +24,8 @@ class MouseEventHandler:
             current_page_index: int,
             visible_layers: Dict[int, bool],
             on_transform_update: Callable[[], None],
+            operations_enabled: bool = True,
+            blocked_message_code: str = "M055",
         ) -> None:
         """Initialize the MouseEventHandler.
 
@@ -32,6 +35,8 @@ class MouseEventHandler:
             current_page_index: Current page index
             visible_layers: Layer visibility state Dict[layer_number, visibility_state]
             on_transform_update: Callback after transformation update
+            operations_enabled: Whether canvas operations (zoom/pan/rotate/transform) are enabled
+            blocked_message_code: Message code to display when an operation is blocked
         """
         # Transform data and callbacks
         self.__layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]] = layer_transform_data
@@ -41,6 +46,8 @@ class MouseEventHandler:
 
         # Tracking variables
         self.__dragging: bool = False
+        self.__drag_start_x: float = 0.0
+        self.__drag_start_y: float = 0.0
         self.__last_mouse_x: float = 0.0
         self.__last_mouse_y: float = 0.0
         self.__rotation_mode: bool = False
@@ -48,23 +55,47 @@ class MouseEventHandler:
         self.__rotation_center_y: float = 0.0
         self.__rotation_start_time: float = 0.0
         self.__rotation_active: bool = False
+        self.__rotation_drag_start_angle: float = 0.0
+        self.__rotation_drag_total_diff: float = 0.0
+        self.__rotation_last_angle: float = 0.0
+        self.__rotation_drag_base_rotations: Dict[int, float] = {}
+        self.__rotation_center_candidate_x: float = 0.0
+        self.__rotation_center_candidate_y: float = 0.0
+        self.__rotation_center_candidate_pending: bool = False
+        self.__rotation_center_candidate_moved: bool = False
+        self.__rotation_center_img_offsets: Dict[int, tuple[float, float]] = {}
+        self.__rotation_drag_base_transforms: Dict[int, tuple[float, float, float, float]] = {}
+        self.__last_applied_angle: float = 0.0
+        self.__last_rotation_update_time: float = 0.0
         
         # Get message manager for localized messages
         self.__msg_mgr = get_message_manager()
         
         # Canvas reference (will be set in attach_to_canvas)
         self.__canvas_ref: Optional[tk.Canvas] = None
+
+        # Original image dimensions (needed for rotation pivot calculation)
+        self.__orig_image_width: int = 0
+        self.__orig_image_height: int = 0
+
+        # Operation control
+        self.__operations_enabled: bool = operations_enabled
+        self.__blocked_message_code: str = blocked_message_code
+        self.__blocked_warning_ids: Optional[tuple[int, int]] = None
+        self.__blocked_warning_after_id: Optional[str] = None
         
         # Feedback visual elements
         self.__feedback_circle_id: Optional[Union[int, tuple[int, ...]]] = None
         self.__guidance_text_id: Optional[int] = None
         self.__background_id: Optional[Union[int, tuple[int, ...]]] = None
         self.__notification_text_id: Optional[int] = None
+        self.__notification_border_id: Optional[int] = None
+        self.__notification_after_id: Optional[str] = None
         self.__shortcut_help_id: Optional[Union[int, tuple[int, ...]]] = None
         self.__help_display_id: Optional[int] = None
         self.__help_background_id: Optional[int] = None
         
-        # UI state
+        # UI state (M1-011: single source of truth for shortcut help visibility)
         self.__shortcut_help_visible: bool = False
         
         # Feedback message state
@@ -91,9 +122,405 @@ class MouseEventHandler:
         """
         self.__current_page_index = current_page_index
         self.__visible_layers = visible_layers
-        
-        # Clear visual feedback when state changes
-        self._clear_feedback()
+
+    def set_original_image_size(self, width: int, height: int) -> None:
+        """Store the original (unrotated, unscaled) image dimensions.
+
+        These are needed to compute rotation pivot translation adjustments.
+
+        Args:
+            width: Original image width in pixels.
+            height: Original image height in pixels.
+        """
+        self.__orig_image_width = width
+        self.__orig_image_height = height
+
+    @property
+    def shortcut_help_visible(self) -> bool:
+        """Return whether the shortcut help overlay is currently visible (M1-011).
+
+        This property provides a read-only view of the help visibility flag
+        so that external code (e.g. other tabs) can query the state without
+        directly accessing private attributes.
+
+        Returns:
+            True if the shortcut help overlay is displayed.
+        """
+        return self.__shortcut_help_visible
+
+    def set_shortcut_help_visibility(self, visible: bool) -> None:
+        """Explicitly show or hide the shortcut help overlay (M1-011).
+
+        Provides a programmatic interface for controlling the help overlay,
+        enabling reuse of the same mechanism across multiple tabs.
+
+        Args:
+            visible: True to show, False to hide.
+        """
+        if visible and not self.__shortcut_help_visible:
+            self._show_shortcut_help()
+        elif not visible and self.__shortcut_help_visible:
+            self._hide_shortcut_help()
+
+    def clear_overlays(self) -> None:
+        """Clear all canvas overlay items managed by this handler."""
+        if self.__canvas_ref is None:
+            return
+
+        # Main processing: cancel scheduled callbacks.
+        if self.__notification_after_id is not None:
+            try:
+                self.__canvas_ref.after_cancel(self.__notification_after_id)
+            except Exception:
+                pass
+            self.__notification_after_id = None
+
+        if self.__blocked_warning_after_id is not None:
+            try:
+                self.__canvas_ref.after_cancel(self.__blocked_warning_after_id)
+            except Exception:
+                pass
+            self.__blocked_warning_after_id = None
+
+        # Main processing: delete all overlay-tagged items.
+        try:
+            self.__canvas_ref.delete("overlay")
+        except Exception:
+            pass
+
+        # Main processing: reset IDs and flags.
+        self.__feedback_circle_id = None
+        self.__guidance_text_id = None
+        self.__background_id = None
+        self.__notification_text_id = None
+        self.__notification_border_id = None
+        self.__help_display_id = None
+        self.__help_background_id = None
+        self.__blocked_warning_ids = None
+        self.__shortcut_help_visible = False
+
+    def refresh_overlay_positions(self) -> None:
+        """Refresh overlay positions based on the current visible area."""
+        if self.__canvas_ref is None:
+            return
+
+        x0, y0 = self._get_visible_origin()
+        width = self.__canvas_ref.winfo_width()
+        height = self.__canvas_ref.winfo_height()
+
+        if width <= 1 or height <= 1:
+            try:
+                self.__canvas_ref.update_idletasks()
+            except Exception:
+                pass
+            width = self.__canvas_ref.winfo_width()
+            height = self.__canvas_ref.winfo_height()
+
+        # Main processing: notification (top-center of visible area).
+        if self.__notification_text_id is not None:
+            try:
+                self.__canvas_ref.coords(
+                    self.__notification_text_id,
+                    x0 + width / 2,
+                    y0 + 12,
+                )
+                bbox = self.__canvas_ref.bbox(self.__notification_text_id)
+                if bbox is not None and self.__notification_border_id is not None:
+                    x1, y1, x2, y2 = bbox
+                    pad = 6
+                    self.__canvas_ref.coords(
+                        self.__notification_border_id,
+                        x1 - pad,
+                        y1 - pad,
+                        x2 + pad,
+                        y2 + pad,
+                    )
+            except Exception:
+                pass
+
+        # Main processing: shortcut help (top-RIGHT of visible area) (M1-011).
+        if self.__shortcut_help_visible:
+            # Validate that canvas items still exist (may have been deleted externally).
+            items_exist = (
+                self.__help_display_id is not None
+                and self.__help_background_id is not None
+                and self.__canvas_ref.find_withtag("overlay_shortcut_help")
+            )
+            if not items_exist:
+                # Sync flag: items were deleted externally, reset state.
+                self.__help_display_id = None
+                self.__help_background_id = None
+                self.__shortcut_help_visible = False
+            else:
+                try:
+                    outer_pad = 12
+                    inner_pad = 10
+                    # Measure text size at current position (no temp move to avoid flicker).
+                    bbox = self.__canvas_ref.bbox(self.__help_display_id)
+                    if bbox is not None:
+                        text_w = bbox[2] - bbox[0]
+                        text_h = bbox[3] - bbox[1]
+                        rect_x2 = x0 + width - outer_pad
+                        rect_y1 = y0 + outer_pad
+                        rect_x1 = rect_x2 - text_w - 2 * inner_pad
+                        text_x = rect_x1 + inner_pad
+                        text_y = rect_y1 + inner_pad
+                        self.__canvas_ref.coords(self.__help_display_id, text_x, text_y)
+                        self.__canvas_ref.coords(
+                            self.__help_background_id,
+                            rect_x1,
+                            rect_y1,
+                            rect_x2,
+                            rect_y1 + text_h + 2 * inner_pad,
+                        )
+                except Exception:
+                    pass
+
+        # Main processing: rotation center red dot (reposition from image coords).
+        if self.__rotation_mode and self.__feedback_circle_id is not None and self.__rotation_center_img_offsets:
+            try:
+                rc = self._rotation_center_canvas_pos()
+                if rc[0] is not None:
+                    self.__rotation_center_x = rc[0]
+                    self.__rotation_center_y = rc[1]
+                    radius = 5
+                    self.__canvas_ref.coords(
+                        self.__feedback_circle_id,
+                        rc[0] - radius, rc[1] - radius,
+                        rc[0] + radius, rc[1] + radius,
+                    )
+            except Exception:
+                pass
+
+        # Main processing: guidance text (bottom-center of visible area).
+        if self.__guidance_text_id is not None and self.__background_id is not None:
+            try:
+                bottom = y0 + height
+                self.__canvas_ref.coords(
+                    self.__guidance_text_id,
+                    x0 + width / 2,
+                    bottom - 25,
+                )
+                if isinstance(self.__background_id, tuple):
+                    for bg_id in self.__background_id:
+                        self.__canvas_ref.coords(
+                            bg_id,
+                            x0 + 10,
+                            bottom - 40,
+                            x0 + width - 10,
+                            bottom - 10,
+                        )
+                else:
+                    self.__canvas_ref.coords(
+                        self.__background_id,
+                        x0 + 10,
+                        bottom - 40,
+                        x0 + width - 10,
+                        bottom - 10,
+                    )
+            except Exception:
+                pass
+
+    def _get_visible_origin(self) -> tuple[float, float]:
+        """Get the top-left origin of the visible canvas area in canvas coordinates."""
+        if self.__canvas_ref is None:
+            return (0.0, 0.0)
+        return (float(self.__canvas_ref.canvasx(0)), float(self.__canvas_ref.canvasy(0)))
+
+    def _compute_rotated_dims(self, angle_deg: float) -> tuple[float, float]:
+        """Compute the rotated image dimensions after PIL rotate with expand=True.
+
+        Args:
+            angle_deg: Rotation angle in degrees.
+
+        Returns:
+            (rotated_width, rotated_height) in original image pixels.
+        """
+        rad = math.radians(angle_deg)
+        abs_cos = abs(math.cos(rad))
+        abs_sin = abs(math.sin(rad))
+        W = self.__orig_image_width
+        H = self.__orig_image_height
+        rw = W * abs_cos + H * abs_sin
+        rh = W * abs_sin + H * abs_cos
+        return (rw, rh)
+
+    def _canvas_to_image_offset(
+        self, cx: float, cy: float, r: float, tx: float, ty: float, s: float,
+    ) -> tuple[float, float]:
+        """Convert a canvas point to an offset from the original image center.
+
+        The offset is in original (unrotated) image coordinates relative to the
+        image center, so it stays constant regardless of rotation/scale/translation.
+
+        Args:
+            cx: Canvas x coordinate.
+            cy: Canvas y coordinate.
+            r: Current rotation in degrees.
+            tx: Current translation x (image NW anchor).
+            ty: Current translation y (image NW anchor).
+            s: Current scale factor.
+
+        Returns:
+            (ux, uy) offset from image center in original image pixels.
+        """
+        rad = math.radians(r)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        rw, rh = self._compute_rotated_dims(r)
+        # Point in rotated-image coords (centered at rotated image center)
+        vx = (cx - tx) / s - rw / 2
+        vy = (cy - ty) / s - rh / 2
+        # Inverse PIL rotation: R_pil(-r) = [[cos, -sin], [sin, cos]]
+        ux = cos_r * vx - sin_r * vy
+        uy = sin_r * vx + cos_r * vy
+        return (ux, uy)
+
+    def _image_offset_to_canvas(
+        self, ux: float, uy: float, r: float, tx: float, ty: float, s: float,
+    ) -> tuple[float, float]:
+        """Convert an image-center-relative offset back to canvas coordinates.
+
+        Args:
+            ux: Offset x from image center in original image pixels.
+            uy: Offset y from image center in original image pixels.
+            r: Current rotation in degrees.
+            tx: Current translation x (image NW anchor).
+            ty: Current translation y (image NW anchor).
+            s: Current scale factor.
+
+        Returns:
+            (canvas_x, canvas_y) on the canvas.
+        """
+        rad = math.radians(r)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        rw, rh = self._compute_rotated_dims(r)
+        # Forward PIL rotation: R_pil(r) = [[cos, sin], [-sin, cos]]
+        vx = cos_r * ux + sin_r * uy
+        vy = -sin_r * ux + cos_r * uy
+        # Canvas position
+        canvas_x = s * (vx + rw / 2) + tx
+        canvas_y = s * (vy + rh / 2) + ty
+        return (canvas_x, canvas_y)
+
+    def _rotation_center_canvas_pos(self) -> tuple[float | None, float | None]:
+        """Compute current canvas position of rotation center from image-relative offset.
+
+        Uses the first visible layer that has stored image offset data.
+
+        Returns:
+            (canvas_x, canvas_y) or (None, None) if unavailable.
+        """
+        if not self.__rotation_center_img_offsets or self.__orig_image_width == 0:
+            return (None, None)
+        for layer_id, visible in self.__visible_layers.items():
+            if not visible:
+                continue
+            if layer_id not in self.__rotation_center_img_offsets:
+                continue
+            if layer_id not in self.__layer_transform_data:
+                continue
+            if self.__current_page_index >= len(self.__layer_transform_data[layer_id]):
+                continue
+            ux, uy = self.__rotation_center_img_offsets[layer_id]
+            r, tx, ty, s = self.__layer_transform_data[layer_id][self.__current_page_index]
+            return self._image_offset_to_canvas(ux, uy, r, tx, ty, s)
+        return (None, None)
+
+    def set_operations_enabled(self, enabled: bool) -> None:
+        """Enable or disable interactive canvas operations.
+
+        Args:
+            enabled: True to enable operations, False to disable them
+        """
+        self.__operations_enabled = enabled
+
+    def show_operation_blocked_warning(self) -> None:
+        """Show a centered warning overlay on the canvas for blocked operations."""
+        if self.__canvas_ref is None:
+            return
+
+        if self.__blocked_warning_ids is not None:
+            if self.__blocked_warning_after_id is not None:
+                try:
+                    self.__canvas_ref.after_cancel(self.__blocked_warning_after_id)
+                except Exception:
+                    pass
+            self.__blocked_warning_after_id = self.__canvas_ref.after(
+                1500,
+                self._hide_operation_blocked_warning,
+            )
+            return
+
+        # Main processing: render a warning in the canvas center.
+        canvas_width = self.__canvas_ref.winfo_width()
+        canvas_height = self.__canvas_ref.winfo_height()
+        if canvas_width <= 1 or canvas_height <= 1:
+            self.__canvas_ref.update_idletasks()
+            canvas_width = self.__canvas_ref.winfo_width()
+            canvas_height = self.__canvas_ref.winfo_height()
+
+        x0, y0 = self._get_visible_origin()
+
+        message = self.__msg_mgr.get_message(self.__blocked_message_code)
+        padding_x = 18
+        padding_y = 12
+
+        # Clear previous warning
+        if self.__blocked_warning_ids is not None:
+            rect_id, text_id = self.__blocked_warning_ids
+            self.__canvas_ref.delete(rect_id)
+            self.__canvas_ref.delete(text_id)
+            self.__blocked_warning_ids = None
+
+        # Create text first to get bbox
+        text_id = self.__canvas_ref.create_text(
+            x0 + canvas_width / 2,
+            y0 + canvas_height / 2,
+            text=message,
+            fill="#ffffff",
+            font=("Helvetica", 12, "bold"),
+            justify=tk.CENTER,
+            tags=("overlay", "overlay_blocked_warning"),
+        )
+        bbox = self.__canvas_ref.bbox(text_id)
+        if bbox is None:
+            self.__canvas_ref.delete(text_id)
+            return
+        x1, y1, x2, y2 = bbox
+
+        rect_id = self.__canvas_ref.create_rectangle(
+            x1 - padding_x,
+            y1 - padding_y,
+            x2 + padding_x,
+            y2 + padding_y,
+            fill="#ff3b30",
+            outline="#ff0000",
+            width=2,
+            tags=("overlay", "overlay_blocked_warning"),
+        )
+        self.__canvas_ref.tag_lower(rect_id, text_id)
+        self.__blocked_warning_ids = (rect_id, text_id)
+        # Auto-hide after a short duration
+        self.__blocked_warning_after_id = self.__canvas_ref.after(
+            1500,
+            self._hide_operation_blocked_warning,
+        )
+
+    def _hide_operation_blocked_warning(self) -> None:
+        """Hide the copy-protected operation blocked warning overlay."""
+        if self.__canvas_ref is None:
+            return
+
+        if self.__blocked_warning_ids is None:
+            return
+
+        rect_id, text_id = self.__blocked_warning_ids
+        self.__canvas_ref.delete(rect_id)
+        self.__canvas_ref.delete(text_id)
+        self.__blocked_warning_ids = None
+        self.__blocked_warning_after_id = None
         
     def add_layer(self, layer_id: int, init_transform_data: List[Tuple[float, float, float, float]]) -> None:
         """Add a new layer.
@@ -146,14 +573,81 @@ class MouseEventHandler:
             
             # Toggle shortcut help (Ctrl+? or Ctrl+Shift+H for help)
             canvas_widget.bind('<Control-question>', self._toggle_shortcut_help)
+            canvas_widget.bind('<Control-slash>', self._toggle_shortcut_help)
+            canvas_widget.bind('<Control-Shift-slash>', self._toggle_shortcut_help)
             canvas_widget.bind('<Control-Shift-h>', self._toggle_shortcut_help)
             canvas_widget.bind('<Control-Shift-H>', self._toggle_shortcut_help)
+
+            # Main processing: exit rotation mode when Ctrl is released.
+            canvas_widget.bind('<KeyRelease-Control_L>', self._on_ctrl_key_release)
+            canvas_widget.bind('<KeyRelease-Control_R>', self._on_ctrl_key_release)
             
             # Allow canvas to receive keyboard events by making it focusable
             canvas_widget.config(takefocus=1)
             
             # Set focus to canvas on click
             canvas_widget.bind('<Button-1>', lambda e: canvas_widget.focus_set())
+
+    def _event_to_canvas_coords(self, event_x: float, event_y: float) -> tuple[float, float]:
+        """Convert event (widget) coordinates to canvas coordinates.
+
+        Args:
+            event_x: Event x in widget coordinates.
+            event_y: Event y in widget coordinates.
+
+        Returns:
+            Tuple[float, float]: (x, y) in canvas coordinates.
+        """
+        if self.__canvas_ref is None:
+            return (event_x, event_y)
+        return (float(self.__canvas_ref.canvasx(event_x)), float(self.__canvas_ref.canvasy(event_y)))
+
+    def _is_ctrl_physically_pressed(self) -> bool:
+        """Check if the Ctrl key is physically held right now (M1-006).
+
+        Uses the Windows API ``GetAsyncKeyState`` to query the real-time
+        hardware key state, bypassing stale events that may still be queued
+        in the Tkinter event loop.  On non-Windows platforms the method
+        returns ``True`` as a safe fallback so that rotation processing
+        proceeds normally and relies on the Tkinter KeyRelease event.
+
+        Returns:
+            bool: True if Ctrl is currently pressed (or on non-Windows).
+        """
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # VK_CONTROL = 0x11; high bit set means key is currently down.
+                return bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+            except (AttributeError, OSError):
+                return True
+        return True
+
+    def _on_ctrl_key_release(self, event: tk.Event) -> str | None:
+        """Exit rotation mode when Ctrl key is released.
+
+        Args:
+            event: Keyboard event.
+
+        Returns:
+            str | None: "break" to stop propagation.
+        """
+        if not self.__rotation_mode:
+            return "break"
+
+        # Main processing: clear rotation UI and state.
+        self._hide_feedback_circle()
+        self._hide_guidance_text()
+        self.__rotation_mode = False
+        self.__rotation_active = False
+        self.__dragging = False  # Discard queued motion events (M1-006).
+        self.__rotation_drag_base_rotations = {}
+        self.__rotation_drag_base_transforms = {}
+        self.__rotation_center_img_offsets = {}
+        self.__rotation_center_candidate_pending = False
+        self.__rotation_center_candidate_moved = False
+        self.__last_applied_angle = 0.0
+        return "break"
     
     def on_mouse_down(self, event: tk.Event) -> None:
         """Handle mouse button press.
@@ -162,31 +656,77 @@ class MouseEventHandler:
             event: Mouse event
         """
         self.__dragging = True
-        self.__last_mouse_x = event.x
-        self.__last_mouse_y = event.y
+        last_x, last_y = self._event_to_canvas_coords(event.x, event.y)
+        self.__drag_start_x = last_x
+        self.__drag_start_y = last_y
+        self.__last_mouse_x = last_x
+        self.__last_mouse_y = last_y
         
         # Check for Ctrl key
         state = int(event.state)
         ctrl_pressed = (state & 0x0004) != 0  # Control key bitmask
         
+        if ctrl_pressed and not self.__operations_enabled:
+            return
+
         if ctrl_pressed and self.__canvas_ref:
             # Toggle rotation mode or update rotation center
             if not self.__rotation_mode:
-                # Entering rotation mode
+                # Entering rotation mode: record pivot in image-relative coords
                 self.__rotation_mode = True
-                self.__rotation_center_x = event.x
-                self.__rotation_center_y = event.y
+                center_x, center_y = self._event_to_canvas_coords(event.x, event.y)
+                self.__rotation_center_x = center_x
+                self.__rotation_center_y = center_y
                 self.__rotation_active = False
                 self.__rotation_start_time = time.time()
-                self._show_feedback_circle(event.x, event.y)
+                self.__rotation_drag_base_rotations = {}
+                self.__rotation_center_candidate_pending = False
+                self.__rotation_center_candidate_moved = False
+                self.__last_applied_angle = 0.0
+
+                # Main processing: store per-layer image offsets and base transforms.
+                self.__rotation_center_img_offsets = {}
+                self.__rotation_drag_base_transforms = {}
+                have_img_size = self.__orig_image_width > 0 and self.__orig_image_height > 0
+                for lid, vis in self.__visible_layers.items():
+                    if not vis:
+                        continue
+                    if lid in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[lid]):
+                        r, tx, ty, s = self.__layer_transform_data[lid][self.__current_page_index]
+                        self.__rotation_drag_base_transforms[lid] = (r, tx, ty, s)
+                        self.__rotation_drag_base_rotations[lid] = r
+                        if have_img_size:
+                            ux, uy = self._canvas_to_image_offset(center_x, center_y, r, tx, ty, s)
+                            self.__rotation_center_img_offsets[lid] = (ux, uy)
+
+                self._show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
                 self._show_guidance_text(self.__msg_mgr.get_message('M042'))  # M042: Rotation mode - drag to rotate
             else:
-                # Already in rotation mode, update center point
-                self.__rotation_center_x = event.x
-                self.__rotation_center_y = event.y
+                # Main processing: keep rotation center fixed; reset drag for a new gesture.
                 self.__rotation_active = False
                 self.__rotation_start_time = time.time()
-                self._show_feedback_circle(event.x, event.y)
+                self.__rotation_center_candidate_pending = False
+                self.__rotation_center_candidate_moved = False
+                self.__last_applied_angle = 0.0
+
+                # Re-snapshot base transforms for a fresh drag gesture
+                self.__rotation_drag_base_rotations = {}
+                self.__rotation_drag_base_transforms = {}
+                have_img_size = self.__orig_image_width > 0 and self.__orig_image_height > 0
+                for lid, vis in self.__visible_layers.items():
+                    if not vis:
+                        continue
+                    if lid in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[lid]):
+                        r, tx, ty, s = self.__layer_transform_data[lid][self.__current_page_index]
+                        self.__rotation_drag_base_transforms[lid] = (r, tx, ty, s)
+                        self.__rotation_drag_base_rotations[lid] = r
+
+                # Recompute red dot canvas position from image coords
+                rc = self._rotation_center_canvas_pos()
+                if rc[0] is not None:
+                    self.__rotation_center_x = rc[0]
+                    self.__rotation_center_y = rc[1]
+                self._show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
                 self._show_guidance_text(self.__msg_mgr.get_message('M042'))  # M042: Rotation mode - drag to rotate
 
     def on_mouse_drag(self, event: tk.Event) -> None:
@@ -202,8 +742,9 @@ class MouseEventHandler:
         if not self.__dragging:
             return
 
-        dx = event.x - self.__last_mouse_x
-        dy = event.y - self.__last_mouse_y
+        current_x, current_y = self._event_to_canvas_coords(event.x, event.y)
+        dx = current_x - self.__last_mouse_x
+        dy = current_y - self.__last_mouse_y
 
         # Cast event.state to int for type safety
         state = int(event.state)
@@ -211,43 +752,119 @@ class MouseEventHandler:
 
         # Check if we're in rotation mode with Ctrl key
         if ctrl_pressed and self.__rotation_mode:
+            # Discard stale queued events: check real-time Ctrl state (M1-006).
+            if not self._is_ctrl_physically_pressed():
+                self._on_ctrl_key_release(event)
+                return
+
+            if not self.__operations_enabled:
+                return
+
+            if self.__rotation_center_candidate_pending and not self.__rotation_center_candidate_moved:
+                if (abs(current_x - self.__drag_start_x) > 4) or (abs(current_y - self.__drag_start_y) > 4):
+                    self.__rotation_center_candidate_moved = True
+                    self.__rotation_center_candidate_pending = False
             # Check if we should activate rotation (after brief delay)
             current_time = time.time()
             if not self.__rotation_active and (current_time - self.__rotation_start_time) > 0.05:
-                self.__rotation_active = True
-                self._show_guidance_text(self.__msg_mgr.get_message('M042'))  # Now rotating
-            
+                curr_dx = current_x - self.__rotation_center_x
+                curr_dy = current_y - self.__rotation_center_y
+                if (curr_dx * curr_dx + curr_dy * curr_dy) >= (10.0 * 10.0):
+                    self.__rotation_active = True
+                    # Main processing: record initial angle for incremental delta tracking.
+                    self.__rotation_last_angle = math.atan2(-curr_dy, curr_dx)
+                    self.__rotation_drag_total_diff = 0.0
+                    self.__last_applied_angle = 0.0
+                    self.__last_rotation_update_time = 0.0
+                    # Re-snapshot base rotations/transforms at drag activation
+                    self.__rotation_drag_base_rotations = {}
+                    self.__rotation_drag_base_transforms = {}
+                    for layer_id, visible in self.__visible_layers.items():
+                        if not visible:
+                            continue
+                        if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
+                            r, tx, ty, s = self.__layer_transform_data[layer_id][self.__current_page_index]
+                            self.__rotation_drag_base_rotations[layer_id] = r
+                            self.__rotation_drag_base_transforms[layer_id] = (r, tx, ty, s)
+                    self._show_guidance_text(self.__msg_mgr.get_message('M042'))
+             
             # Only apply rotation if active
             if self.__rotation_active:
-                # Calculate angle from center point
-                # Get angle between previous point and center
-                prev_dx = self.__last_mouse_x - self.__rotation_center_x
-                prev_dy = self.__last_mouse_y - self.__rotation_center_y
-                prev_angle = math.atan2(prev_dy, prev_dx)
-                
-                # Get angle between current point and center
-                curr_dx = event.x - self.__rotation_center_x
-                curr_dy = event.y - self.__rotation_center_y
-                curr_angle = math.atan2(curr_dy, curr_dx)
-                
-                # Calculate angle difference in degrees
-                angle_diff = math.degrees(curr_angle - prev_angle)
-                
-                # Apply to all visible layers
+                curr_dx = current_x - self.__rotation_center_x
+                curr_dy = current_y - self.__rotation_center_y
+                if (curr_dx * curr_dx + curr_dy * curr_dy) < (10.0 * 10.0):
+                    self.__last_mouse_x = current_x
+                    self.__last_mouse_y = current_y
+                    return
+
+                # Rate-limit rotation updates (~30fps) to prevent event queue buildup
+                now = time.time()
+                if (now - self.__last_rotation_update_time) < 0.033:
+                    self.__last_mouse_x = current_x
+                    self.__last_mouse_y = current_y
+                    return
+                self.__last_rotation_update_time = now
+
+                curr_angle = math.atan2(-curr_dy, curr_dx)
+
+                # Main processing: incremental delta with unwrap (handles >360° naturally).
+                delta = curr_angle - self.__rotation_last_angle
+                if delta > math.pi:
+                    delta -= 2 * math.pi
+                elif delta < -math.pi:
+                    delta += 2 * math.pi
+                self.__rotation_drag_total_diff += delta
+                self.__rotation_last_angle = curr_angle
+
+                angle_diff = round(math.degrees(self.__rotation_drag_total_diff), 1)
+                # Hysteresis: ignore changes < 0.2° to absorb mouse position jitter
+                if abs(angle_diff - self.__last_applied_angle) < 0.2:
+                    self.__last_mouse_x = current_x
+                    self.__last_mouse_y = current_y
+                    return
+                self.__last_applied_angle = angle_diff
+
+                have_img_size = self.__orig_image_width > 0 and self.__orig_image_height > 0
+                # Use fixed canvas position for pivot (do NOT recompute during drag)
+                px, py = self.__rotation_center_x, self.__rotation_center_y
+
+                # Apply rotation with pivot-compensated translation to all visible layers
                 for layer_id, visible in self.__visible_layers.items():
-                    # Check if current page index is within range
-                    if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                        r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                        new_r = r + angle_diff
-                        # Round to nearest degree for smoother display
-                        new_r = round(new_r)
+                    if not visible:
+                        continue
+                    if layer_id not in self.__layer_transform_data:
+                        continue
+                    if self.__current_page_index >= len(self.__layer_transform_data[layer_id]):
+                        continue
+
+                    base_t = self.__rotation_drag_base_transforms.get(layer_id)
+                    if base_t is None:
+                        continue
+                    base_r, base_tx, base_ty, base_s = base_t
+                    new_r = base_r + angle_diff
+
+                    if have_img_size and layer_id in self.__rotation_center_img_offsets:
+                        # Compute new translation so that the pivot stays at (px, py)
+                        ux, uy = self.__rotation_center_img_offsets[layer_id]
+                        rad_new = math.radians(new_r)
+                        cos_new = math.cos(rad_new)
+                        sin_new = math.sin(rad_new)
+                        vx_new = cos_new * ux + sin_new * uy
+                        vy_new = -sin_new * ux + cos_new * uy
+                        rw_new, rh_new = self._compute_rotated_dims(new_r)
+                        new_tx = px - base_s * (vx_new + rw_new / 2)
+                        new_ty = py - base_s * (vy_new + rh_new / 2)
+                        self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, new_tx, new_ty, base_s)
+                    else:
+                        # Fallback: rotate without translation adjustment
+                        _, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
                         self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
                 
-                # Update feedback circle to show rotation is active
-                self._show_feedback_circle(event.x, event.y, is_rotating=True)
-                
-                # Always update when rotating
+                # Main processing: update canvas; keep red dot at fixed canvas position during drag.
                 self.__on_transform_update()
+                self._show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                self.refresh_overlay_positions()
+                
         else:
             # Standard image movement
             # Apply throttling to prevent excessive rendering
@@ -273,8 +890,8 @@ class MouseEventHandler:
                 self.__on_transform_update()
 
         # Update last mouse position
-        self.__last_mouse_x = event.x
-        self.__last_mouse_y = event.y
+        self.__last_mouse_x = current_x
+        self.__last_mouse_y = current_y
 
     def on_mouse_up(self, event: tk.Event) -> None:
         """Handle mouse button release.
@@ -290,31 +907,22 @@ class MouseEventHandler:
         
         # Handle rotation mode completion
         if self.__rotation_mode:
-            if self.__rotation_active:
-                # Extract current rotation angle for the notification
-                angle = 0.0  # Initialize as float type
-                for layer_id in self.__layer_transform_data:
-                    if self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                        r, _, _, _ = self.__layer_transform_data[layer_id][self.__current_page_index]
-                        angle = float(r)  # Explicitly convert to float type
-                        break
-                
-                # Update UI with rotation information - round to nearest degree for better readability
-                rounded_angle = round(angle)
-                self._show_notification(self.__msg_mgr.get_message('M043'))  # M043: Rotation complete
-                
-                # Keep feedback circle visible briefly before fading out
-                if self.__canvas_ref is not None:
-                    # Schedule feedback circle to be hidden after 500ms for better visual feedback
-                    self.__canvas_ref.after(500, self._hide_feedback_circle)
-                    
-                    # Also update guidance text to confirm rotation is complete
-                    self._show_guidance_text(self.__msg_mgr.get_message('M043'))  # M043: Rotation complete
-                    # Schedule guidance text to be hidden after 800ms
-                    self.__canvas_ref.after(800, self._hide_guidance_text)
-                
-                # Reset rotation active state but stay in rotation mode if Ctrl is still pressed
+            # Main processing: keep M042 visible until Ctrl is released.
+            if ctrl_pressed:
                 self.__rotation_active = False
+                self.__rotation_drag_base_rotations = {}
+                self.__rotation_drag_base_transforms = {}
+                self.__rotation_center_candidate_pending = False
+                self.__rotation_center_candidate_moved = False
+                self.__last_applied_angle = 0.0
+                # Recompute red dot canvas position from image coords
+                rc = self._rotation_center_canvas_pos()
+                if rc[0] is not None:
+                    self.__rotation_center_x = rc[0]
+                    self.__rotation_center_y = rc[1]
+                self._show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+                self._show_guidance_text(self.__msg_mgr.get_message('M042'))
+                return
                 
             # If Ctrl is no longer pressed, exit rotation mode completely
             if not ctrl_pressed:
@@ -322,6 +930,12 @@ class MouseEventHandler:
                 self._hide_guidance_text()
                 self.__rotation_mode = False
                 self.__rotation_active = False
+                self.__rotation_drag_base_rotations = {}
+                self.__rotation_drag_base_transforms = {}
+                self.__rotation_center_img_offsets = {}
+                self.__rotation_center_candidate_pending = False
+                self.__rotation_center_candidate_moved = False
+                self.__last_applied_angle = 0.0
 
     def _hide_feedback_circle(self) -> None:
         """Hide the feedback circle."""
@@ -366,8 +980,9 @@ class MouseEventHandler:
         if self.__canvas_ref is None:
             return
         
-        # Hide any help or guidance that might be showing
-        self._hide_guidance_text()
+        # Main processing: keep rotation guidance while Ctrl rotation mode is active.
+        if not self.__rotation_mode:
+            self._hide_guidance_text()
         
         # Only log mouse wheel events if throttle allows (0.5 second interval)
         should_log = self._wheel_log_throttle.should_log("mouse_wheel_event")
@@ -390,8 +1005,9 @@ class MouseEventHandler:
         # Get canvas center for scaling origin
         canvas_width = self.__canvas_ref.winfo_width()
         canvas_height = self.__canvas_ref.winfo_height()
-        center_x = canvas_width / 2
-        center_y = canvas_height / 2
+        x0, y0 = self._get_visible_origin()
+        center_x = x0 + canvas_width / 2
+        center_y = y0 + canvas_height / 2
         
         # Apply zoom to all visible layers around canvas center
         for layer_id, visible in self.__visible_layers.items():
@@ -415,6 +1031,16 @@ class MouseEventHandler:
         
         # Update display
         self.__on_transform_update()
+
+        # Main processing: recompute red dot position after zoom if in rotation mode.
+        if self.__rotation_mode and self.__rotation_center_img_offsets:
+            rc = self._rotation_center_canvas_pos()
+            if rc[0] is not None:
+                self.__rotation_center_x = rc[0]
+                self.__rotation_center_y = rc[1]
+            self._show_feedback_circle(self.__rotation_center_x, self.__rotation_center_y, is_rotating=True)
+
+        self.refresh_overlay_positions()
         
         # Log zoom operation only if throttle allows (0.5秒間隔)
         if should_log:
@@ -440,28 +1066,17 @@ class MouseEventHandler:
             
         # Hide any existing circle
         self._hide_feedback_circle()
-        
-        # Determine size and colors based on mode - improved visibility
-        radius = 25 if is_rotating else 12  # Larger radius for better visibility
-        # Always use red for rotation center (Ctrl+Click) and blue for regular feedback
-        outer_color = "#ff0000" if is_rotating else "#00aaff"  # Red for rotation center
-        inner_color = "#ff5555" if is_rotating else "#55ccff"   # Lighter red for inner circle
-        
-        # Draw outer circle
-        outer_circle = self.__canvas_ref.create_oval(
+
+        # Main processing: show a red dot for rotation center.
+        radius = 5
+        dot_id = self.__canvas_ref.create_oval(
             x - radius, y - radius, x + radius, y + radius,
-            outline=outer_color, width=2
+            fill="#ff0000", outline="#ff0000", width=1,
+            tags=("overlay", "overlay_rotation_center"),
         )
-        
-        # Draw inner circle (2/3 size)
-        inner_radius = radius * 2/3
-        inner_circle = self.__canvas_ref.create_oval(
-            x - inner_radius, y - inner_radius, x + inner_radius, y + inner_radius,
-            fill=inner_color, outline=""
-        )
-        
+
         # Store IDs for later removal
-        self.__feedback_circle_id = (outer_circle, inner_circle)
+        self.__feedback_circle_id = dot_id
         
         # Log feedback creation
         logger.debug(message_manager.get_log_message("L334", f"position=({x},{y}), rotating={is_rotating}"))
@@ -481,22 +1096,32 @@ class MouseEventHandler:
         # Get canvas dimensions for centering
         canvas_width = self.__canvas_ref.winfo_width()
         canvas_height = self.__canvas_ref.winfo_height()
+        x0, y0 = self._get_visible_origin()
         
-        # Create semi-transparent background
+        # Create red border rectangle with transparent background
         bg = self.__canvas_ref.create_rectangle(
-            10, canvas_height - 40, canvas_width - 10, canvas_height - 10,
-            fill="#000000", stipple="gray50"
+            x0 + 10,
+            y0 + canvas_height - 40,
+            x0 + canvas_width - 10,
+            y0 + canvas_height - 10,
+            fill="",
+            outline="#ff0000",
+            width=2,
+            tags=("overlay", "overlay_guidance"),
         )
         
-        # Determine text color based on content - use red for rotation guidance
-        text_color = "#ff0000" if "回転" in message or "rotating" in message.lower() else "#ffffff"
-        
-        # Create text on top - centered both horizontally and vertically
+        # Create text in red - centered both horizontally and vertically
         text_id = self.__canvas_ref.create_text(
-            canvas_width / 2, canvas_height - 25,
-            text=message, fill=text_color, font=("Helvetica", 10, "bold"),
-            anchor="center", justify="center"
+            x0 + canvas_width / 2,
+            y0 + canvas_height - 25,
+            text=message,
+            fill="#ff0000",
+            font=("Helvetica", 10, "bold"),
+            anchor="center",
+            justify="center",
+            tags=("overlay", "overlay_guidance"),
         )
+        self.__canvas_ref.tag_raise(text_id, bg)
         
         # Store IDs for later removal
         self.__guidance_text_id = text_id
@@ -515,32 +1140,83 @@ class MouseEventHandler:
         if self.__canvas_ref is None:
             return
             
+        # Main processing: cancel any existing scheduled hide.
+        if self.__notification_after_id is not None:
+            try:
+                self.__canvas_ref.after_cancel(self.__notification_after_id)
+            except Exception:
+                pass
+            self.__notification_after_id = None
+
         # Hide any existing notification
         if self.__notification_text_id is not None:
             self.__canvas_ref.delete(self.__notification_text_id)
+            self.__notification_text_id = None
+
+        if self.__notification_border_id is not None:
+            self.__canvas_ref.delete(self.__notification_border_id)
+            self.__notification_border_id = None
             
         # Get canvas dimensions for positioning
         canvas_width = self.__canvas_ref.winfo_width()
-        
-        # Create text
+        x0, y0 = self._get_visible_origin()
+
+        # Create text (red) at top-center of the visible area
         self.__notification_text_id = self.__canvas_ref.create_text(
-            canvas_width / 2, 20,
-            text=message, fill="#ffcc00", font=("Helvetica", 12, "bold")
+            x0 + canvas_width / 2,
+            y0 + 12,
+            text=message,
+            fill="#ff0000",
+            font=("Helvetica", 12, "bold"),
+            justify=tk.CENTER,
+            anchor="n",
+            tags=("overlay", "overlay_notification"),
         )
-        
+
+        # Main processing: draw red border rectangle around the text (transparent background).
+        self.__canvas_ref.update_idletasks()
+        bbox = self.__canvas_ref.bbox(self.__notification_text_id)
+        if bbox is not None:
+            x1, y1, x2, y2 = bbox
+            pad = 6
+            self.__notification_border_id = self.__canvas_ref.create_rectangle(
+                x1 - pad,
+                y1 - pad,
+                x2 + pad,
+                y2 + pad,
+                fill="",
+                outline="#ff0000",
+                width=2,
+                tags=("overlay", "overlay_notification"),
+            )
+            self.__canvas_ref.tag_raise(self.__notification_text_id, self.__notification_border_id)
+
         # Set up auto-removal
-        self.__canvas_ref.after(int(duration * 1000), self._hide_notification)
+        duration_ms = max(1000, int(duration * 1000))
+        self.__notification_after_id = self.__canvas_ref.after(duration_ms, self._hide_notification)
         
         # Log notification display
         logger.debug(message_manager.get_log_message("L336", message))
         
     def _hide_notification(self) -> None:
         """Hide the notification text."""
-        if self.__canvas_ref is None or self.__notification_text_id is None:
+        if self.__canvas_ref is None:
             return
-            
-        self.__canvas_ref.delete(self.__notification_text_id)
-        self.__notification_text_id = None
+
+        if self.__notification_after_id is not None:
+            try:
+                self.__canvas_ref.after_cancel(self.__notification_after_id)
+            except Exception:
+                pass
+            self.__notification_after_id = None
+
+        if self.__notification_text_id is not None:
+            self.__canvas_ref.delete(self.__notification_text_id)
+            self.__notification_text_id = None
+
+        if self.__notification_border_id is not None:
+            self.__canvas_ref.delete(self.__notification_border_id)
+            self.__notification_border_id = None
         
     def _hide_shortcut_help(self) -> None:
         """Hide the shortcut help display."""
@@ -563,6 +1239,9 @@ class MouseEventHandler:
         Args:
             event: Keyboard event
         """
+        if not self.__operations_enabled:
+            return "break"
+
         # Rotate visible layers 90 degrees clockwise
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -590,6 +1269,9 @@ class MouseEventHandler:
         Args:
             event: Keyboard event
         """
+        if not self.__operations_enabled:
+            return "break"
+
         # Rotate visible layers 90 degrees counter-clockwise
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -617,6 +1299,9 @@ class MouseEventHandler:
         Args:
             event: Keyboard event
         """
+        if not self.__operations_enabled:
+            return "break"
+
         # Flip visible layers vertically (180° rotation)
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -644,6 +1329,9 @@ class MouseEventHandler:
         Args:
             event: Keyboard event
         """
+        if not self.__operations_enabled:
+            return "break"
+
         # Flip visible layers horizontally (horizontal mirror)
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -671,6 +1359,9 @@ class MouseEventHandler:
         Args:
             event: Keyboard event
         """
+        if not self.__operations_enabled:
+            return "break"
+
         # Reset all transforms to identity
         for layer_id, visible in self.__visible_layers.items():
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
@@ -708,28 +1399,58 @@ class MouseEventHandler:
         return "break"  # Prevent default handling
         
     def _show_shortcut_help(self) -> None:
-        """Show the keyboard shortcut help overlay."""
+        """Show the keyboard shortcut help overlay at the top-right of the visible area."""
         if self.__canvas_ref is None:
             return
             
         # First hide if already displayed
         self._hide_shortcut_help()
         
-        # Get canvas dimensions for positioning
+        x0, y0 = self._get_visible_origin()
         canvas_width = self.__canvas_ref.winfo_width()
-        canvas_height = self.__canvas_ref.winfo_height()
-        
-        # Create more opaque background with border for better visibility
-        self.__help_background_id = self.__canvas_ref.create_rectangle(
-            50, 50, canvas_width - 50, canvas_height - 50,
-            fill="#000000", stipple="gray25", outline="#ffffff", width=2
-        )
-        
-        # Create help text with high contrast color
+        outer_pad = 12
+        inner_pad = 10
+
+        # Main processing: create help text in green, measure, then position at top-right.
         help_text = self.__msg_mgr.get_message('M049')  # M049: Keyboard Shortcuts (help overlay)
         self.__help_display_id = self.__canvas_ref.create_text(
-            canvas_width / 2, canvas_height / 2,
-            text=help_text, fill="#ffff00", font=("Helvetica", 12, "bold"), justify=tk.CENTER
+            0, 0,  # temporary position
+            text=help_text,
+            fill="#008000",
+            font=("Helvetica", 12, "bold"),
+            justify=tk.LEFT,
+            anchor="nw",
+            tags=("overlay", "overlay_shortcut_help"),
         )
+
+        # Measure text size, then compute top-right position
+        self.__canvas_ref.update_idletasks()
+        bbox = self.__canvas_ref.bbox(self.__help_display_id)
+        if bbox is None:
+            bbox = (0, 0, 200, 80)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        rect_x2 = x0 + canvas_width - outer_pad
+        rect_y1 = y0 + outer_pad
+        rect_x1 = rect_x2 - text_w - 2 * inner_pad
+        text_x = rect_x1 + inner_pad
+        text_y = rect_y1 + inner_pad
+
+        self.__canvas_ref.coords(self.__help_display_id, text_x, text_y)
+
+        # Main processing: create a light yellow background with a darker yellow border.
+        self.__help_background_id = self.__canvas_ref.create_rectangle(
+            rect_x1,
+            rect_y1,
+            rect_x2,
+            rect_y1 + text_h + 2 * inner_pad,
+            fill="#fff2a8",
+            outline="#e6c200",
+            width=2,
+            tags=("overlay", "overlay_shortcut_help"),
+        )
+        self.__canvas_ref.tag_raise(self.__help_display_id, self.__help_background_id)
         
         self.__shortcut_help_visible = True
+        self.refresh_overlay_positions()
