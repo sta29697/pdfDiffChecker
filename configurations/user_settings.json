@@ -3,7 +3,7 @@
         "user_settings_status": "user_settings"
     },
     "user_settings": {
-        "theme_color": "light",
+        "theme_color": "pastel",
         "language": "japanese",
         "input_file_path": "直接入力、参照選択",
         "comparison_file_path": "直接入力、参照選択",

@@ -80,7 +80,14 @@ class BaseButton(tk.Button, ThemeColorApplicable, ColoringThemeIF):
                 return
                 
             # Remove unsupported options before applying theme
-            button_theme_config = {k: v for k, v in theme_config.items() if k != "disabledbackground"}
+            button_theme_config = dict(theme_config)
+            # Main processing: never override runtime enabled/disabled state.
+            button_theme_config.pop("state", None)
+            try:
+                if "disabledbackground" in button_theme_config and "disabledbackground" not in self.configure():
+                    button_theme_config.pop("disabledbackground", None)
+            except Exception:
+                button_theme_config.pop("disabledbackground", None)
             self.configure(**button_theme_config)  # type: ignore[arg-type]
             # Get caller information for accurate logging
             caller_file = os.path.basename(__file__) # デフォルトは現在のファイル
@@ -119,7 +126,14 @@ class BaseButton(tk.Button, ThemeColorApplicable, ColoringThemeIF):
         """
         try:
             # Remove unsupported options before configuring widget
-            filtered_settings = {k: v for k, v in theme_settings.items() if k != "disabledbackground"}
+            filtered_settings = dict(theme_settings)
+            # Main processing: never override runtime enabled/disabled state.
+            filtered_settings.pop("state", None)
+            try:
+                if "disabledbackground" in filtered_settings and "disabledbackground" not in self.configure():
+                    filtered_settings.pop("disabledbackground", None)
+            except Exception:
+                filtered_settings.pop("disabledbackground", None)
             self.configure(**filtered_settings)  # type: ignore[arg-type]
             # Configured button with settings: {settings}
             logger.debug(message_manager.get_log_message("L079", theme_settings))

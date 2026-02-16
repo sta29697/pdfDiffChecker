@@ -10,7 +10,6 @@ from configurations import tool_settings
 from utils.utils import get_resource_path
 from widgets.base_button import BaseButton
 from widgets.base_tab_widgets import BaseTabWidgets as btw
-from controllers.widgets_tracker import WidgetsTracker
 from configurations.message_manager import get_message_manager
 
 logger = getLogger(__name__)
@@ -116,35 +115,8 @@ class BasePageChangeButton(BaseButton):
                 kwargs["font"] = bold_font
 
         # Initialize the button with text
+        # Note: BaseButton.__init__ sets __color_key, registers with
+        # WidgetsTracker, and provides apply_theme_color / _config_widget.
+        # No need to duplicate them here (doing so caused AttributeError
+        # due to Python name mangling + initialization order).
         super().__init__(fr=fr, color_key=color_key, text=button_text, command=command, **kwargs)
-        self.__color_key = color_key
-        # Explicit theme application removed; managed globally
-        # Register for theme updates
-        WidgetsTracker().add_widgets(self)
-
-    def apply_theme_color(self, theme_data: dict[str, Any]) -> None:
-        """
-        Applies theme colors to the button.
-
-        Args:
-            theme_data (dict[str, Any]): Theme color data from ColorThemeManager. Accepts ThemeColors type or dict.
-        """
-        theme_settings = theme_data.get(self.__color_key, {})
-        self._config_widget({
-            "fg": theme_settings.get("fg", "#43c0cd"),
-            "bg": theme_settings.get("bg", "#1d1d29"),
-            "activeforeground": theme_settings.get("activeforeground", "#574ed6"),
-            "activebackground": theme_settings.get("activebackground", "#0fd2d6"),
-            "disabledforeground": theme_settings.get("disabledforeground", "#27283a"),
-            "disabledbackground": theme_settings.get("disabledbackground", "#22a9e9"),
-        })
-
-    def _config_widget(self, theme_settings: dict[str, Any]) -> None:
-        """Applies theme settings to the button widget.
-
-        Args:
-            theme_settings: Theme settings to apply.
-        """
-        # Filter out unsupported 'disabledbackground' option
-        filtered = {k: v for k, v in theme_settings.items() if k != "disabledbackground"}
-        self.configure(**filtered)
