@@ -387,10 +387,14 @@
       → 静的確認として `uv run python -m py_compile views/image_ope_tab.py views/pdf_ope_tab.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-007: ドラッグ&ドロップ対応  
-- [] 入力パス Entry に画像ファイル（`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`, `.tga`, `.svg`）をドラッグ&ドロップでき、パスが設定されること。  
-- [] 入力パス Entry に `.pdf` ファイルをドラッグ&ドロップできること。  
-- [] 出力パス Entry にフォルダをドラッグ&ドロップでき、パスが設定されること。  
-- [] PDF操作タブにもドラッグ&ドロップが追加されている場合、そちらも正常に動作すること。  
+- [✅] 入力パス Entry に画像ファイル（`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`, `.tga`, `.svg`）をドラッグ&ドロップでき、パスが設定されること。  
+- [✅] 入力パス Entry に `.pdf` ファイルをドラッグ&ドロップできること。  
+- [✅] 出力パス Entry にフォルダをドラッグ&ドロップでき、パスが設定されること。  
+- [✅] PDF操作タブにもドラッグ&ドロップが追加されている場合、そちらも正常に動作すること。  
+      → M2-007 実装として、`DragAndDropHandler.register_drop_target()` に `allow_directories` 引数を追加し、従来のファイル拡張子検証を維持したまま「フォルダドロップ許可」モードを実装した。`allow_directories=True` の場合は `os.path.isdir` を必須とし、拡張子チェックはスキップする。  
+      → `image_ope_tab.py` の `_setup_drag_and_drop()` を拡張し、入力Entry（画像 + PDF + SVG）に加えて出力EntryへフォルダD&Dを登録。`_on_drop_output_folder()` を追加して `output_folder_path` を更新するようにした。  
+      → `pdf_ope_tab.py` の `_setup_drag_and_drop()` を拡張し、既存 canvas の PDF D&D に加えて baseファイルEntry の PDF D&D と outputフォルダEntry のフォルダD&Dを登録。`_on_drop_output_folder()` を追加して出力パス更新を実装した。  
+      → 実行確認として `uv run python -c ...`（`tmp_m2_007_verify`）で D&D 登録情報（入力Entry拡張子、フォルダ許可、PDFタブ側登録）と各ドロップハンドラのパス反映（画像/PDF/フォルダ）を検証し、全項目が `true` になることを確認した。静的確認として `uv run python -m py_compile views/image_ope_tab.py views/pdf_ope_tab.py controllers/drag_and_drop_file.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-008: メタ情報保持  
 - [] 拡張子変換後、EXIF データが変換先で引き継がれること（対応形式の場合）。  

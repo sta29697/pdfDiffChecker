@@ -547,13 +547,19 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
     # Drag and drop
     # ------------------------------------------------------------------
     def _setup_drag_and_drop(self) -> None:
-        """Setup drag and drop for input file path entry."""
+        """Setup drag and drop for input file and output folder entries."""
         try:
             DragAndDropHandler.register_drop_target(
                 self._base_file_path_entry,
                 self._on_drop_input_file,
                 _DROP_EXTENSIONS,
                 self._show_status_feedback,
+            )
+            DragAndDropHandler.register_drop_target(
+                self._output_folder_path_entry,
+                self._on_drop_output_folder,
+                feedback_callback=self._show_status_feedback,
+                allow_directories=True,
             )
             logger.info(message_manager.get_log_message("L234"))
         except Exception as e:
@@ -569,6 +575,16 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self.base_path.set(file_path)
         self._update_file_info(file_path)
         self._show_status_feedback(f"File loaded: {file_path}", True)
+
+    def _on_drop_output_folder(self, folder_path: str) -> None:
+        """Handle folder drop on the output path entry.
+
+        Args:
+            folder_path: Dropped folder path.
+        """
+        self._output_folder_path_entry.path_var.set(folder_path)
+        self.output_path.set(folder_path)
+        self._show_status_feedback(f"Folder loaded: {folder_path}", True)
 
     # ------------------------------------------------------------------
     # File / folder selection handlers
