@@ -123,6 +123,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self.status_var: tk.StringVar = tk.StringVar(value="")
         self.after_id: Optional[str] = None
         self._size_syncing = False
+        self._copy_protected_pdf_detected = False
 
         # Path placeholders (same message codes as PDF tab)
         self.base_path = tk.StringVar()
@@ -632,8 +633,88 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             # Update meta info (basic info from file system)
             self._update_meta_info(file_path)
             self._refresh_ext_warning_label()
+            self._apply_copy_protection_state(file_path)
         except Exception as e:
             logger.error(f"Error updating file info: {e}")
+
+    def _set_conversion_buttons_enabled(self, enabled: bool) -> None:
+        """Enable or disable extension/size conversion buttons.
+
+        Args:
+            enabled: ``True`` to enable buttons, otherwise disable them.
+        """
+        state = "normal" if enabled else "disabled"
+        for attr in ("_ext_convert_btn", "_size_convert_btn"):
+            btn = getattr(self, attr, None)
+            if btn is None:
+                continue
+            try:
+                btn.configure(state=state)
+            except Exception:
+                pass
+
+    def _is_copy_protected_pdf(self, file_path: Path) -> bool:
+        """Return whether the PDF is copy-protected.
+
+        Args:
+            file_path: Target PDF path.
+
+        Returns:
+            True when copy protection is detected.
+        """
+        if file_path.suffix.lower() != ".pdf":
+            return False
+
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(file_path), strict=False)
+            if reader.is_encrypted and reader.decrypt("") == 0:
+                return True
+
+            encrypt_obj = reader.trailer.get("/Encrypt")
+            if encrypt_obj is None:
+                return False
+
+            encrypt_dict = (
+                encrypt_obj.get_object()
+                if hasattr(encrypt_obj, "get_object")
+                else encrypt_obj
+            )
+            permission_raw = encrypt_dict.get("/P") if encrypt_dict else None
+            if permission_raw is None:
+                return False
+
+            permissions = int(permission_raw)
+            copy_allowed = bool(permissions & 0x10)
+            return not copy_allowed
+        except Exception as exc:
+            # Main processing: fail open on parser edge cases to avoid false block.
+            logger.warning(f"Copy protection check failed: {exc}")
+            return False
+
+    def _apply_copy_protection_state(self, file_path: str) -> None:
+        """Apply button/popup behavior based on PDF copy-protection state.
+
+        Args:
+            file_path: Current input file path.
+        """
+        path = Path(file_path)
+        if path.suffix.lower() != ".pdf":
+            self._copy_protected_pdf_detected = False
+            self._set_conversion_buttons_enabled(True)
+            return
+
+        protected = self._is_copy_protected_pdf(path)
+        self._copy_protected_pdf_detected = protected
+        self._set_conversion_buttons_enabled(not protected)
+        if protected:
+            warning_message = message_manager.get_ui_message("U087")
+            messagebox.showwarning(
+                message_manager.get_ui_message("U033"),
+                warning_message,
+            )
+            self._show_status_feedback(warning_message, False)
 
     def _update_meta_info(self, file_path: str) -> None:
         """Update the meta info label for the extension block.
@@ -1121,6 +1202,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_ext_convert(self) -> None:
         """Handle extension conversion button click."""
+        if self._copy_protected_pdf_detected:
+            messagebox.showwarning(
+                message_manager.get_ui_message("U033"),
+                message_manager.get_ui_message("U087"),
+            )
+            return
+
         input_path_str = self._base_file_path_entry.path_var.get().strip()
         output_dir_str = self._output_folder_path_entry.path_var.get().strip()
         target_ext = self.standardize_extension(self._ext_target_var.get())
@@ -1178,6 +1266,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_size_convert(self) -> None:
         """Handle size conversion button click."""
+        if self._copy_protected_pdf_detected:
+            messagebox.showwarning(
+                message_manager.get_ui_message("U033"),
+                message_manager.get_ui_message("U087"),
+            )
+            return
+
         input_path_str = self._base_file_path_entry.path_var.get().strip()
         output_dir_str = self._output_folder_path_entry.path_var.get().strip()
 
