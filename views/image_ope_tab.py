@@ -122,6 +122,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         # Initialize status and path variables
         self.status_var: tk.StringVar = tk.StringVar(value="")
         self.after_id: Optional[str] = None
+        self._size_syncing = False
 
         # Path placeholders (same message codes as PDF tab)
         self.base_path = tk.StringVar()
@@ -468,8 +469,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             self._options_row,
             text=message_manager.get_ui_message("U081"),
             variable=self._aspect_lock_var,
+            command=self._on_aspect_toggle,
         )
         self._aspect_check.pack(side="left", padx=(0, 5))
+
+        # Main processing: keep aspect ratio and warning label in sync with user input.
+        self.width_var.trace_add("write", self._on_width_value_changed)
+        self.height_var.trace_add("write", self._on_height_value_changed)
 
         # --- Row 3: Warning label (hidden by default) ---
         self._size_warning_var = tk.StringVar(value="")
@@ -662,23 +668,147 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 self._ext_meta_var.set(meta_text)
 
                 # Update current size in the size block
-                self._size_current_var.set(f"{w} px \u00d7 {h} px")
+                self._size_current_var.set(f"{w} px × {h} px")
 
-                # Store original dimensions for aspect ratio calculation
+                # Store original dimensions for aspect ratio calculation.
                 self._orig_width = w
                 self._orig_height = h
+                self.width_var.set(str(w))
+                self.height_var.set(str(h))
+                self._refresh_size_warning_label()
         except Exception:
             self._ext_meta_var.set("-")
-            self._size_current_var.set("- px \u00d7 - px")
+            self._size_current_var.set("- px × - px")
+            self._size_warning_var.set("")
+            self._size_warning_label.grid_remove()
+
+    @staticmethod
+    def _parse_positive_int(value: str) -> Optional[int]:
+        """Parse positive integer value from text input.
+
+        Args:
+            value: Text value from UI entry.
+
+        Returns:
+            Parsed positive integer, or ``None`` when invalid.
+        """
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            number = int(text)
+        except ValueError:
+            return None
+        if number <= 0:
+            return None
+        return number
+
+    def _is_upscaling_target(self, width: int, height: int) -> bool:
+        """Return whether target size upscales the source image.
+
+        Args:
+            width: Target width in pixels.
+            height: Target height in pixels.
+
+        Returns:
+            True if either dimension is larger than the original image.
+        """
+        orig_w = int(getattr(self, "_orig_width", 0) or 0)
+        orig_h = int(getattr(self, "_orig_height", 0) or 0)
+        if orig_w <= 0 or orig_h <= 0:
+            return False
+        return width > orig_w or height > orig_h
+
+    def _refresh_size_warning_label(self) -> None:
+        """Refresh the size warning label based on current target size."""
+        width = self._parse_positive_int(self.width_var.get())
+        height = self._parse_positive_int(self.height_var.get())
+        if width is None or height is None:
+            self._size_warning_var.set("")
+            self._size_warning_label.grid_remove()
+            return
+
+        if self._is_upscaling_target(width, height):
+            self._size_warning_var.set(message_manager.get_ui_message("U082"))
+            self._size_warning_label.grid()
+        else:
+            self._size_warning_var.set("")
+            self._size_warning_label.grid_remove()
+
+    def _on_width_value_changed(self, *args: Any) -> None:
+        """Handle width updates for aspect ratio and warning refresh.
+
+        Args:
+            *args: Tkinter trace callback arguments.
+        """
+        _ = args
+        if self._size_syncing:
+            return
+
+        if not self._aspect_lock_var.get():
+            self._refresh_size_warning_label()
+            return
+
+        width = self._parse_positive_int(self.width_var.get())
+        orig_w = int(getattr(self, "_orig_width", 0) or 0)
+        orig_h = int(getattr(self, "_orig_height", 0) or 0)
+        if width is None or orig_w <= 0 or orig_h <= 0:
+            self._refresh_size_warning_label()
+            return
+
+        # Main processing: synchronize height when aspect lock is on.
+        synced_height = max(1, int(round(width * orig_h / orig_w)))
+        self._size_syncing = True
+        try:
+            self.height_var.set(str(synced_height))
+        finally:
+            self._size_syncing = False
+        self._refresh_size_warning_label()
+
+    def _on_height_value_changed(self, *args: Any) -> None:
+        """Handle height updates for aspect ratio and warning refresh.
+
+        Args:
+            *args: Tkinter trace callback arguments.
+        """
+        _ = args
+        if self._size_syncing:
+            return
+
+        if not self._aspect_lock_var.get():
+            self._refresh_size_warning_label()
+            return
+
+        height = self._parse_positive_int(self.height_var.get())
+        orig_w = int(getattr(self, "_orig_width", 0) or 0)
+        orig_h = int(getattr(self, "_orig_height", 0) or 0)
+        if height is None or orig_w <= 0 or orig_h <= 0:
+            self._refresh_size_warning_label()
+            return
+
+        # Main processing: synchronize width when aspect lock is on.
+        synced_width = max(1, int(round(height * orig_w / orig_h)))
+        self._size_syncing = True
+        try:
+            self.width_var.set(str(synced_width))
+        finally:
+            self._size_syncing = False
+        self._refresh_size_warning_label()
+
+    def _on_aspect_toggle(self) -> None:
+        """Handle aspect-ratio checkbox toggle event."""
+        if self._aspect_lock_var.get():
+            self._on_width_value_changed()
+        else:
+            self._refresh_size_warning_label()
 
     def _on_paper_size_selected(self, event: Any = None) -> None:
-        """Handle paper size combobox selection.
-
-        Calculates pixel dimensions from paper mm size and current DPI.
+        """Handle paper size selection and auto-fill width/height.
 
         Args:
             event: Combobox selection event (unused).
         """
+        _ = event
         paper_name = self._paper_var.get()
         if paper_name not in self._paper_sizes:
             return
@@ -689,12 +819,56 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             dpi = 72.0
 
         w_mm, h_mm = self._paper_sizes[paper_name]
-        # Convert mm to pixels: px = mm * dpi / 25.4
+        # Main processing: convert mm to pixels (px = mm * dpi / 25.4).
         w_px = int(w_mm * dpi / 25.4)
         h_px = int(h_mm * dpi / 25.4)
 
-        self.width_var.set(str(w_px))
-        self.height_var.set(str(h_px))
+        # Main processing: update both fields atomically to avoid trace feedback loops.
+        self._size_syncing = True
+        try:
+            self.width_var.set(str(w_px))
+            self.height_var.set(str(h_px))
+        finally:
+            self._size_syncing = False
+        self._refresh_size_warning_label()
+
+    def _convert_size_image(
+        self,
+        input_path: Path,
+        output_path: Path,
+        width: int,
+        height: int,
+        dpi: Optional[float],
+    ) -> None:
+        """Resize an image and save using source extension format.
+
+        Args:
+            input_path: Input image path.
+            output_path: Output image path.
+            width: Target width in pixels.
+            height: Target height in pixels.
+            dpi: Target DPI value, or ``None`` when unavailable.
+        """
+        from PIL import Image
+
+        target_ext = self.standardize_extension(output_path.suffix)
+        save_format = _PILLOW_SAVE_FORMATS.get(target_ext, target_ext.upper())
+
+        with Image.open(input_path) as img:
+            resized = img.resize((width, height), Image.Resampling.LANCZOS)
+
+            # Main processing: normalize mode for format requirements.
+            if target_ext in ("jpg", "pdf") and resized.mode in ("RGBA", "LA", "P"):
+                resized = resized.convert("RGB")
+            elif target_ext == "bmp" and resized.mode not in ("RGB", "L"):
+                resized = resized.convert("RGB")
+            elif target_ext == "gif" and resized.mode not in ("P", "L"):
+                resized = resized.convert("P", palette=Image.ADAPTIVE, colors=256)
+
+            save_kwargs: Dict[str, Any] = {"format": save_format}
+            if dpi is not None and dpi > 0:
+                save_kwargs["dpi"] = (dpi, dpi)
+            resized.save(output_path, **save_kwargs)
 
     # ------------------------------------------------------------------
     # Extension normalization
@@ -1003,11 +1177,76 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._show_status_feedback(status_message, True)
 
     def _on_size_convert(self) -> None:
-        """Handle size conversion button click.
+        """Handle size conversion button click."""
+        input_path_str = self._base_file_path_entry.path_var.get().strip()
+        output_dir_str = self._output_folder_path_entry.path_var.get().strip()
 
-        Stub: full logic will be implemented in M2-004.
-        """
-        self._set_status(message_manager.get_ui_message("U090") + " - not yet implemented")
+        input_path = Path(input_path_str) if input_path_str else Path("")
+        output_dir = Path(output_dir_str) if output_dir_str else Path("")
+
+        if not input_path_str or not input_path.exists() or not input_path.is_file():
+            self._show_status_feedback("Input file not found.", False)
+            return
+        if not output_dir_str or not output_dir.exists() or not output_dir.is_dir():
+            self._show_status_feedback("Output folder not found.", False)
+            return
+
+        width = self._parse_positive_int(self.width_var.get())
+        height = self._parse_positive_int(self.height_var.get())
+        if width is None or height is None:
+            self._show_status_feedback("Target size must be positive integers.", False)
+            return
+
+        source_ext = self.standardize_extension(input_path.suffix)
+        if source_ext in ("pdf", "svg"):
+            self._show_status_feedback("Size conversion supports image files only.", False)
+            return
+
+        warning_message = ""
+        if self._is_upscaling_target(width, height):
+            warning_message = message_manager.get_ui_message("U082")
+            confirmed = messagebox.askokcancel(
+                message_manager.get_ui_message("U033"),
+                warning_message,
+            )
+            if not confirmed:
+                self._set_status("Cancelled")
+                return
+
+        try:
+            dpi_value = float(self._dpi_var.get().strip()) if self._dpi_var.get().strip() else None
+        except ValueError:
+            dpi_value = None
+
+        output_path, added_suffix = self._build_unique_output_path(
+            output_dir=output_dir,
+            stem=f"{input_path.stem}_resize",
+            target_ext=source_ext,
+        )
+
+        try:
+            self._convert_size_image(
+                input_path=input_path,
+                output_path=output_path,
+                width=width,
+                height=height,
+                dpi=dpi_value,
+            )
+        except Exception as exc:
+            logger.error(f"Size conversion failed: {exc}")
+            self._show_status_feedback(f"Size conversion failed: {exc}", False)
+            return
+
+        status_message = message_manager.get_ui_message("U084")
+        if added_suffix is not None:
+            suffix_message = message_manager.get_ui_message("U089").format(added_suffix)
+            status_message = f"{status_message} / {suffix_message}"
+        self._show_status_feedback(status_message, True)
+        if warning_message:
+            self._size_warning_var.set(warning_message)
+            self._size_warning_label.grid()
+        else:
+            self._refresh_size_warning_label()
 
     # ------------------------------------------------------------------
     # Status bar helpers
