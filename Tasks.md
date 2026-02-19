@@ -397,14 +397,18 @@
       → 実行確認として `uv run python -c ...`（`tmp_m2_007_verify`）で D&D 登録情報（入力Entry拡張子、フォルダ許可、PDFタブ側登録）と各ドロップハンドラのパス反映（画像/PDF/フォルダ）を検証し、全項目が `true` になることを確認した。静的確認として `uv run python -m py_compile views/image_ope_tab.py views/pdf_ope_tab.py controllers/drag_and_drop_file.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-008: メタ情報保持  
-- [] 拡張子変換後、EXIF データが変換先で引き継がれること（対応形式の場合）。  
+- [✅] 拡張子変換後、EXIF データが変換先で引き継がれること（対応形式の場合）。  
       **検証手順**: EXIF 付きの JPEG ファイルを `.png` に変換。変換後の PNG ファイルを画像情報ツール（例: ExifTool や画像プロパティ）で確認し、EXIF データ（撮影日時等）が保持されていることを確認する。  
-- [] 拡張子変換後、ICC プロファイルが変換先で引き継がれること（対応形式の場合）。  
+- [✅] 拡張子変換後、ICC プロファイルが変換先で引き継がれること（対応形式の場合）。  
       **検証手順**: ICC プロファイル（sRGB等）が埋め込まれた JPEG を `.png` に変換。変換後の PNG で ICC プロファイルが保持されていることを確認する。  
-- [] 拡張子変換後、DPI が変換先で引き継がれること（対応形式の場合）。  
+- [✅] 拡張子変換後、DPI が変換先で引き継がれること（対応形式の場合）。  
       **検証手順**: 300DPI の TIFF ファイルを `.jpg` に変換。変換後の JPEG で DPI が 300 のまま保持されていることを確認する。  
-- [] 変換先形式が未対応のメタ情報は、エラーなくスキップされること。  
+- [✅] 変換先形式が未対応のメタ情報は、エラーなくスキップされること。  
       **検証手順**: EXIF 付き JPEG を `.bmp` に変換（BMP は EXIF 非対応）。エラーなく変換が完了し、BMP ファイルが正常に開けることを確認する。  
+      → M2-008 実装として、`image_ope_tab.py` の `_convert_with_pillow()` にメタ情報保持ロジックを追加。EXIF（`img.info['exif']` または `img.getexif().tobytes()`）、ICC（`img.info['icc_profile']`）、DPI（`img.info['dpi']`）を取得し、対応形式（jpg/png/webp/tif）への保存時に `save_kwargs` へ付与するようにした。  
+      → 未対応形式スキップ要件として、メタ情報付き保存で例外が発生した場合は `exif` / `icc_profile` / `dpi` を段階的に除去して再保存し、最終的にメタ情報なし保存へフォールバックする実装を追加。これにより `.bmp` など未対応形式でも変換自体は失敗しないようにした。  
+      → 実行確認として `uv run python -c ...`（`tmp_m2_008_verify`）で EXIF+ICC 付き JPEG→PNG、300DPI TIFF→JPG、EXIF付きJPEG→BMP を検証し、`exif_kept_jpg_to_png=true`・`icc_kept_jpg_to_png=true`・`dpi_kept_tif_to_jpg=true`・`unsupported_metadata_skip_ok=true` を確認した。  
+      → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-009: 拡張子の正規化  
 - [] 拡張子の大文字小文字が正規化されること。  

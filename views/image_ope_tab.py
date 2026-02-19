@@ -1170,7 +1170,50 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 save_img = img.convert("P", palette=Image.ADAPTIVE, colors=256)
 
             save_format = _PILLOW_SAVE_FORMATS.get(target_ext, target_ext.upper())
-            save_img.save(output_path, format=save_format)
+
+            # Main processing: preserve metadata where target format supports it.
+            save_kwargs: Dict[str, Any] = {"format": save_format}
+
+            exif_bytes = img.info.get("exif")
+            if exif_bytes is None:
+                try:
+                    exif_obj = img.getexif()
+                    if exif_obj:
+                        exif_bytes = exif_obj.tobytes()
+                except Exception:
+                    exif_bytes = None
+            if exif_bytes and target_ext in ("jpg", "png", "webp", "tif"):
+                save_kwargs["exif"] = exif_bytes
+
+            icc_profile = img.info.get("icc_profile")
+            if icc_profile and target_ext in ("jpg", "png", "webp", "tif"):
+                save_kwargs["icc_profile"] = icc_profile
+
+            dpi_info = img.info.get("dpi")
+            if (
+                isinstance(dpi_info, tuple)
+                and len(dpi_info) >= 2
+                and target_ext in ("jpg", "png", "webp", "tif")
+            ):
+                try:
+                    save_kwargs["dpi"] = (float(dpi_info[0]), float(dpi_info[1]))
+                except Exception:
+                    pass
+
+            try:
+                save_img.save(output_path, **save_kwargs)
+            except Exception:
+                # Main processing: skip unsupported metadata keys without aborting conversion.
+                fallback_kwargs = dict(save_kwargs)
+                for meta_key in ("exif", "icc_profile", "dpi"):
+                    if meta_key in fallback_kwargs:
+                        fallback_kwargs.pop(meta_key, None)
+                        try:
+                            save_img.save(output_path, **fallback_kwargs)
+                            return
+                        except Exception:
+                            continue
+                save_img.save(output_path, format=save_format)
 
     def _convert_pdf_first_page_to_png(self, input_path: Path, output_path: Path) -> None:
         """Convert first page of PDF to PNG using pypdfium2.
