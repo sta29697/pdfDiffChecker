@@ -92,6 +92,11 @@ class BaseEntry(tk.Entry, ThemeColorApplicable, ColoringThemeIF):
             
             # Mark that theme has been successfully initialized
             self._theme_initialized = True
+
+            # Main processing: skip heavy debug tracing in normal operation.
+            from controllers.app_state import AppState
+            if not AppState.log_theme_application:
+                return
             
             # Get caller information for accurate logging
             import inspect

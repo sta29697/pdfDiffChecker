@@ -273,6 +273,7 @@ class WidgetsTracker:
     __registered_widgets: List[ThemeColorApplicable] = []
     __theme_initialized: bool = False
     __current_theme: Dict[str, Any] = {}
+    __theme_apply_generation: int = 0
     __widget_origins: Dict[int, Dict[str, Any]] = {}  # Dict to store parent file information for each widget
 
     def __new__(cls) -> WidgetsTracker:
@@ -336,6 +337,8 @@ class WidgetsTracker:
         # Store the current theme 
         self.__current_theme = theme 
         self.__theme_initialized = True
+        self.__theme_apply_generation += 1
+        current_generation = self.__theme_apply_generation
 
         # Main processing: apply ttk global styles (Notebook/Combobox/etc.) on theme change.
         # Some ttk widgets are not registered in WidgetsTracker, so ttk.Style must be updated globally.
@@ -343,8 +346,45 @@ class WidgetsTracker:
         
         # Apply theme to all registered widgets
         self.apply_colors_to_widgets(theme)
+        # Main processing: run one extra pass after idle to stabilize mixed tk/ttk repaint order.
+        self._schedule_theme_stabilization_pass(theme, theme_name, current_generation)
         # Use the appropriate message code for theme application to multiple widgets
         logger.debug(message_manager.get_log_message("L231", theme_name, len(self.__registered_widgets)))
+
+    def _schedule_theme_stabilization_pass(
+        self,
+        theme: Dict[str, Any],
+        theme_name: str,
+        generation: int,
+    ) -> None:
+        """Schedule one deferred theme-application pass after idle.
+
+        This helps when a theme toggle updates both tk widgets and ttk styles in the
+        same cycle and some widgets repaint later than others.
+
+        Args:
+            theme: Theme dictionary to re-apply.
+            theme_name: Current theme name used for logging.
+            generation: Monotonic theme apply generation to avoid stale re-apply.
+        """
+        try:
+            root = getattr(tk, "_default_root", None)
+            if root is None:
+                return
+
+            def _apply_once_more() -> None:
+                """Re-apply style and widget colors once after idle."""
+                try:
+                    if generation != self.__theme_apply_generation:
+                        return
+                    self._apply_ttk_global_styles(theme, theme_name)
+                    self.apply_colors_to_widgets(theme)
+                except Exception:
+                    return
+
+            root.after_idle(_apply_once_more)
+        except Exception:
+            return
 
     def _apply_ttk_global_styles(self, theme: Dict[str, Any], theme_name: str) -> None:
         """Apply ttk global styles (ttk.Style) based on the current theme.
@@ -738,25 +778,7 @@ class WidgetsTracker:
         Args:
             theme: Theme data to apply
         """
-        # Get actual caller information for accurate logging
-        import inspect
-        import os
-        
-        frame = inspect.currentframe()
-        caller_info = "unknown"  # Default value when caller cannot be identified
-        if frame:
-            # Scan up the stack to find the most relevant caller frame
-            frames = inspect.getouterframes(frame)
-            # Start from 1 to skip this function
-            for i in range(1, min(5, len(frames))):
-                # Look for tab-related files or other meaningful sources
-                file_path = frames[i].filename
-                file_name = os.path.basename(file_path)
-                if "_tab" in file_name or "tab_" in file_name or file_name == "main.py" or file_name == "licenses.py":
-                    caller_info = file_name
-                    break
-                
-        logger.debug(message_manager.get_log_message("L038", f"Applying theme from {caller_info}"))
+        caller_info = "widgets_tracker"
         
         # Count the number of widgets
         widget_count = 0

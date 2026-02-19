@@ -348,10 +348,11 @@ class ColorThemeManager:
         """
         try:
             current = cls.__current_theme_name
+            # Main processing: keep random branch from dark to light/pastel.
             if current == "dark":
-                # 70% -> light, 30% -> pastel
+                # 50% -> light, 50% -> pastel
                 new_theme = cast(
-                    ThemeType, "pastel" if random.random() < 0.3 else "light"
+                    ThemeType, "pastel" if random.random() < 0.5 else "light"
                 )
             else:
                 # from 'light' or 'pastel' to 'dark'

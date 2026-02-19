@@ -256,6 +256,49 @@
         "activeforeground": "#f0f0f0",
         "relief": "flat"
     },
+    "ext_convert_button": {
+        "bg": "#f0f0f0",
+        "fg": "#333333",
+        "disabledforeground": "#aaaaaa",
+        "disabledbackground": "#ffffff",
+        "activeforeground": "#f0f0f0",
+        "activebackground": "#333333"
+    },
+    "size_convert_button": {
+        "bg": "#f0f0f0",
+        "fg": "#333333",
+        "disabledforeground": "#aaaaaa",
+        "disabledbackground": "#ffffff",
+        "activeforeground": "#f0f0f0",
+        "activebackground": "#333333"
+    },
+    "meta_info_label": {
+        "fg": "#666666",
+        "bg": "#ffffff"
+    },
+    "warning_label": {
+        "fg": "#d32f2f",
+        "bg": "#ffffff"
+    },
+    "conversion_arrow_label": {
+        "fg": "#1a73e8",
+        "bg": "#ffffff"
+    },
+    "section_header_label": {
+        "fg": "#1a73e8",
+        "bg": "#ffffff"
+    },
+    "filename_label": {
+        "fg": "#000000",
+        "bg": "#f0f0f0"
+    },
+    "entry_normal": {
+        "fg": "#000000",
+        "bg": "#ffffff",
+        "highlightcolor": "#0000ff",
+        "highlightbackground": "#ffffff",
+        "insertbackground": "#000000"
+    },
     "canvas": {
         "background": "#ffffff",
         "highlightbackground": "#e0e0e0",

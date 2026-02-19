@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import weakref
 from logging import getLogger
-from typing import Any, Callable, Dict, Optional, Set, Union, TypeVar
+from typing import Any, Callable, Dict, Optional, Set, Union, TypeVar, Hashable
 from weakref import WeakMethod, ReferenceType
 
 from configurations.message_manager import get_message_manager
@@ -23,6 +23,7 @@ logger = getLogger(__name__)
 T = TypeVar('T')
 CallbackFunc = Callable[..., Any]
 WeakCallbackRef = Union[WeakMethod[Callable[..., Any]], ReferenceType[Callable[..., Any]]]
+CallbackKey = Hashable
 
 
 class EventBus:
@@ -48,8 +49,8 @@ class EventBus:
     
     _instance: Optional[EventBus] = None
     
-    # Structure: { event_name: { id(callback): weak_ref_to_callback } }
-    _subscribers: Dict[str, Dict[int, WeakCallbackRef]] = {}
+    # Structure: { event_name: { callback_key: weak_ref_to_callback } }
+    _subscribers: Dict[str, Dict[CallbackKey, WeakCallbackRef]] = {}
     
     # Structure: { id(object): set(event_names) }
     _object_subscriptions: Dict[int, Set[str]] = {}
@@ -73,8 +74,9 @@ class EventBus:
         if event_name not in self._subscribers:
             self._subscribers[event_name] = {}
         
-        # Create a weak reference to the callback
-        callback_id = id(callback)
+        # Create a deterministic key so subscriptions are not overwritten by
+        # temporary bound-method object id reuse.
+        callback_key = self._make_callback_key(callback)
         
         # Store the method differently based on whether it's a bound method or a function
         if hasattr(callback, '__self__'):
@@ -94,7 +96,7 @@ class EventBus:
             weak_ref = weakref.ref(func)  # type: ignore
         
         # Store the weak reference
-        self._subscribers[event_name][callback_id] = weak_ref
+        self._subscribers[event_name][callback_key] = weak_ref
         logger.debug(message_manager.get_log_message("L261", event_name))
     
     def unsubscribe(self, event_name: str, callback: CallbackFunc) -> None:
@@ -106,9 +108,9 @@ class EventBus:
             callback: The callback function to remove
         """
         if event_name in self._subscribers:
-            callback_id = id(callback)
-            if callback_id in self._subscribers[event_name]:
-                del self._subscribers[event_name][callback_id]
+            callback_key = self._make_callback_key(callback)
+            if callback_key in self._subscribers[event_name]:
+                del self._subscribers[event_name][callback_key]
                 logger.debug(message_manager.get_log_message("L255", event_name))
                 
                 # Clean up object subscriptions if this was a bound method
@@ -178,11 +180,11 @@ class EventBus:
         to_remove = []
         
         # Call all callbacks
-        for callback_id, weak_ref in self._subscribers[event_name].items():
+        for callback_key, weak_ref in self._subscribers[event_name].items():
             callback = weak_ref()
             if callback is None:
                 # Reference is dead, mark for removal
-                to_remove.append(callback_id)
+                to_remove.append(callback_key)
             else:
                 try:
                     # Call the callback with the event data
@@ -191,12 +193,32 @@ class EventBus:
                     logger.error(message_manager.get_log_message("L257", event_name, str(e)))
         
         # Clean up dead references
-        for callback_id in to_remove:
-            del self._subscribers[event_name][callback_id]
+        for callback_key in to_remove:
+            del self._subscribers[event_name][callback_key]
         
         # Clean up empty event dict
         if not self._subscribers[event_name]:
             del self._subscribers[event_name]
+
+    @staticmethod
+    def _make_callback_key(callback: CallbackFunc) -> CallbackKey:
+        """Build a deterministic key for callback identity.
+
+        Bound-method objects are temporary wrappers, so using ``id(callback)`` can
+        collide and overwrite previously registered subscribers. For bound methods
+        we key by (instance id, function id); for plain functions we use function id.
+
+        Args:
+            callback: Callback function or bound method.
+
+        Returns:
+            A hashable key that remains stable across repeated attribute access.
+        """
+        if hasattr(callback, "__self__") and hasattr(callback, "__func__"):
+            owner = getattr(callback, "__self__", None)
+            func = getattr(callback, "__func__", None)
+            return ("method", id(owner), id(func))
+        return ("function", id(callback))
 
 
 # Define event names as constants to avoid string duplication and typos

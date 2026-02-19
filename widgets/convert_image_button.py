@@ -38,27 +38,8 @@ class ConvertImageButton(BaseButton):
         # Log initialization of ConvertImageButton with color key
         logger.debug(message_manager.get_log_message("L176", color_key))
 
-    def apply_theme_color(self, theme_data: dict[str, Any]) -> None:
-        """
-        Applies theme colors to the button.
-
-        Args:
-            theme_data (dict[str, Any]): Theme color data from ColorThemeManager. Accepts ThemeColors type or dict.
-        """
-        theme_settings = theme_data.get(self.__color_key, {})
-        self._config_widget({
-            "fg": theme_settings.get("fg", "#43c0cd"),
-            "bg": theme_settings.get("bg", "#1d1d29"),
-            "activeforeground": theme_settings.get("activeforeground", "#574ed6"),
-            "activebackground": theme_settings.get("activebackground", "#0fd2d6"),
-            "disabledforeground": theme_settings.get("disabledforeground", "#27283a"),
-            "disabledbackground": theme_settings.get("disabledbackground", "#22a9e9"),
-        })
-
-    def _config_widget(self, theme_settings: dict[str, Any]) -> None:
-        """Applies theme settings to the button widget.
-
-        Args:
-            theme_settings: Theme settings to apply.
-        """
-        self.configure(**theme_settings)
+    # apply_theme_color is inherited from BaseButton.
+    # Do NOT override here — BaseButton stores __color_key with its own
+    # name-mangling prefix (_BaseButton__color_key), so accessing
+    # self.__color_key from this subclass would resolve to
+    # _ConvertImageButton__color_key (which does not exist).

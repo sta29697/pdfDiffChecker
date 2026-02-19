@@ -69,11 +69,11 @@
     },
     "width_size_set_label": {
         "fg": "#43c0cd",
-        "bg": "#27283a"
+        "bg": "#1d1d29"
     },
     "height_size_set_label": {
         "fg": "#43c0cd",
-        "bg": "#27283a"
+        "bg": "#1d1d29"
     },
     "base_file_path_entry": {
         "fg": "#db57c4",
@@ -253,6 +253,49 @@
         "disabledbackground": "#22a9e9",
         "activeforeground": "#574ed6",
         "activebackground": "#0fd2d6"
+    },
+    "ext_convert_button": {
+        "bg": "#27283a",
+        "fg": "#43c0cd",
+        "disabledforeground": "#555555",
+        "disabledbackground": "#1d1d29",
+        "activeforeground": "#27283a",
+        "activebackground": "#43c0cd"
+    },
+    "size_convert_button": {
+        "bg": "#27283a",
+        "fg": "#43c0cd",
+        "disabledforeground": "#555555",
+        "disabledbackground": "#1d1d29",
+        "activeforeground": "#27283a",
+        "activebackground": "#43c0cd"
+    },
+    "meta_info_label": {
+        "fg": "#8888aa",
+        "bg": "#1d1d29"
+    },
+    "warning_label": {
+        "fg": "#ff6b6b",
+        "bg": "#1d1d29"
+    },
+    "conversion_arrow_label": {
+        "fg": "#43c0cd",
+        "bg": "#1d1d29"
+    },
+    "section_header_label": {
+        "fg": "#43c0cd",
+        "bg": "#1d1d29"
+    },
+    "filename_label": {
+        "fg": "#43c0cd",
+        "bg": "#27283a"
+    },
+    "entry_normal": {
+        "fg": "#db57c4",
+        "bg": "#27283a",
+        "highlightcolor": "#43c0cd",
+        "highlightbackground": "#27283a",
+        "insertbackground": "#db57c4"
     },
     "canvas": {
         "background": "#ffffff",

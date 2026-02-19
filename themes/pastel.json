@@ -20,8 +20,8 @@
         "tab_fg": "#6b6b6b"
     },
     "primary_combobox": {
-        "bg": "#fbfbff",
-        "selectbackground": "#fbfbff",
+        "bg": "#f6f2ff",
+        "selectbackground": "#f6f2ff",
         "selectforeground": "#7b4fae",
         "fg": "#7b4fae",
         "highlightcolor": "#ff5a74",
@@ -55,17 +55,17 @@
     },
     "dpi_set_label": {
         "fg": "#6b6b6b",
-        "bg": "#fbfbff"
+        "bg": "#f6f2ff"
     },
     "dpi_label": {
         "fg": "#6b6b6b",
-        "bg": "#fbfbff"
+        "bg": "#f6f2ff"
     },
     "dpi_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "page_number_entry": {
@@ -77,52 +77,52 @@
     },
     "width_size_set_label": {
         "fg": "#6b6b6b",
-        "bg": "#fbfbff"
+        "bg": "#f6f2ff"
     },
     "height_size_set_label": {
         "fg": "#6b6b6b",
-        "bg": "#fbfbff"
+        "bg": "#f6f2ff"
     },
     "base_file_path_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "comparison_file_path_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "output_folder_path_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "fb_threshold_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "create_fb_threshold_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "create_path_entry": {
         "fg": "#7b4fae",
-        "bg": "#fbfbff",
+        "bg": "#ece8ff",
         "highlightcolor": "#ff5a74",
-        "highlightbackground": "#fbfbff",
+        "highlightbackground": "#ece8ff",
         "insertbackground": "#7b4fae"
     },
     "base_image_color_change_button": {
@@ -269,6 +269,49 @@
         "activebackground": "#c5f0d6",
         "activeforeground": "#2b8a5f",
         "relief": "flat"
+    },
+    "ext_convert_button": {
+        "bg": "#d7ecff",
+        "fg": "#2a8cff",
+        "disabledforeground": "#cccccc",
+        "disabledbackground": "#f6f2ff",
+        "activeforeground": "#ffffff",
+        "activebackground": "#2a8cff"
+    },
+    "size_convert_button": {
+        "bg": "#d7ecff",
+        "fg": "#2a8cff",
+        "disabledforeground": "#cccccc",
+        "disabledbackground": "#f6f2ff",
+        "activeforeground": "#ffffff",
+        "activebackground": "#2a8cff"
+    },
+    "meta_info_label": {
+        "fg": "#8a7060",
+        "bg": "#f6f2ff"
+    },
+    "warning_label": {
+        "fg": "#d6336c",
+        "bg": "#f6f2ff"
+    },
+    "conversion_arrow_label": {
+        "fg": "#d6336c",
+        "bg": "#f6f2ff"
+    },
+    "section_header_label": {
+        "fg": "#d6336c",
+        "bg": "#f6f2ff"
+    },
+    "filename_label": {
+        "fg": "#7b4fae",
+        "bg": "#ece8ff"
+    },
+    "entry_normal": {
+        "fg": "#7b4fae",
+        "bg": "#f6f2ff",
+        "highlightcolor": "#ff5a74",
+        "highlightbackground": "#f6f2ff",
+        "insertbackground": "#7b4fae"
     },
     "canvas": {
         "background": "#f5f5f5",

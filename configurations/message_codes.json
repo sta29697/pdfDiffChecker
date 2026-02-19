@@ -1707,12 +1707,12 @@
             "ja": "出力フォルダを選択してください。"
         },
         "U012": {
-            "en": "Width (px):",
-            "ja": "幅 (ピクセル):"
+            "en": "Width (px) :",
+            "ja": "幅 (ピクセル) :"
         },
         "U013": {
-            "en": "Height (px):",
-            "ja": "高さ (ピクセル):"
+            "en": "Height (px) :",
+            "ja": "高さ (ピクセル) :"
         },
         "U014": {
             "en": "Convert",
@@ -1957,6 +1957,102 @@
         "U074": {
             "en": "Paper size:",
             "ja": "用紙サイズ:"
+        },
+        "U075": {
+            "en": "Source format:",
+            "ja": "変換元形式:"
+        },
+        "U076": {
+            "en": "Target format:",
+            "ja": "変換先形式:"
+        },
+        "U077": {
+            "en": "Convert Extension",
+            "ja": "拡張子変換"
+        },
+        "U078": {
+            "en": "Alpha channel will be lost. Proceed?",
+            "ja": "αチャンネルが失われます。続行しますか？"
+        },
+        "U079": {
+            "en": "Image quality may degrade (lossy compression). Proceed?",
+            "ja": "画像品質が劣化する可能性があります（非可逆圧縮）。続行しますか？"
+        },
+        "U080": {
+            "en": "Color depth will be reduced to 256 colors. Proceed?",
+            "ja": "色深度が256色に削減されます。続行しますか？"
+        },
+        "U081": {
+            "en": "Lock aspect ratio",
+            "ja": "縦横比を固定"
+        },
+        "U082": {
+            "en": "Image quality may degrade due to upscaling. Proceed?",
+            "ja": "拡大により画像品質が劣化する可能性があります。続行しますか？"
+        },
+        "U083": {
+            "en": "Extension conversion completed.",
+            "ja": "拡張子変換が完了しました。"
+        },
+        "U084": {
+            "en": "Size conversion completed.",
+            "ja": "サイズ変換が完了しました。"
+        },
+        "U085": {
+            "en": "DPI : ",
+            "ja": "DPI : "
+        },
+        "U086": {
+            "en": "Paper size : ",
+            "ja": "用紙サイズ : "
+        },
+        "U087": {
+            "en": "This file is copy-protected. Conversion is not allowed.",
+            "ja": "コピー保護されたファイルです。変換できません。"
+        },
+        "U088": {
+            "en": "SVG conversion failed. Complex SVG files are not supported.",
+            "ja": "SVGの変換に失敗しました。複雑なSVGには対応していません。"
+        },
+        "U089": {
+            "en": "A file with the same name exists. Suffix added: {0}",
+            "ja": "同名ファイルが存在するため、サフィックスを付与しました: {0}"
+        },
+        "U090": {
+            "en": "Resize Image",
+            "ja": "サイズ変換"
+        },
+        "U091": {
+            "en": "Format : ",
+            "ja": "形式 : "
+        },
+        "U092": {
+            "en": "Mode : ",
+            "ja": "モード : "
+        },
+        "U093": {
+            "en": "Size : ",
+            "ja": "サイズ : "
+        },
+        "U094": {
+            "en": "Color Profile (ICC) : ",
+            "ja": "色プロファイル (ICC) : "
+        },
+        "U095": {
+            "en": "Photo Info (EXIF) : ",
+            "ja": "撮影情報 (EXIF) : "
+        },
+        "U096": {
+            "en": "Available",
+            "ja": "あり"
+        },
+        "U097": {
+            "en": "Portrait",
+            "ja": "縦"
+        },
+        "U098": {
+            "en": "Landscape",
+            "ja": "横"
         }
     }
 }

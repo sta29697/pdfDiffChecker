@@ -104,8 +104,11 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         try:
             combobox_theme_config = theme_data.get(self.__color_key, {})
             self.configure(**combobox_theme_config)
-            # Applied theme to combobox: {color_key}
-            logger.debug(message_manager.get_log_message("L115", self.__color_key))
+            # Main processing: keep normal runtime lightweight by default.
+            from controllers.app_state import AppState
+            if AppState.log_theme_application:
+                # Applied theme to combobox: {color_key}
+                logger.debug(message_manager.get_log_message("L115", self.__color_key))
         except Exception as e:
             # Failed to apply theme to combobox: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
