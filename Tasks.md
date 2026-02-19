@@ -380,8 +380,11 @@
       → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-006: 入出力パスの共有  
-- [] 入力ファイルパスと出力フォルダパスが PDF操作タブと共有されること。  
+- [✅] 入力ファイルパスと出力フォルダパスが PDF操作タブと共有されること。  
       **検証手順**: PDF操作タブで入力パスと出力パスを設定し、ファイル拡張子・サイズ変換タブに切り替える。同じパスが表示されていることを確認する。逆方向（M2タブ→PDFタブ）も同様に確認する。  
+      → M2-006 実装として、`image_ope_tab.py` と `pdf_ope_tab.py` の両方に `_sync_shared_paths_from_settings()` を追加し、`<Visibility>` と `after_idle` で `UserSettingManager` の `base_file_path` / `output_folder_path` を再同期するようにした。これによりタブ切替時に双方向で入出力パスが追従する。  
+      → 実行確認として `uv run python -c ...`（`tmp_m2_006_verify`）で PDFタブ→M2タブ、および M2タブ→PDFタブの両方向同期を検証。`root.update()` で `BasePathEntry` の初期抑止解除後、base/output の両パスが双方タブで一致することを確認した。  
+      → 静的確認として `uv run python -m py_compile views/image_ope_tab.py views/pdf_ope_tab.py` を実行し、構文エラーがないことを確認した。  
 
 ### M2-007: ドラッグ&ドロップ対応  
 - [] 入力パス Entry に画像ファイル（`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`, `.tga`, `.svg`）をドラッグ&ドロップでき、パスが設定されること。  

@@ -126,6 +126,46 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._setup_ui()
         self._setup_drag_and_drop()
 
+        # Main processing: refresh shared paths when the tab becomes visible.
+        self.bind("<Visibility>", self._sync_shared_paths_from_settings)
+        self.after_idle(self._sync_shared_paths_from_settings)
+
+    def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
+        """Synchronize shared base/output paths from persisted settings.
+
+        Args:
+            event: Tkinter visibility event (unused).
+        """
+        _ = event
+        placeholder_base = message_manager.get_ui_message("U053")
+        placeholder_output = message_manager.get_ui_message("U054")
+
+        try:
+            saved_base = UserSettingManager().get_setting("base_file_path")
+            if (
+                isinstance(saved_base, str)
+                and saved_base
+                and saved_base != placeholder_base
+                and self._base_file_path_entry.path_var.get() != saved_base
+            ):
+                self._base_file_path_entry.path_var.set(saved_base)
+                self.base_path.set(saved_base)
+                base_path_obj = Path(saved_base)
+                if base_path_obj.exists() and base_path_obj.is_file() and base_path_obj.suffix.lower() == ".pdf":
+                    self._load_and_display_pdf(saved_base)
+
+            saved_output = UserSettingManager().get_setting("output_folder_path")
+            if (
+                isinstance(saved_output, str)
+                and saved_output
+                and saved_output != placeholder_output
+                and self._output_folder_path_entry.path_var.get() != saved_output
+            ):
+                self._output_folder_path_entry.path_var.set(saved_output)
+                self.output_path.set(saved_output)
+        except Exception as exc:
+            logger.warning(f"Shared path sync failed in pdf tab: {exc}")
+
     def _get_initial_dir_from_setting(self, setting_key: str) -> str:
         """Return an initial directory path for dialogs based on saved settings.
 
