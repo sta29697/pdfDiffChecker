@@ -5,7 +5,7 @@ from logging import getLogger
 from typing import Dict, Any, List, Optional
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from pathlib import Path
 
 from configurations.message_manager import get_message_manager
@@ -42,6 +42,19 @@ _DROP_EXTENSIONS: List[str] = [
 _EXT_CHOICES: List[str] = [
     "png", "jpg", "bmp", "gif", "tif", "webp", "ico", "tga", "pdf",
 ]
+
+# Pillow save format mapping for extension conversion.
+_PILLOW_SAVE_FORMATS: Dict[str, str] = {
+    "jpg": "JPEG",
+    "png": "PNG",
+    "bmp": "BMP",
+    "gif": "GIF",
+    "tif": "TIFF",
+    "webp": "WEBP",
+    "ico": "ICO",
+    "tga": "TGA",
+    "pdf": "PDF",
+}
 
 # DPI preset values
 _DPI_CHOICES: List[str] = ["72", "96", "150", "300", "600"]
@@ -294,6 +307,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             width=8,
         )
         self._ext_combo.pack(side="left", padx=(2, 0))
+        self._ext_combo.bind("<<ComboboxSelected>>", self._refresh_ext_warning_label)
 
         # --- Row 1: Meta info display ---
         self._ext_meta_var = tk.StringVar(value="-")
@@ -611,6 +625,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
             # Update meta info (basic info from file system)
             self._update_meta_info(file_path)
+            self._refresh_ext_warning_label()
         except Exception as e:
             logger.error(f"Error updating file info: {e}")
 
@@ -703,14 +718,289 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         return ext
 
     # ------------------------------------------------------------------
-    # Conversion stubs (logic to be implemented in M2-003 / M2-004)
+    # Extension conversion (M2-003)
     # ------------------------------------------------------------------
-    def _on_ext_convert(self) -> None:
-        """Handle extension conversion button click.
+    @staticmethod
+    def _image_has_alpha_channel(image: Any) -> bool:
+        """Return whether a PIL image has transparency information.
 
-        Stub: full logic will be implemented in M2-003.
+        Args:
+            image: PIL Image instance.
+
+        Returns:
+            True if the image contains alpha or palette transparency.
         """
-        self._set_status(message_manager.get_ui_message("U077") + " - not yet implemented")
+        mode = str(getattr(image, "mode", ""))
+        if mode in ("RGBA", "LA"):
+            return True
+        info = getattr(image, "info", {})
+        return mode == "P" and "transparency" in info
+
+    def _collect_ext_warnings(self, input_path: Path, target_ext: str) -> List[str]:
+        """Collect warning messages for extension conversion.
+
+        Args:
+            input_path: Input file path.
+            target_ext: Target extension in canonical form.
+
+        Returns:
+            Localized warning message list.
+        """
+        warnings: List[str] = []
+        src_ext = self.standardize_extension(input_path.suffix)
+
+        # Main processing: warn for lossy compression formats.
+        if target_ext in ("jpg", "webp"):
+            warnings.append(message_manager.get_ui_message("U079"))
+
+        # Main processing: warn for GIF palette reduction.
+        if target_ext == "gif":
+            warnings.append(message_manager.get_ui_message("U080"))
+
+        # Main processing: alpha loss warning for PNG -> jpg/bmp/pdf.
+        if src_ext == "png" and target_ext in ("jpg", "bmp", "pdf"):
+            try:
+                from PIL import Image
+
+                with Image.open(input_path) as img:
+                    if self._image_has_alpha_channel(img):
+                        warnings.append(message_manager.get_ui_message("U078"))
+            except Exception:
+                # If metadata inspection fails, continue without blocking conversion.
+                pass
+
+        # Keep order while removing duplicates.
+        deduplicated: List[str] = []
+        for msg in warnings:
+            if msg not in deduplicated:
+                deduplicated.append(msg)
+        return deduplicated
+
+    def _refresh_ext_warning_label(self, event: Any = None) -> None:
+        """Refresh extension-warning label based on current selection.
+
+        Args:
+            event: Combobox event (unused).
+        """
+        _ = event
+        input_path_str = self._base_file_path_entry.path_var.get().strip()
+        if not input_path_str:
+            self._ext_warning_var.set("")
+            self._ext_warning_label.grid_remove()
+            return
+
+        input_path = Path(input_path_str)
+        if not input_path.exists() or not input_path.is_file():
+            self._ext_warning_var.set("")
+            self._ext_warning_label.grid_remove()
+            return
+
+        target_ext = self.standardize_extension(self._ext_target_var.get())
+        warnings = self._collect_ext_warnings(input_path, target_ext)
+        if warnings:
+            self._ext_warning_var.set(" | ".join(warnings))
+            self._ext_warning_label.grid()
+        else:
+            self._ext_warning_var.set("")
+            self._ext_warning_label.grid_remove()
+
+    def _build_unique_output_path(
+        self,
+        output_dir: Path,
+        stem: str,
+        target_ext: str,
+    ) -> tuple[Path, Optional[str]]:
+        """Build a non-conflicting output path in the output directory.
+
+        Args:
+            output_dir: Output directory path.
+            stem: Base file stem.
+            target_ext: Target extension without dot.
+
+        Returns:
+            Tuple of (output_path, added_suffix). added_suffix is ``None`` when no
+            collision occurred.
+        """
+        base_candidate = output_dir / f"{stem}.{target_ext}"
+        if not base_candidate.exists():
+            return base_candidate, None
+
+        index = 1
+        while True:
+            suffix = f"({index})"
+            candidate = output_dir / f"{stem}{suffix}.{target_ext}"
+            if not candidate.exists():
+                return candidate, suffix
+            index += 1
+
+    def _convert_with_pillow(
+        self,
+        input_path: Path,
+        output_path: Path,
+        target_ext: str,
+    ) -> None:
+        """Convert image formats supported directly by Pillow.
+
+        Args:
+            input_path: Input file path.
+            output_path: Output file path.
+            target_ext: Target extension without dot.
+        """
+        from PIL import Image
+
+        with Image.open(input_path) as img:
+            save_img = img
+
+            # Main processing: pre-convert unsupported modes for target format.
+            if target_ext in ("jpg", "pdf") and img.mode in ("RGBA", "LA", "P"):
+                save_img = img.convert("RGB")
+            elif target_ext == "bmp" and img.mode not in ("RGB", "L"):
+                save_img = img.convert("RGB")
+            elif target_ext == "gif" and img.mode not in ("P", "L"):
+                save_img = img.convert("P", palette=Image.ADAPTIVE, colors=256)
+
+            save_format = _PILLOW_SAVE_FORMATS.get(target_ext, target_ext.upper())
+            save_img.save(output_path, format=save_format)
+
+    def _convert_pdf_first_page_to_png(self, input_path: Path, output_path: Path) -> None:
+        """Convert first page of PDF to PNG using pypdfium2.
+
+        Args:
+            input_path: PDF file path.
+            output_path: PNG output path.
+        """
+        try:
+            import pypdfium2 as pdfium
+        except ImportError as exc:
+            raise RuntimeError("pypdfium2 is not installed.") from exc
+
+        pdf = pdfium.PdfDocument(str(input_path))
+        try:
+            if len(pdf) == 0:
+                raise RuntimeError("No pages found in PDF.")
+            page = pdf[0]
+            try:
+                bitmap = page.render(scale=300 / 72)
+                pil_image = bitmap.to_pil()
+                pil_image.save(output_path, format="PNG")
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+
+    def _convert_svg_to_png(self, input_path: Path, output_path: Path) -> None:
+        """Convert SVG to PNG using optional svglib/reportlab stack.
+
+        Args:
+            input_path: SVG file path.
+            output_path: PNG output path.
+        """
+        try:
+            from svglib.svglib import svg2rlg
+            from reportlab.graphics import renderPM
+        except ImportError as exc:
+            raise RuntimeError(message_manager.get_ui_message("U088")) from exc
+
+        try:
+            drawing = svg2rlg(str(input_path))
+            if drawing is None:
+                raise RuntimeError(message_manager.get_ui_message("U088"))
+            renderPM.drawToFile(drawing, str(output_path), fmt="PNG")
+        except Exception as exc:
+            raise RuntimeError(message_manager.get_ui_message("U088")) from exc
+
+    def _convert_extension_file(
+        self,
+        input_path: Path,
+        output_path: Path,
+        target_ext: str,
+    ) -> None:
+        """Convert input file to target extension.
+
+        Args:
+            input_path: Input file path.
+            output_path: Output file path.
+            target_ext: Target extension without dot.
+        """
+        source_ext = self.standardize_extension(input_path.suffix)
+
+        # Main processing: explicit handlers for PDF/SVG special cases.
+        if source_ext == "pdf":
+            if target_ext != "png":
+                raise RuntimeError("PDF conversion currently supports only PNG.")
+            self._convert_pdf_first_page_to_png(input_path, output_path)
+            return
+
+        if source_ext == "svg":
+            if target_ext != "png":
+                raise RuntimeError(message_manager.get_ui_message("U088"))
+            self._convert_svg_to_png(input_path, output_path)
+            return
+
+        self._convert_with_pillow(input_path, output_path, target_ext)
+
+    def _on_ext_convert(self) -> None:
+        """Handle extension conversion button click."""
+        input_path_str = self._base_file_path_entry.path_var.get().strip()
+        output_dir_str = self._output_folder_path_entry.path_var.get().strip()
+        target_ext = self.standardize_extension(self._ext_target_var.get())
+
+        input_path = Path(input_path_str) if input_path_str else Path("")
+        output_dir = Path(output_dir_str) if output_dir_str else Path("")
+
+        if not input_path_str or not input_path.exists() or not input_path.is_file():
+            self._show_status_feedback("Input file not found.", False)
+            return
+        if not output_dir_str or not output_dir.exists() or not output_dir.is_dir():
+            self._show_status_feedback("Output folder not found.", False)
+            return
+        if not target_ext:
+            self._show_status_feedback("Target extension is empty.", False)
+            return
+
+        warnings = self._collect_ext_warnings(input_path, target_ext)
+        if warnings:
+            confirmed = messagebox.askokcancel(
+                message_manager.get_ui_message("U033"),
+                "\n".join(warnings),
+            )
+            if not confirmed:
+                self._set_status("Cancelled")
+                return
+
+        output_path, added_suffix = self._build_unique_output_path(
+            output_dir=output_dir,
+            stem=input_path.stem,
+            target_ext=target_ext,
+        )
+
+        try:
+            self._convert_extension_file(
+                input_path=input_path,
+                output_path=output_path,
+                target_ext=target_ext,
+            )
+        except RuntimeError as exc:
+            logger.error(str(exc))
+            messagebox.showerror(message_manager.get_ui_message("U033"), str(exc))
+            self._show_status_feedback(str(exc), False)
+            return
+        except Exception as exc:
+            logger.error(f"Extension conversion failed: {exc}")
+            self._show_status_feedback(f"Extension conversion failed: {exc}", False)
+            return
+
+        status_message = message_manager.get_ui_message("U083")
+        if added_suffix is not None:
+            suffix_message = message_manager.get_ui_message("U089").format(added_suffix)
+            status_message = f"{status_message} / {suffix_message}"
+        self._show_status_feedback(status_message, True)
 
     def _on_size_convert(self) -> None:
         """Handle size conversion button click.
