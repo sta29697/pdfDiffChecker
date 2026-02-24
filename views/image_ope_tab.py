@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from logging import getLogger
 from typing import Dict, Any, List, Optional
 
@@ -124,6 +125,12 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self.after_id: Optional[str] = None
         self._size_syncing = False
         self._copy_protected_pdf_detected = False
+        self._input_readonly_detected = False
+        self._multi_frame_detected = False
+        self._original_dpi: Optional[float] = None
+        self._original_dpi_missing = False
+        self._paper_size_priority_enabled = False
+        self._last_input_dialog_filter = "image"
 
         # Path placeholders (same message codes as PDF tab)
         self.base_path = tk.StringVar()
@@ -161,15 +168,24 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         try:
             saved_base = UserSettingManager().get_setting("base_file_path")
+            use_startup_normalization = event is None
             if (
                 isinstance(saved_base, str)
                 and saved_base
                 and saved_base != placeholder_base
-                and self._base_file_path_entry.path_var.get() != saved_base
             ):
-                self._base_file_path_entry.path_var.set(saved_base)
-                self.base_path.set(saved_base)
-                if Path(saved_base).exists() and Path(saved_base).is_file():
+                base_value_to_apply = saved_base
+                saved_base_path = Path(saved_base)
+                if use_startup_normalization and saved_base_path.exists() and saved_base_path.is_file():
+                    # Main processing: avoid startup-time preview load by restoring only folder path.
+                    base_value_to_apply = str(saved_base_path.parent)
+                    UserSettingManager().update_setting("base_file_path", base_value_to_apply)
+
+                if self._base_file_path_entry.path_var.get() != base_value_to_apply:
+                    self._base_file_path_entry.path_var.set(base_value_to_apply)
+                    self.base_path.set(base_value_to_apply)
+
+                if not use_startup_normalization and saved_base_path.exists() and saved_base_path.is_file():
                     self._update_file_info(saved_base)
 
             saved_output = UserSettingManager().get_setting("output_folder_path")
@@ -316,7 +332,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         # --- Row 0: Conversion expression ---
         # Input filename (read-only label, updated when file is selected)
-        self._ext_input_name_var = tk.StringVar(value="-")
+        self._ext_input_name_var = tk.StringVar(
+            value="-"
+        )
         self._ext_input_label = tk.Label(
             self.frame_ext, textvariable=self._ext_input_name_var,
             anchor="w",
@@ -331,7 +349,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._ext_output_frame = tk.Frame(self.frame_ext)
         self._ext_output_frame.grid(row=0, column=2, padx=5, pady=4, sticky="w")
 
-        self._ext_output_name_var = tk.StringVar(value="-")
+        self._ext_output_name_var = tk.StringVar(
+            value="-."
+        )
         self._ext_output_name_label = tk.Label(
             self._ext_output_frame, textvariable=self._ext_output_name_var,
             anchor="w",
@@ -367,7 +387,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._ext_warning_var = tk.StringVar(value="")
         self._ext_warning_label = tk.Label(
             self.frame_ext, textvariable=self._ext_warning_var,
-            anchor="w", font=("", 9),
+            anchor="w", font=("", 10, "bold"), justify="left", wraplength=700,
         )
         self._ext_warning_label.grid(row=2, column=0, columnspan=3, padx=5, pady=2, sticky="w")
         self._ext_warning_label.grid_remove()  # Hidden by default
@@ -477,7 +497,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         # DPI dropdown
         self._dpi_label = tk.Label(
-            self._options_row, text=message_manager.get_ui_message("U085"),
+            self._options_row, text=message_manager.get_ui_message("U117"),
         )
         self._dpi_label.pack(side="left", padx=(0, 2))
         self._dpi_var = tk.StringVar(value="72")
@@ -516,12 +536,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         # Main processing: keep aspect ratio and warning label in sync with user input.
         self.width_var.trace_add("write", self._on_width_value_changed)
         self.height_var.trace_add("write", self._on_height_value_changed)
+        self._dpi_var.trace_add("write", self._on_dpi_value_changed)
 
         # --- Row 3: Warning label (hidden by default) ---
         self._size_warning_var = tk.StringVar(value="")
         self._size_warning_label = tk.Label(
             self.frame_size, textvariable=self._size_warning_var,
-            anchor="w", font=("", 9),
+            anchor="w", font=("", 10, "bold"), justify="left", wraplength=700,
         )
         self._size_warning_label.grid(row=3, column=0, columnspan=3, padx=5, pady=2, sticky="w")
         self._size_warning_label.grid_remove()  # Hidden by default
@@ -620,18 +641,32 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         Supports image files, PDF, and SVG.
         """
+        prioritized_filetypes = [
+            ("Image files", _IMAGE_EXTENSIONS),
+            ("PDF files", "*.pdf"),
+            ("SVG files", "*.svg"),
+            ("All files", "*.*"),
+        ]
+        if self._last_input_dialog_filter == "pdf":
+            prioritized_filetypes = [
+                ("PDF files", "*.pdf"),
+                ("Image files", _IMAGE_EXTENSIONS),
+                ("SVG files", "*.svg"),
+                ("All files", "*.*"),
+            ]
+
         initial_dir = self._get_initial_dir_from_setting("base_file_path")
         file_path = ask_file_dialog(
             initialdir=initial_dir,
             title_code="U022",
-            filetypes=[
-                ("Image files", _IMAGE_EXTENSIONS),
-                ("PDF files", "*.pdf"),
-                ("SVG files", "*.svg"),
-                ("All files", "*.*"),
-            ],
+            filetypes=prioritized_filetypes,
         )
         if file_path:
+            selected_ext = Path(file_path).suffix.lower()
+            if selected_ext == ".pdf":
+                self._last_input_dialog_filter = "pdf"
+            else:
+                self._last_input_dialog_filter = "image"
             self._base_file_path_entry.path_var.set(file_path)
             self.base_path.set(file_path)
             self._update_file_info(file_path)
@@ -665,9 +700,10 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             stem = p.stem
             ext = p.suffix.lower()
 
-            # Extension block: input name + output name base
+            # Main processing: show only filenames because arrow already indicates direction.
             self._ext_input_name_var.set(name)
             self._ext_output_name_var.set(f"{stem}.")
+            self._last_input_dialog_filter = "pdf" if ext == ".pdf" else "image"
 
             # Size block: input name unchanged, output name gets "_resize" suffix
             self._size_input_name_var.set(name)
@@ -708,6 +744,106 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             except Exception:
                 pass
 
+    @staticmethod
+    def _is_readonly_file(file_path: Path) -> bool:
+        """Return whether the file is read-only on current platform.
+
+        Args:
+            file_path: Target file path.
+
+        Returns:
+            ``True`` when write access is not available.
+        """
+        writable_by_access = os.access(file_path, os.W_OK)
+        if not writable_by_access:
+            return True
+
+        # Main processing: Windows read-only attribute check.
+        file_attrs = getattr(file_path.stat(), "st_file_attributes", 0)
+        readonly_flag = getattr(stat, "FILE_ATTRIBUTE_READONLY", 0)
+        if readonly_flag and file_attrs & readonly_flag:
+            return True
+
+        # Main processing: fallback check for ACL-based read-only restrictions.
+        try:
+            with open(file_path, "r+b"):
+                pass
+        except OSError:
+            return True
+
+        return False
+
+    def _convert_pdf_first_page_to_image(
+        self,
+        input_path: Path,
+        output_path: Path,
+        target_ext: str,
+    ) -> None:
+        """Convert first page of a PDF into one image file.
+
+        Args:
+            input_path: PDF file path.
+            output_path: Output image path.
+            target_ext: Target image extension.
+        """
+        try:
+            import pypdfium2 as pdfium
+        except ImportError as exc:
+            raise RuntimeError(message_manager.get_ui_message("U114")) from exc
+
+        pdf = pdfium.PdfDocument(str(input_path))
+        try:
+            if len(pdf) == 0:
+                raise RuntimeError(message_manager.get_ui_message("U113"))
+
+            page = pdf[0]
+            try:
+                bitmap = page.render(scale=300 / 72)
+                pil_image = bitmap.to_pil()
+                self._save_pil_image_to_extension(pil_image, output_path, target_ext)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+
+    def _set_size_controls_for_multisize(self, is_multisize: bool) -> None:
+        """Toggle size-input controls based on multi-size file detection.
+
+        Args:
+            is_multisize: ``True`` when current input has multiple frames.
+        """
+        # Main processing: keep convert button available but limit editable controls.
+        entry_state = "disabled" if is_multisize else "normal"
+        paper_state = "disabled" if is_multisize else "readonly"
+
+        for attr in ("_width_entry", "_height_entry", "_dpi_combo"):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            try:
+                widget.configure(state=entry_state)
+            except Exception:
+                pass
+
+        if hasattr(self, "_paper_combo"):
+            try:
+                self._paper_combo.configure(state=paper_state)
+            except Exception:
+                pass
+
+        if is_multisize:
+            self._aspect_lock_var.set(True)
+            self._size_warning_var.set(message_manager.get_ui_message("U110"))
+            self._size_warning_label.grid()
+        else:
+            self._refresh_size_warning_label()
+
     def _is_copy_protected_pdf(self, file_path: Path) -> bool:
         """Return whether the PDF is copy-protected.
 
@@ -724,7 +860,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             from pypdf import PdfReader
 
             reader = PdfReader(str(file_path), strict=False)
-            if reader.is_encrypted and reader.decrypt("") == 0:
+            if reader.is_encrypted:
                 return True
 
             encrypt_obj = reader.trailer.get("/Encrypt")
@@ -744,9 +880,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             copy_allowed = bool(permissions & 0x10)
             return not copy_allowed
         except Exception as exc:
-            # Main processing: fail open on parser edge cases to avoid false block.
+            # Main processing: fail closed to avoid missing copy-protection warnings.
             logger.warning(f"Copy protection check failed: {exc}")
-            return False
+            return True
 
     def _apply_copy_protection_state(self, file_path: str) -> None:
         """Apply button/popup behavior based on PDF copy-protection state.
@@ -755,16 +891,31 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             file_path: Current input file path.
         """
         path = Path(file_path)
-        if path.suffix.lower() != ".pdf":
-            self._copy_protected_pdf_detected = False
+        self._copy_protected_pdf_detected = False
+        self._input_readonly_detected = False
+
+        if not path.exists() or not path.is_file():
             self._set_conversion_buttons_enabled(True)
             return
 
-        protected = self._is_copy_protected_pdf(path)
-        self._copy_protected_pdf_detected = protected
-        self._set_conversion_buttons_enabled(not protected)
-        if protected:
-            warning_message = message_manager.get_ui_message("U087")
+        if path.suffix.lower() == ".pdf":
+            self._copy_protected_pdf_detected = self._is_copy_protected_pdf(path)
+
+        # Main processing: treat filesystem read-only files as conversion-blocked.
+        self._input_readonly_detected = self._is_readonly_file(path)
+
+        blocked = self._copy_protected_pdf_detected or self._input_readonly_detected
+        self._set_conversion_buttons_enabled(not blocked)
+        if blocked:
+            warning_message = (
+                message_manager.get_ui_message("U087")
+                if self._copy_protected_pdf_detected
+                else message_manager.get_ui_message("U099")
+            )
+            self._ext_warning_var.set(warning_message)
+            self._ext_warning_label.grid()
+            self._size_warning_var.set(warning_message)
+            self._size_warning_label.grid()
             messagebox.showwarning(
                 message_manager.get_ui_message("U033"),
                 warning_message,
@@ -777,6 +928,12 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         Args:
             file_path: Path to the input file.
         """
+        path_obj = Path(file_path)
+        source_ext = self.standardize_extension(path_obj.suffix)
+        if source_ext == "pdf":
+            self._update_pdf_meta_info(path_obj)
+            return
+
         try:
             from PIL import Image
             with Image.open(file_path) as img:
@@ -784,13 +941,17 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 w, h = img.size
                 fmt = img.format or "-"
                 dpi = img.info.get("dpi", None)
-                dpi_str = f"{int(dpi[0])}x{int(dpi[1])}" if dpi else "-"
+                dpi_str = self._format_dpi_pair_text(dpi[0], dpi[1]) if dpi else "-"
+                self._original_dpi = float(dpi[0]) if dpi else None
+                self._original_dpi_missing = dpi is None
+                self._multi_frame_detected = int(getattr(img, "n_frames", 1) or 1) > 1
                 # Localized labels for meta info display
                 lbl_fmt = message_manager.get_ui_message("U091")
                 lbl_mode = message_manager.get_ui_message("U092")
                 lbl_size = message_manager.get_ui_message("U093")
                 lbl_icc = message_manager.get_ui_message("U094")
                 lbl_exif = message_manager.get_ui_message("U095")
+                lbl_detected_dpi = message_manager.get_ui_message("U116")
                 lbl_avail = message_manager.get_ui_message("U096")
                 # Use "-" consistently for absent values
                 icc_val = lbl_avail if img.info.get("icc_profile") else "-"
@@ -799,7 +960,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 meta_text = (
                     f"{lbl_fmt}  {fmt}  |  {lbl_mode}  {mode}  |  "
                     f"{lbl_size}  {w}×{h} px  |  "
-                    f"DPI :  {dpi_str}  |  {lbl_icc}  {icc_val}  |  {lbl_exif}  {exif_val}"
+                    f"{lbl_detected_dpi}  {dpi_str}  |  {lbl_icc}  {icc_val}  |  {lbl_exif}  {exif_val}"
                 )
                 self._ext_meta_var.set(meta_text)
 
@@ -809,14 +970,170 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 # Store original dimensions for aspect ratio calculation.
                 self._orig_width = w
                 self._orig_height = h
-                self.width_var.set(str(w))
-                self.height_var.set(str(h))
+                if self._paper_size_priority_enabled and self._paper_var.get() in self._paper_sizes:
+                    self._apply_paper_size_to_target_dimensions()
+                else:
+                    self.width_var.set(str(w))
+                    self.height_var.set(str(h))
+                self._set_size_controls_for_multisize(self._multi_frame_detected)
                 self._refresh_size_warning_label()
         except Exception:
+            self._original_dpi = None
+            self._original_dpi_missing = True
+            self._multi_frame_detected = False
             self._ext_meta_var.set("-")
             self._size_current_var.set("- px × - px")
             self._size_warning_var.set("")
             self._size_warning_label.grid_remove()
+            self._set_size_controls_for_multisize(False)
+
+    def _update_pdf_meta_info(self, file_path: Path) -> None:
+        """Update meta display for PDF input files.
+
+        Args:
+            file_path: Input PDF path.
+        """
+        lbl_fmt = message_manager.get_ui_message("U091")
+        lbl_mode = message_manager.get_ui_message("U092")
+        lbl_size = message_manager.get_ui_message("U093")
+        lbl_detected_dpi = message_manager.get_ui_message("U116")
+        lbl_icc = message_manager.get_ui_message("U094")
+        lbl_exif = message_manager.get_ui_message("U095")
+
+        page_count = 0
+        page_size_text = "-"
+        dpi_text = "-"
+        current_size_px_text = "- px × - px"
+        detected_dpi: Optional[float] = None
+        detected_dpi_missing = True
+        width_px = 0
+        height_px = 0
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(file_path), strict=False)
+            page_count = len(reader.pages)
+            if page_count > 0:
+                first_page = reader.pages[0]
+                width_pt = float(first_page.mediabox.width)
+                height_pt = float(first_page.mediabox.height)
+                page_size_text = f"{int(width_pt)}×{int(height_pt)} pt ({page_count}p)"
+
+                # Main processing: try to read effective DPI from embedded page image.
+                extracted_dpi = self._extract_pdf_embedded_image_dpi(first_page, width_pt, height_pt)
+                if extracted_dpi is not None:
+                    dpi_x, dpi_y = extracted_dpi
+                    dpi_text = self._format_dpi_pair_text(dpi_x, dpi_y)
+                    detected_dpi = float(dpi_x)
+                    detected_dpi_missing = False
+
+                    width_px = int(round(width_pt * dpi_x / 72.0))
+                    height_px = int(round(height_pt * dpi_y / 72.0))
+                    current_size_px_text = f"{width_px} px × {height_px} px"
+        except Exception:
+            page_size_text = "-"
+            dpi_text = "-"
+            current_size_px_text = "- px × - px"
+
+        # Main processing: show PDF-specific metadata instead of a blank placeholder.
+        meta_text = (
+            f"{lbl_fmt}  PDF  |  {lbl_mode}  -  |  "
+            f"{lbl_size}  {page_size_text}  |  "
+            f"{lbl_detected_dpi}  {dpi_text}  |  {lbl_icc}  -  |  {lbl_exif}  -"
+        )
+        self._ext_meta_var.set(meta_text)
+
+        self._size_current_var.set(current_size_px_text)
+        self._orig_width = width_px
+        self._orig_height = height_px
+        self._original_dpi = detected_dpi
+        self._original_dpi_missing = detected_dpi_missing
+        self._multi_frame_detected = page_count > 1
+
+        if self._paper_size_priority_enabled and self._paper_var.get() in self._paper_sizes:
+            self._apply_paper_size_to_target_dimensions()
+        else:
+            self.width_var.set("")
+            self.height_var.set("")
+
+        self._set_size_controls_for_multisize(self._multi_frame_detected)
+        self._refresh_size_warning_label()
+
+    @staticmethod
+    def _format_dpi_pair_text(dpi_x: float, dpi_y: float) -> str:
+        """Format DPI values with explicit X/Y axis labels.
+
+        Args:
+            dpi_x: Horizontal DPI value.
+            dpi_y: Vertical DPI value.
+
+        Returns:
+            Human-readable DPI text with units.
+        """
+        x_val = int(round(float(dpi_x)))
+        y_val = int(round(float(dpi_y)))
+        return f"X:{x_val} dpi / Y:{y_val} dpi"
+
+    @staticmethod
+    def _extract_pdf_embedded_image_dpi(
+        page: Any,
+        page_width_pt: float,
+        page_height_pt: float,
+    ) -> Optional[tuple[int, int]]:
+        """Extract effective DPI from the largest embedded image on a PDF page.
+
+        Args:
+            page: First page object from ``pypdf.PdfReader.pages``.
+            page_width_pt: Page width in points.
+            page_height_pt: Page height in points.
+
+        Returns:
+            Tuple of ``(dpi_x, dpi_y)`` when extractable, otherwise ``None``.
+        """
+        if page_width_pt <= 0 or page_height_pt <= 0:
+            return None
+
+        try:
+            resources = page.get("/Resources")
+            if resources is None or "/XObject" not in resources:
+                return None
+            xobjects = resources["/XObject"].get_object()
+        except Exception:
+            return None
+
+        max_area = 0
+        best_width = 0
+        best_height = 0
+
+        for xobj_ref in xobjects.values():
+            try:
+                xobj = xobj_ref.get_object()
+            except Exception:
+                continue
+
+            if xobj.get("/Subtype") != "/Image":
+                continue
+
+            try:
+                img_width = int(xobj.get("/Width", 0) or 0)
+                img_height = int(xobj.get("/Height", 0) or 0)
+            except Exception:
+                continue
+
+            area = img_width * img_height
+            if area > max_area:
+                max_area = area
+                best_width = img_width
+                best_height = img_height
+
+        if max_area <= 0 or best_width <= 0 or best_height <= 0:
+            return None
+
+        dpi_x = int(round(best_width * 72.0 / page_width_pt))
+        dpi_y = int(round(best_height * 72.0 / page_height_pt))
+        if dpi_x <= 0 or dpi_y <= 0:
+            return None
+        return dpi_x, dpi_y
 
     @staticmethod
     def _parse_positive_int(value: str) -> Optional[int]:
@@ -857,6 +1174,11 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _refresh_size_warning_label(self) -> None:
         """Refresh the size warning label based on current target size."""
+        if self._multi_frame_detected:
+            self._size_warning_var.set(message_manager.get_ui_message("U110"))
+            self._size_warning_label.grid()
+            return
+
         width = self._parse_positive_int(self.width_var.get())
         height = self._parse_positive_int(self.height_var.get())
         if width is None or height is None:
@@ -864,12 +1186,75 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             self._size_warning_label.grid_remove()
             return
 
-        if self._is_upscaling_target(width, height):
-            self._size_warning_var.set(message_manager.get_ui_message("U082"))
+        warnings = self._collect_size_warnings(width, height)
+        if warnings:
+            self._size_warning_var.set("\n".join(warnings))
             self._size_warning_label.grid()
         else:
             self._size_warning_var.set("")
             self._size_warning_label.grid_remove()
+
+    def _has_aspect_ratio_conflict(self, width: int, height: int) -> bool:
+        """Return whether target ratio conflicts with original ratio.
+
+        Args:
+            width: Target width.
+            height: Target height.
+
+        Returns:
+            ``True`` when ratio differs while aspect lock is enabled.
+        """
+        if not self._aspect_lock_var.get():
+            return False
+
+        orig_w = int(getattr(self, "_orig_width", 0) or 0)
+        orig_h = int(getattr(self, "_orig_height", 0) or 0)
+        if orig_w <= 0 or orig_h <= 0:
+            return False
+
+        # Main processing: compare cross-products to avoid floating-point drift.
+        return (width * orig_h) != (height * orig_w)
+
+    def _collect_size_warnings(self, width: int, height: int) -> List[str]:
+        """Collect warning messages for size conversion.
+
+        Args:
+            width: Target width.
+            height: Target height.
+
+        Returns:
+            Localized warning message list.
+        """
+        warnings: List[str] = []
+
+        if self._is_upscaling_target(width, height):
+            warnings.append(message_manager.get_ui_message("U082"))
+
+        if self._has_aspect_ratio_conflict(width, height):
+            warnings.append(message_manager.get_ui_message("U105"))
+
+        dpi_text = self._dpi_var.get().strip() if hasattr(self, "_dpi_var") else ""
+        selected_dpi: Optional[float]
+        try:
+            selected_dpi = float(dpi_text) if dpi_text else None
+        except ValueError:
+            selected_dpi = None
+
+        if selected_dpi is not None:
+            if self._original_dpi_missing:
+                warnings.append(message_manager.get_ui_message("U106"))
+            elif self._original_dpi is not None and selected_dpi < self._original_dpi:
+                warnings.append(
+                    message_manager.get_ui_message(
+                        "U107", int(selected_dpi), int(self._original_dpi)
+                    )
+                )
+
+        deduplicated: List[str] = []
+        for msg in warnings:
+            if msg not in deduplicated:
+                deduplicated.append(msg)
+        return deduplicated
 
     def _on_width_value_changed(self, *args: Any) -> None:
         """Handle width updates for aspect ratio and warning refresh.
@@ -933,6 +1318,14 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_aspect_toggle(self) -> None:
         """Handle aspect-ratio checkbox toggle event."""
+        if self._multi_frame_detected and not self._aspect_lock_var.get():
+            message = message_manager.get_ui_message("U109")
+            messagebox.showwarning(message_manager.get_ui_message("U033"), message)
+            self._aspect_lock_var.set(True)
+            self._size_warning_var.set(message)
+            self._size_warning_label.grid()
+            return
+
         if self._aspect_lock_var.get():
             self._on_width_value_changed()
         else:
@@ -947,25 +1340,11 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         _ = event
         paper_name = self._paper_var.get()
         if paper_name not in self._paper_sizes:
+            self._paper_size_priority_enabled = False
             return
 
-        try:
-            dpi = float(self._dpi_var.get() or "72")
-        except ValueError:
-            dpi = 72.0
-
-        w_mm, h_mm = self._paper_sizes[paper_name]
-        # Main processing: convert mm to pixels (px = mm * dpi / 25.4).
-        w_px = int(w_mm * dpi / 25.4)
-        h_px = int(h_mm * dpi / 25.4)
-
-        # Main processing: update both fields atomically to avoid trace feedback loops.
-        self._size_syncing = True
-        try:
-            self.width_var.set(str(w_px))
-            self.height_var.set(str(h_px))
-        finally:
-            self._size_syncing = False
+        self._paper_size_priority_enabled = True
+        self._apply_paper_size_to_target_dimensions()
         self._refresh_size_warning_label()
 
     def _convert_size_image(
@@ -1108,7 +1487,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         target_ext = self.standardize_extension(self._ext_target_var.get())
         warnings = self._collect_ext_warnings(input_path, target_ext)
         if warnings:
-            self._ext_warning_var.set(" | ".join(warnings))
+            self._ext_warning_var.set("\n".join(warnings))
             self._ext_warning_label.grid()
         else:
             self._ext_warning_var.set("")
@@ -1142,6 +1521,110 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             if not candidate.exists():
                 return candidate, suffix
             index += 1
+
+    def _build_unique_output_dir(
+        self,
+        output_dir: Path,
+        stem: str,
+    ) -> tuple[Path, Optional[str]]:
+        """Build a non-conflicting output directory path.
+
+        Args:
+            output_dir: Parent output directory.
+            stem: Folder base name.
+
+        Returns:
+            Tuple of (folder_path, added_suffix).
+        """
+        base_candidate = output_dir / stem
+        if not base_candidate.exists():
+            return base_candidate, None
+
+        index = 1
+        while True:
+            suffix = f"({index})"
+            candidate = output_dir / f"{stem}{suffix}"
+            if not candidate.exists():
+                return candidate, suffix
+            index += 1
+
+    def _save_pil_image_to_extension(
+        self,
+        image: Any,
+        output_path: Path,
+        target_ext: str,
+    ) -> None:
+        """Save a PIL image to target extension with required mode normalization.
+
+        Args:
+            image: PIL image instance.
+            output_path: Output file path.
+            target_ext: Target extension without dot.
+        """
+        save_img = image
+        if target_ext in ("jpg", "pdf") and image.mode in ("RGBA", "LA", "P"):
+            save_img = image.convert("RGB")
+        elif target_ext == "bmp" and image.mode not in ("RGB", "L"):
+            save_img = image.convert("RGB")
+        elif target_ext == "gif" and image.mode not in ("P", "L"):
+            from PIL import Image
+
+            save_img = image.convert("P", palette=Image.ADAPTIVE, colors=256)
+
+        save_format = _PILLOW_SAVE_FORMATS.get(target_ext, target_ext.upper())
+        save_img.save(output_path, format=save_format)
+
+    def _count_pdf_pages(self, input_path: Path) -> int:
+        """Count pages in a PDF document.
+
+        Args:
+            input_path: Input PDF path.
+
+        Returns:
+            Number of pages.
+        """
+        try:
+            import pypdfium2 as pdfium
+
+            pdf = pdfium.PdfDocument(str(input_path))
+            try:
+                return len(pdf)
+            finally:
+                try:
+                    pdf.close()
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                from pypdf import PdfReader
+
+                reader = PdfReader(str(input_path), strict=False)
+                return len(reader.pages)
+            except Exception as exc:
+                raise RuntimeError(message_manager.get_ui_message("U114")) from exc
+
+    def _count_multipage_frames(self, input_path: Path) -> int:
+        """Count page/frame number for PDF or TIFF-like sources.
+
+        Args:
+            input_path: Input source path.
+
+        Returns:
+            Page/frame count (>=1 when detectable).
+        """
+        source_ext = self.standardize_extension(input_path.suffix)
+        if source_ext == "pdf":
+            return self._count_pdf_pages(input_path)
+
+        if source_ext == "tif":
+            try:
+                from PIL import Image
+
+                with Image.open(input_path) as img:
+                    return int(getattr(img, "n_frames", 1) or 1)
+            except Exception:
+                return 1
+        return 1
 
     def _convert_with_pillow(
         self,
@@ -1215,37 +1698,89 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                             continue
                 save_img.save(output_path, format=save_format)
 
-    def _convert_pdf_first_page_to_png(self, input_path: Path, output_path: Path) -> None:
-        """Convert first page of PDF to PNG using pypdfium2.
+    def _convert_pdf_pages_to_images(
+        self,
+        input_path: Path,
+        output_dir: Path,
+        base_stem: str,
+        target_ext: str,
+    ) -> int:
+        """Convert all PDF pages to separate image files.
 
         Args:
             input_path: PDF file path.
-            output_path: PNG output path.
+            output_dir: Output directory where page files are written.
+            base_stem: Base stem for output filenames.
+            target_ext: Target image extension.
+
+        Returns:
+            Number of converted pages.
         """
         try:
             import pypdfium2 as pdfium
         except ImportError as exc:
-            raise RuntimeError("pypdfium2 is not installed.") from exc
+            raise RuntimeError(message_manager.get_ui_message("U114")) from exc
 
         pdf = pdfium.PdfDocument(str(input_path))
         try:
             if len(pdf) == 0:
-                raise RuntimeError("No pages found in PDF.")
-            page = pdf[0]
-            try:
-                bitmap = page.render(scale=300 / 72)
-                pil_image = bitmap.to_pil()
-                pil_image.save(output_path, format="PNG")
-            finally:
+                raise RuntimeError(message_manager.get_ui_message("U113"))
+
+            converted = 0
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
                 try:
-                    page.close()
-                except Exception:
-                    pass
+                    bitmap = page.render(scale=300 / 72)
+                    pil_image = bitmap.to_pil()
+                    page_output_path = output_dir / f"{base_stem}_{page_index + 1:03d}.{target_ext}"
+                    self._save_pil_image_to_extension(
+                        pil_image,
+                        page_output_path,
+                        target_ext,
+                    )
+                    converted += 1
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+            return converted
         finally:
             try:
                 pdf.close()
             except Exception:
                 pass
+
+    def _convert_multipage_tiff_to_images(
+        self,
+        input_path: Path,
+        output_dir: Path,
+        base_stem: str,
+        target_ext: str,
+    ) -> int:
+        """Convert all TIFF frames to separate image files.
+
+        Args:
+            input_path: Input TIFF path.
+            output_dir: Output directory for frame files.
+            base_stem: Base stem for output filenames.
+            target_ext: Target image extension.
+
+        Returns:
+            Number of converted frames.
+        """
+        from PIL import Image
+
+        converted = 0
+        with Image.open(input_path) as img:
+            frame_count = int(getattr(img, "n_frames", 1) or 1)
+            for frame_index in range(frame_count):
+                img.seek(frame_index)
+                save_img = img.copy()
+                page_output_path = output_dir / f"{base_stem}_{frame_index + 1:03d}.{target_ext}"
+                self._save_pil_image_to_extension(save_img, page_output_path, target_ext)
+                converted += 1
+        return converted
 
     def _convert_svg_to_png(self, input_path: Path, output_path: Path) -> None:
         """Convert SVG to PNG using optional svglib/reportlab stack.
@@ -1285,9 +1820,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         # Main processing: explicit handlers for PDF/SVG special cases.
         if source_ext == "pdf":
-            if target_ext != "png":
-                raise RuntimeError("PDF conversion currently supports only PNG.")
-            self._convert_pdf_first_page_to_png(input_path, output_path)
+            if target_ext == "pdf":
+                raise RuntimeError(message_manager.get_ui_message("U111"))
+            self._convert_pdf_first_page_to_image(input_path, output_path, target_ext)
             return
 
         if source_ext == "svg":
@@ -1300,14 +1835,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_ext_convert(self) -> None:
         """Handle extension conversion button click."""
-        if self._copy_protected_pdf_detected:
-            messagebox.showwarning(
-                message_manager.get_ui_message("U033"),
-                message_manager.get_ui_message("U087"),
-            )
+        input_path_str = self._base_file_path_entry.path_var.get().strip()
+        if input_path_str:
+            self._apply_copy_protection_state(input_path_str)
+
+        if self._copy_protected_pdf_detected or self._input_readonly_detected:
             return
 
-        input_path_str = self._base_file_path_entry.path_var.get().strip()
         output_dir_str = self._output_folder_path_entry.path_var.get().strip()
         target_ext = self.standardize_extension(self._ext_target_var.get())
 
@@ -1315,13 +1849,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         output_dir = Path(output_dir_str) if output_dir_str else Path("")
 
         if not input_path_str or not input_path.exists() or not input_path.is_file():
-            self._show_status_feedback("Input file not found.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U100"), False)
             return
         if not output_dir_str or not output_dir.exists() or not output_dir.is_dir():
-            self._show_status_feedback("Output folder not found.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U101"), False)
             return
         if not target_ext:
-            self._show_status_feedback("Target extension is empty.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U102"), False)
             return
 
         warnings = self._collect_ext_warnings(input_path, target_ext)
@@ -1331,8 +1865,65 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 "\n".join(warnings),
             )
             if not confirmed:
-                self._set_status("Cancelled")
+                self._set_status(message_manager.get_ui_message("U103"))
                 return
+
+        source_ext = self.standardize_extension(input_path.suffix)
+        try:
+            frame_count = self._count_multipage_frames(input_path)
+        except RuntimeError as exc:
+            self._show_status_feedback(str(exc), False)
+            return
+        multi_page_export = source_ext in ("pdf", "tif") and frame_count > 1 and target_ext != "pdf"
+
+        if multi_page_export:
+            confirm_message = message_manager.get_ui_message("U108")
+            self._ext_warning_var.set(confirm_message)
+            self._ext_warning_label.grid()
+            confirmed = messagebox.askokcancel(
+                message_manager.get_ui_message("U033"),
+                confirm_message,
+            )
+            if not confirmed:
+                self._set_status(message_manager.get_ui_message("U103"))
+                return
+
+            page_output_dir, folder_suffix = self._build_unique_output_dir(
+                output_dir=output_dir,
+                stem=input_path.stem,
+            )
+            page_output_dir.mkdir(parents=True, exist_ok=False)
+            try:
+                if source_ext == "pdf":
+                    self._convert_pdf_pages_to_images(
+                        input_path=input_path,
+                        output_dir=page_output_dir,
+                        base_stem=input_path.stem,
+                        target_ext=target_ext,
+                    )
+                else:
+                    self._convert_multipage_tiff_to_images(
+                        input_path=input_path,
+                        output_dir=page_output_dir,
+                        base_stem=input_path.stem,
+                        target_ext=target_ext,
+                    )
+            except RuntimeError as exc:
+                logger.error(str(exc))
+                messagebox.showerror(message_manager.get_ui_message("U033"), str(exc))
+                self._show_status_feedback(str(exc), False)
+                return
+            except Exception as exc:
+                logger.error(f"Extension conversion failed: {exc}")
+                self._show_status_feedback(str(exc), False)
+                return
+
+            status_message = message_manager.get_ui_message("U112")
+            if folder_suffix is not None:
+                suffix_message = message_manager.get_ui_message("U115").format(folder_suffix)
+                status_message = f"{status_message} / {suffix_message}"
+            self._show_status_feedback(status_message, True)
+            return
 
         output_path, added_suffix = self._build_unique_output_path(
             output_dir=output_dir,
@@ -1353,7 +1944,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             return
         except Exception as exc:
             logger.error(f"Extension conversion failed: {exc}")
-            self._show_status_feedback(f"Extension conversion failed: {exc}", False)
+            self._show_status_feedback(str(exc), False)
             return
 
         status_message = message_manager.get_ui_message("U083")
@@ -1364,46 +1955,59 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _on_size_convert(self) -> None:
         """Handle size conversion button click."""
-        if self._copy_protected_pdf_detected:
-            messagebox.showwarning(
-                message_manager.get_ui_message("U033"),
-                message_manager.get_ui_message("U087"),
-            )
+        input_path_str = self._base_file_path_entry.path_var.get().strip()
+        if input_path_str:
+            self._apply_copy_protection_state(input_path_str)
+
+        if self._copy_protected_pdf_detected or self._input_readonly_detected:
             return
 
-        input_path_str = self._base_file_path_entry.path_var.get().strip()
         output_dir_str = self._output_folder_path_entry.path_var.get().strip()
 
         input_path = Path(input_path_str) if input_path_str else Path("")
         output_dir = Path(output_dir_str) if output_dir_str else Path("")
 
         if not input_path_str or not input_path.exists() or not input_path.is_file():
-            self._show_status_feedback("Input file not found.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U100"), False)
             return
         if not output_dir_str or not output_dir.exists() or not output_dir.is_dir():
-            self._show_status_feedback("Output folder not found.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U101"), False)
             return
 
         width = self._parse_positive_int(self.width_var.get())
         height = self._parse_positive_int(self.height_var.get())
         if width is None or height is None:
-            self._show_status_feedback("Target size must be positive integers.", False)
+            self._show_status_feedback(message_manager.get_ui_message("U052"), False)
             return
 
         source_ext = self.standardize_extension(input_path.suffix)
         if source_ext in ("pdf", "svg"):
-            self._show_status_feedback("Size conversion supports image files only.", False)
+            warning_message = message_manager.get_ui_message("U104")
+            self._size_warning_var.set(warning_message)
+            self._size_warning_label.grid()
+            messagebox.showwarning(message_manager.get_ui_message("U033"), warning_message)
+            self._show_status_feedback(warning_message, False)
             return
 
-        warning_message = ""
-        if self._is_upscaling_target(width, height):
-            warning_message = message_manager.get_ui_message("U082")
+        if self._multi_frame_detected:
+            warning_message = message_manager.get_ui_message("U110")
+            self._size_warning_var.set(warning_message)
+            self._size_warning_label.grid()
+            messagebox.showwarning(message_manager.get_ui_message("U033"), warning_message)
+            self._show_status_feedback(warning_message, False)
+            return
+
+        warning_messages = self._collect_size_warnings(width, height)
+        if warning_messages:
+            warning_message = "\n".join(warning_messages)
+            self._size_warning_var.set("\n".join(warning_messages))
+            self._size_warning_label.grid()
             confirmed = messagebox.askokcancel(
                 message_manager.get_ui_message("U033"),
                 warning_message,
             )
             if not confirmed:
-                self._set_status("Cancelled")
+                self._set_status(message_manager.get_ui_message("U103"))
                 return
 
         try:
@@ -1427,7 +2031,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             )
         except Exception as exc:
             logger.error(f"Size conversion failed: {exc}")
-            self._show_status_feedback(f"Size conversion failed: {exc}", False)
+            self._show_status_feedback(str(exc), False)
             return
 
         status_message = message_manager.get_ui_message("U084")
@@ -1435,11 +2039,49 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             suffix_message = message_manager.get_ui_message("U089").format(added_suffix)
             status_message = f"{status_message} / {suffix_message}"
         self._show_status_feedback(status_message, True)
-        if warning_message:
-            self._size_warning_var.set(warning_message)
+        if warning_messages:
+            self._size_warning_var.set("\n".join(warning_messages))
             self._size_warning_label.grid()
         else:
             self._refresh_size_warning_label()
+
+    def _apply_paper_size_to_target_dimensions(self) -> None:
+        """Apply selected paper size and DPI to width/height entries.
+
+        This helper keeps target pixel dimensions aligned with paper selection.
+        """
+        paper_name = self._paper_var.get()
+        if paper_name not in self._paper_sizes:
+            return
+
+        try:
+            dpi = float(self._dpi_var.get() or "72")
+        except ValueError:
+            dpi = 72.0
+
+        w_mm, h_mm = self._paper_sizes[paper_name]
+        w_px = int(w_mm * dpi / 25.4)
+        h_px = int(h_mm * dpi / 25.4)
+
+        self._size_syncing = True
+        try:
+            self.width_var.set(str(w_px))
+            self.height_var.set(str(h_px))
+        finally:
+            self._size_syncing = False
+
+    def _on_dpi_value_changed(self, *args: Any) -> None:
+        """Handle DPI changes and update paper-size-derived dimensions.
+
+        Args:
+            *args: Tkinter trace callback arguments.
+        """
+        _ = args
+        if self._size_syncing:
+            return
+        if self._paper_size_priority_enabled and self._paper_var.get() in self._paper_sizes:
+            self._apply_paper_size_to_target_dimensions()
+        self._refresh_size_warning_label()
 
     # ------------------------------------------------------------------
     # Status bar helpers

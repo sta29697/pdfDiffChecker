@@ -1008,11 +1008,7 @@ def main() -> None:
         theme_manager.apply_color_theme_all_widgets()
         # Main processing: run one more pass after idle so launch-time colors settle.
         main_window.after_idle(theme_manager.apply_color_theme_all_widgets)
-        
-        # Language is fixed to Japanese, so language switching buttons are not needed
-        # Set default language to Japanese
-        message_manager.set_language("ja")
-        
+
         # Pack notebook to fill the window
         notebook.pack(expand=True, fill=tk.BOTH)
         

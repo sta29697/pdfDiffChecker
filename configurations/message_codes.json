@@ -2002,6 +2002,14 @@
             "en": "DPI : ",
             "ja": "DPI : "
         },
+        "U116": {
+            "en": "Detected DPI : ",
+            "ja": "検出DPI : "
+        },
+        "U117": {
+            "en": "Output DPI : ",
+            "ja": "出力DPI : "
+        },
         "U086": {
             "en": "Paper size : ",
             "ja": "用紙サイズ : "
@@ -2053,6 +2061,74 @@
         "U098": {
             "en": "Landscape",
             "ja": "横"
+        },
+        "U099": {
+            "en": "The input file is read-only. Extension and size conversion are disabled.",
+            "ja": "入力ファイルが読み取り専用のため、拡張子変換とサイズ変換は無効です。"
+        },
+        "U100": {
+            "en": "Input file not found.",
+            "ja": "入力ファイルが見つかりません。"
+        },
+        "U101": {
+            "en": "Output folder not found.",
+            "ja": "出力フォルダが見つかりません。"
+        },
+        "U102": {
+            "en": "Target extension is empty.",
+            "ja": "変換先拡張子が未選択です。"
+        },
+        "U103": {
+            "en": "Cancelled.",
+            "ja": "キャンセルしました。"
+        },
+        "U104": {
+            "en": "Size conversion supports image files only.",
+            "ja": "サイズ変換は画像ファイルのみ対応です。"
+        },
+        "U105": {
+            "en": "Aspect ratio differs from the original image while \"Lock aspect ratio\" is enabled. Proceed?",
+            "ja": "「縦横比を固定」がONですが、元画像と縦横比が一致していません。続行しますか？"
+        },
+        "U106": {
+            "en": "Original DPI information is missing. Result quality may degrade. Proceed?",
+            "ja": "元画像のDPI情報がないため、画質が劣化する可能性があります。続行しますか？"
+        },
+        "U107": {
+            "en": "Selected DPI ({0}) is lower than original DPI ({1}). Result quality may degrade. Proceed?",
+            "ja": "指定DPI（{0}）が元画像DPI（{1}）より低いため、画質が劣化する可能性があります。続行しますか？"
+        },
+        "U108": {
+            "en": "This file has multiple pages/frames. Each page will be exported as a separate image file in a dedicated folder. Proceed?",
+            "ja": "このファイルは複数ページ/複数フレームです。各ページを専用フォルダ内に個別画像として出力します。続行しますか？"
+        },
+        "U109": {
+            "en": "For multi-page or multi-frame files, \"Lock aspect ratio\" must stay enabled.",
+            "ja": "複数ページ/複数フレームのファイルでは「縦横比を固定」をONのままにしてください。"
+        },
+        "U110": {
+            "en": "Size conversion is unavailable for multi-page or multi-frame files.",
+            "ja": "複数ページ/複数フレームのファイルはサイズ変換できません。"
+        },
+        "U111": {
+            "en": "PDF conversion supports image targets only.",
+            "ja": "PDF変換は画像形式への出力のみ対応です。"
+        },
+        "U112": {
+            "en": "Extension conversion completed (multi-page export).",
+            "ja": "拡張子変換が完了しました（複数ページ出力）。"
+        },
+        "U113": {
+            "en": "No pages found in the source file.",
+            "ja": "入力ファイルにページがありません。"
+        },
+        "U114": {
+            "en": "Required PDF conversion library is not installed.",
+            "ja": "PDF変換に必要なライブラリがインストールされていません。"
+        },
+        "U115": {
+            "en": "A folder with the same name exists. Suffix added: {0}",
+            "ja": "同名フォルダが存在するため、サフィックスを付与しました: {0}"
         }
     }
 }

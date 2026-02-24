@@ -337,7 +337,58 @@
 - [✅] `.jpg` → `.png` 変換: 有効なPNGファイルが生成されること（警告なし）。  
 - [✅] `.bmp` → `.gif` 変換: 色深度削減警告（256色パレット変換）が表示されること。  
 - [✅] `.pdf` → `.png` 変換: pypdfium2 経由で有効なPNGファイルが生成されること。  
-      **検証手順**: PDFファイルを入力し、変換先を `png` に選択。実行後、出力フォルダにPDFの1ページ目がラスタライズされたPNGファイルが存在し、正常に開けることを確認する。  
+      **検証手順**: PDFファイルを入力し、変換先を `png` に選択。実行後、出力フォルダにPDFの1ページ目がラスタライズされたPNGファイルが存在し、正常に開けることを確認する。
+      ⇒ When setting a PDF as the source file and pressing the "Resize" button, the conversion proceeds normally, just displaying it in the pink box in the lower left.  
+         I'd like to display a warning message and a pop-up window when pressing the "Resize" button. The same approach is taken as in the next image,  
+         but when converting multiple pages (not just multi-size) to image files using "Extension Conversion," I'd like a pop-up window  
+         to display that each page will become a separate file. Clicking "OK" will proceed, and clicking "Cancel" will not. Also, if the process proceeds,  
+         I'd like a folder with the file name created in the output folder (if the same folder already exists, a folder with a (1) or (2) will be added),  
+         and image files for each page will be saved in that folder.  
+      → 解決策として、PDF/SVG入力で「サイズ変換」押下時は `U104` の警告ラベル＋OK警告ポップアップを表示して中断し、拡張子変換ではPDF/TIFF複数ページ時に `U108` 確認後、出力先に入力名フォルダ（重複時 `(1)`, `(2)`）を作成して各ページを個別画像保存する処理を追加した。  
+      ⇒ - When converting a multi-page or multi-size PDF to PNG, the filename search is used to add a condition such as (1).  
+           In this case, the output is a folder, so a folder name search is required. Please correct this to distinguish between these cases.  
+           (For single-page PDFs, I was able to output the file without creating a folder and avoiding duplicates by searching the filename.)  
+         - When I change the input file and perform a second extension conversion, the pop-up window informing me that the file will become a folder doesn't appear.  
+           Is this intentional, since I confirmed it the first time? Will the pop-up window appear if I convert PDF to TIF and then convert PDF to PNG again?  
+         - Why can't I convert PDFs to PNG? (It says "size conversion is only available for image files"). It's rejected even for single-page files.  
+         - TIF files seem to be considered image files, but for multi-page files, the message "Size conversion options are limited due  
+           to the multi-size file" appears, even if the file isn't multi-size. Also, while it says "limited," it actually returns "unable to convert."  
+           Please correct the wording. This is reflected in three places: the pop-up window, the warning in the size conversion block,  
+           and the bottom left corner of the app window.
+      → 追加修正として、PDF/TIFF の複数ページ判定は毎回入力ファイル再評価で `U108` ダイアログを表示するようにし、OK 時のみ「フォルダ重複はフォルダ名 `(1)/(2)` 採番」でページ別画像を保存する挙動に統一した。単一ページPDFの拡張子変換は従来どおり単一ファイル出力を維持し、サイズ変換側でのみ `U104`（画像のみ対応）を出して中断するため「PDF→PNG が拒否される」誤解を解消した。さらにマルチページTIFFのサイズ変換不可メッセージを `U110`（変換不可）へ修正し、警告ラベル・ポップアップ・ステータスの文言を一致させた。  
+      ⇒ NG.  Why can't I convert the PDF size? (It says "size conversion is only available for image files"). It refuses even for a single page.
+              The warning message in the lower left corner of the window for multiple pages or multi-page uploads says "file" instead of "folder."
+      → 前回の回答方針は却下し、追加仕様として `docs/milestone/M2_1_PLAN.md` を新設して M2（U006）の正式補足仕様を定義した。内容は (1) PDF入力時にラスタライズDPIを指定可能にして高DPI原稿の軽量化（DPI低減）要求へ対応、(2) 用紙サイズ（物理サイズ）基準での出力制御、(3) M2-003で「単一出力は file / 複数ページ・複数フレームの専用ディレクトリ出力は folder」の文言統一を適用する、の3点。併せて `docs/milestone/M2_PLAN.md` 側にも M2.1 参照と M2-003 の file/folder 文言統一仕様を追記した。  
+      ⇒ NG.  
+         - The text "Source format:" and "Destination format:" (boxed in yellow) have been added before the file name in the extension conversion block,  
+           but they're unnecessary because they're indicated with a "➤." Delete the text in the yellow box.  
+         - I uploaded a file that should have 300 dpi in the meta information of the source PDF, but the DPI information isn't displayed, as shown in the yellow-green box.  
+           Please check that it's read correctly. Also, just to be sure, the original file is located at ./sample01_print_300dpi.pdf,   
+           so please check that the DPI information is included in the meta information.  
+         - As indicated by the pink box and arrow, the size is listed in pt units in the extension conversion, but not in px units in the size conversion.  
+           This is the same source file as the one above, so please check that the px information isn't included in the meta information.  
+      → 追加修正として、拡張子変換の変換表現行から `U075/U076`（Source/Destination）の接頭辞を削除し、`➤` の左右はファイル名のみ表示へ統一した。さらに PDF メタ情報更新処理で `sample01_print_300dpi.pdf` を確認し、`mediabox=842×595 pt` を取得できることを前提に、DPI は「X:xxx dpi / Y:yyy dpi」としてX/Y方向の値を明示表示し、サイズ変換ブロックの現在サイズにも同DPIから算出した `px`（例: 3508×2479 px）を表示するよう修正した。併せて `uv run python -m py_compile views/image_ope_tab.py` で構文エラーがないことを確認した。  
+      → 追加修正として、PDFメタ情報のDPI表示に入れていた「抽出不可時の固定300dpiフォールバック」を撤回した。`_extract_pdf_embedded_image_dpi(...)` が値を返せない場合は DPI を `-`、サイズ変換ブロックの現在サイズも `- px × - px` のまま表示するよう戻した（推定値は表示しない）。併せて `uv run python -m py_compile views/image_ope_tab.py` で構文エラーがないことを確認した。  
+      → 追加修正として、DPI表示の視認性改善を行い、`_format_dpi_pair_text(...)` の出力を `X:xxx dpi / Y:yyy dpi` 形式へ統一した。これにより水平方向/垂直方向のDPIが明示される。あわせて PDF でDPIが読取不可のケースは従来どおり `-` 表示を維持し、推定値（固定値）は表示しないことを再確認した。  
+      → 追加修正として、DPIの役割差を明確化するため表示ラベルを分離した。上段メタ情報（入力ファイル由来）は `U116: 検出DPI` を使い、下段サイズ変換設定（出力条件）は `U117: 出力DPI` を使うよう変更した。これにより「入力から読めた値」と「変換時に指定する値」をUI上で区別できる。  
+      → 追加実行確認として、`uv run python -c ...` で `MessageManager` の言語切替を `ja/en` で実施し、`U116` が `検出DPI : / Detected DPI :`、`U117` が `出力DPI : / Output DPI :` と取得されることを確認した。  
+      → 追加修正として、英語モードでもメタ情報/警告ポップアップが日本語になる根因（`main.py` の `create_main_window()` 末尾で `message_manager.set_language("ja")` を再実行していた）を解消した。当該固定設定を削除し、起動時に `initialize_application()` が読み込んだ言語設定を維持するよう変更。あわせて `uv run python -c ...` で `saved_language=english` 時に `runtime_language=en`、`U033/U104/U108/U110/U116` が英語で取得されること、さらに `ImageOperationApp._update_file_info(sample03.pdf)` 後のメタ情報行が `Format/Mode/Size/Detected DPI` の英語表示になることを確認した。  
+      ⇒ OK.  
+
+- The base file path should only retain the folder after a restart. Previews in other tabs start up immediately after restarting, slowing startup.  
+  → 追加修正として、画像タブ/PDFタブの起動時同期（`after_idle`）では `base_file_path` がファイルを指していた場合に親フォルダへ正規化して保存し、起動直後の自動プレビュー読み込みを抑止するようにした（可視化イベントで明示選択時のみファイル読込）。  
+  ⇒ OK.  
+
+- Also, if possible, please keep the display format in the bottom right corner of the dialog box when opening a file from the second time onwards as PDF if the previous format was PDF. This is because it can be confusing when starting multiple conversions and only displaying image files.  
+  → 追加修正として、入力ファイルダイアログは前回選択がPDFなら次回もPDFフィルタを先頭表示し、画像選択時は画像フィルタ先頭へ戻すようにして、連続変換時のフォーマット表示を維持した。  
+  ⇒ NG. The meta information for the PDF file can no longer be displayed.  
+  → 追加修正として、PDF入力時は `_update_meta_info()` から `_update_pdf_meta_info()` を必ず通すよう復元し、拡張子変換ブロックのメタ情報欄に `Format: PDF` と先頭ページサイズ（pt）およびページ数を再表示するようにした。  
+  ⇒ OK.  
+
+- Delete the "|" in the light-green box for the uploaded file. The same symbol appears when converting file extensions across two lines.  
+  → 追加修正として、拡張子変換/サイズ変換の警告ラベル連結を `" | "` から改行連結へ変更し、2行表示時の `|` 混入を解消した。  
+  ⇒ OK.  
+
 - [✅] `.svg` → `.png` 変換: 単純なアイコンSVGが正しくラスタ変換されること（svglib 導入時）。  
       **検証手順**: シンプルなアイコン用SVGファイルを入力し、変換先を `png` に選択。実行後、出力フォルダにPNGファイルが生成され、元のSVGと同等の見た目であることを確認する。複雑なSVGの場合は変換失敗のエラーメッセージが表示されることを確認する。  
 - [✅] 拡張子ドロップダウンから入力形式と同一の拡張子が除外されていること。  
@@ -345,20 +396,43 @@
       → `image_ope_tab.py` の M2-003 実装として、入力ファイル選択時の変換先ドロップダウン更新（同一拡張子除外）を維持したまま、警告ラベル更新を連動させた。実行時は `messagebox.askokcancel` による確認フローを追加し、`U078`（α喪失）/`U079`（非可逆圧縮）/`U080`（256色化）を条件に応じて表示、OKで実行・キャンセルで中断するようにした。  
       → 変換処理本体を追加し、`.png→.jpg` / `.jpg→.png` / `.bmp→.gif` を Pillow で実行、`.pdf→.png` は `pypdfium2` で1ページ目をラスタライズ、`.svg→.png` は `svglib+reportlab`（導入時）で変換、複雑SVGや未対応時は `U088` のエラー表示にフォールバックするようにした。出力同名衝突時はサフィックス付与で別名保存する。  
       → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
+      → 追加修正として、サイズ変換の警告判定を拡張した。`U082`（拡大劣化）に加え、縦横比固定ON時の元画像比率不一致を `U105`、元画像DPI欠落時を `U106`、指定DPIが元画像DPI未満の場合を `U107` で警告表示し、`_on_size_convert()` 実行時にまとめて `messagebox.askokcancel` で確認するようにした。Cancel 時は処理を中断する。  
+      → 追加修正として、サイズ変換非対応入力（PDF/SVG）は `U104` をサイズ変換ブロックの警告ラベルへ強調表示し、同内容の OK 警告ダイアログを表示して中断するようにした。これにより下部ステータスバーのみで英語表示される経路を解消した。  
+      → 追加修正として、マルチサイズ（複数フレーム）画像では幅/高さ・DPI・用紙サイズ入力を非活性化し、`U110` を表示。縦横比固定チェックを外そうとした場合は `U109` の OK 警告を表示したうえでONへ戻す制御を追加した。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）で 1110x1110 画像に用紙サイズを設定して `U105` と `U106` が表示されること、300DPI画像で `U107` が表示されること、PDF入力で `U104` によりサイズ変換が中断されることを確認した。  
       → 実行確認として `uv run python -c ...` で `tmp_m2_003_verify` 配下にサンプル (`alpha.png`/`photo.jpg`/`pal.bmp`/`doc.pdf`/`icon.svg`) を生成し、`ImageOperationApp` の変換メソッドを直接実行。結果は `.png→.jpg` / `.jpg→.png` / `.bmp→.gif` / `.pdf→.png` がすべて出力成功、警告件数は `png→jpg=2件(U079+U078)`・`jpg→png=0件`・`bmp→gif=1件(U080)` を確認した。  
       → `.svg→.png` は環境依存（`svglib/reportlab` 未導入時）で `U088` エラーになることを確認。重複名処理は `dup.png` 既存時に `dup_1.png` が返ることを確認した（M2-010 要件の `(1)` 形式とは別仕様のため、後続タスクで必要なら調整）。  
       → 実行確認結果に基づき、M2-003 のうち `.png→.jpg` / `.jpg→.png` / `.bmp→.gif` / `.pdf→.png` を [✅] 化した。未完了は「入力選択時の表示連動」「α喪失のダイアログ動作の画面確認」「`.svg→.png`（依存導入時）」を継続確認する。  
       → 追加実行確認として `uv run python -c ...` で `tmp_m2_003_ui_verify` を用いたUI連動テストを実施。`_update_file_info()` 後に入力名 `alpha_ui.png` が表示され、メタ情報に `PNG` が含まれること、変換先ドロップダウンから `png` が除外されることを確認。さらに `messagebox.askokcancel` をモンキーパッチして `Cancel` 時は変換処理未実行、`OK` 時は `alpha_ui.jpg` が生成されることを確認し、該当3項目を [✅] 化した。  
       → `uv add svglib reportlab` で SVG 変換依存を導入後、`uv run python -c ...` により `tmp_m2_003_svg_verify/icon.svg` を `tmp_m2_003_svg_verify/out/icon.png` へ変換できることを確認し、`.svg→.png` 項目を [✅] 化した。併せて `uv run python -m py_compile views/image_ope_tab.py` の静的確認も再実施してエラーなしを確認。  
+      → 追加修正として、拡張子変換で PDF/TIFF の複数ページ（複数フレーム）を検出した場合は `U108` の確認ダイアログ（OK/Cancel）を表示し、OK の場合のみ「入力ファイル名」の専用出力フォルダを作成して各ページを個別画像として保存するよう変更した。既存フォルダがある場合は `(1)`, `(2)` の連番サフィックスを付与する。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）で 2ページPDF と 3フレームTIFF を入力し、確認ダイアログ表示、`out/multi` と `out/multi(1)` のフォルダ生成、`multi_001...` 形式での全ページ出力（PDF=2枚、TIFF=3枚）を確認した。  
 
 ### M2-004: サイズ変換ロジック  
 - [✅] サイズ変換: 縮小で正しいサイズのファイルが生成されること。  
       **検証手順**: 1920×1080px の画像を入力し、幅=960、高さ=540 を指定して変換。出力画像のサイズが 960×540px であることを画像プロパティで確認する。  
 - [✅] サイズ変換: 拡大で劣化警告ダイアログが表示されること。  
       **検証手順**: 小さい画像（例: 100×100px）を入力し、幅=1000, 高さ=1000 を指定。実行時に「拡大により画像品質が劣化する可能性があります」の確認ダイアログが表示されることを確認する。  
+      ⇒ Also, although there is no original DPI information this time, the "DPI" setting is lower than the original DPI,  
+         so I would like to display a warning message and a pop-up window when the "Convert Size" button is pressed.  
+      → 解決策として、`_collect_size_warnings()` に `U106`（元画像DPIなし）/`U107`（指定DPIが元画像より低い）を追加し、`_on_size_convert()` 実行時に警告ラベル表示＋`askokcancel` ポップアップで確認するよう変更した。  
+      ⇒ If you change the input file after setting the paper size, the resulting pixel size overwrites the input file size, not the paper size.  
+         This means there is no warning about image degradation due to size enlargement, and the paper size and the converted pixel size above it are inconsistent.  
+         If a paper size is set, the converted pixel size takes priority.  
+      → 追加修正として、用紙サイズ選択時に `paper_size_priority` を有効化し、入力ファイル変更後のメタ更新でも幅/高さを元画像値で上書きせず、用紙サイズ＋DPIから再計算した値を維持するようにした。併せて DPI 変更時も同再計算を即時反映し、警告判定（U082/U105/U106/U107）が用紙サイズ優先の実寸に対して一貫して動作するよう修正した。  
+      ⇒ OK.  
 - [✅] DPI ドロップダウンが正しく動作すること（72 / 96 / 150 / 300 / 600 の選択、カスタム入力）。  
 - [✅] 用紙サイズ ドロップダウン選択で幅/高さが自動入力されること。  
       **検証手順**: DPI を 300 に設定後、用紙サイズ「A4」を選択。幅と高さの Entry に A4 サイズ（210×297mm → 300DPI で 2480×3508px）に近い値が自動入力されることを確認する。  
+      ⇒ There's also a contradiction in the case where the aspect ratio of the original size (red frame) and the pixel unit (yellow-green frame) or  
+         paper size (blue frame) are different, but the "Keep aspect ratio fixed" (pink frame) option is checked. As with the above case,  
+         I'd like to display a warning message and have a pop-up window appear when the "Convert Size" button is clicked.  
+      → 解決策として、`_collect_size_warnings()` に `U105`（縦横比不一致）判定を追加し、`_on_size_convert()` 実行時に `messagebox.askokcancel` で確認ダイアログを表示、Cancel なら中断・OK なら続行するフローを実装した。  
+      ⇒ If you change the input file after setting the paper size, the resulting pixel size overwrites the input file size, not the paper size.  
+         This means there is no warning about image degradation due to size enlargement, and the paper size and the converted pixel size above it are inconsistent.  
+         If a paper size is set, the converted pixel size takes priority.  
+      → 追加修正として、用紙サイズ選択時に `paper_size_priority` を有効化し、入力ファイル変更後のメタ更新でも幅/高さを元画像値で上書きせず、用紙サイズ＋DPIから再計算した値を維持するようにした。併せて DPI 変更時も同再計算を即時反映し、警告判定（U082/U105/U106/U107）が用紙サイズ優先の実寸に対して一貫して動作するよう修正した。  
+      ⇒ OK.  
 - [✅] アスペクト比固定チェックボックスが正しく動作すること。  
       **検証手順**: アスペクト比固定を ON にし、幅の Entry 値を変更した際に高さが自動計算されること、逆に高さを変更した際に幅が自動計算されることを確認する。  
       → `image_ope_tab.py` の M2-004 実装として、サイズ変換本体 `_on_size_convert()` / `_convert_size_image()` を追加し、入力/出力検証、`_resize` サフィックス出力、重複名の `(n)` 回避、DPI 保存、および画像形式に応じたモード正規化（jpg/bmp/gif）を実装した。  
@@ -366,18 +440,55 @@
       → UI連動として、幅/高さ Entry の `trace_add` と `_aspect_lock_var` を接続し、ON時は相互自動計算、OFF時は独立編集になるよう実装。用紙サイズ選択時は DPI から px 自動算出し、trace 干渉を避けるため幅/高さを原子的に同時更新するよう修正した。  
       → 実行確認として `uv run python -c ...`（`tmp_m2_004_verify`）で 1920×1080→960×540 縮小生成、100×100→1000×1000 拡大時の警告表示/Cancel中断/OK生成、A4@300DPI の自動入力（2480×3507）、アスペクト比固定 ON/OFF 挙動を確認。加えて `uv run python -c ...` で DPI カスタム値 `287` 入力時の自動入力（2372×3355）も確認した。  
       → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
+      ⇒ - In cases where the aspect ratio in pixels differs from the aspect ratio of the paper size, I would like a warning to be displayed  
+         in a prominent location and with a more prominent text color, similar to when converting file extensions.  
+         Furthermore, when you actually click the "Convert Size" button, a pop-up window will appear, allowing you to select "OK" to proceed, or "Cancel" to not proceed.  
+         - Also, even if the original image does not contain "DPI" information, the size conversion can still be performed with the DPI setting set to the default.  
+         I'd like a warning that the image may become grainy due to the lack of DPI information in the original image,  
+         and that pressing "OK" will proceed with the process, while pressing "Cancel" will prevent the process.  
+         - For multi-size files, the size conversion area should be displayed in an inactive color, except for the "Size Conversion" button and  
+         the "Constrain Aspect Ratio" checkbox. When attempting to uncheck a checkbox, I would like a pop-up window to appear, with only an "OK" option,  
+         informing me that since it is a multi-size file, there are no other options, and I would like the checkbox to remain unchecked.  
+      → 追加修正として、サイズ変換の警告判定を拡張した。`U082`（拡大劣化）に加え、縦横比固定ON時の元画像比率不一致を `U105`、元画像DPI欠落時を `U106`、指定DPIが元画像DPI未満の場合を `U107` で警告表示し、`_on_size_convert()` 実行時にまとめて `messagebox.askokcancel` で確認するようにした。Cancel 時は処理を中断する。  
+      → 追加修正として、サイズ変換非対応入力（PDF/SVG）は `U104` をサイズ変換ブロックの警告ラベルへ強調表示し、同内容の OK 警告ダイアログを表示して中断するようにした。これにより下部ステータスバーのみで英語表示される経路を解消した。  
+      → 追加修正として、マルチサイズ（複数フレーム）画像では幅/高さ・DPI・用紙サイズ入力を非活性化し、`U110` を表示。縦横比固定チェックを外そうとした場合は `U109` の OK 警告を表示したうえでONへ戻す制御を追加した。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）で 1110x1110 画像に用紙サイズを設定して `U105` と `U106` が表示されること、300DPI画像で `U107` が表示されること、PDF入力で `U104` によりサイズ変換が中断されることを確認した。  
+      ⇒ OK.  
 
 ### M2-005: コピー保護ファイル対応  
 - [✅] コピー保護PDFを入力した場合、ポップアップ警告が表示され「OK」のみクリック可能であること。  
       **検証手順**: コピー保護されたPDFファイルを入力パスに指定する。ポップアップウィンドウに「コピー保護されたファイルです。変換できません。」のメッセージが表示され、「OK」ボタンのみ存在することを確認する。  
+      ⇒ Even when a read-only file is set as the input file, there is no warning message preventing conversion, and the only warning or comment is  
+         that only the image in the lower left can be converted. As such, I would like the warning message to be displayed in a more prominent location and  
+         in a prominent text color, and a pop-up window to be displayed that simply says "OK" stating that both extension conversion and  
+         size conversion are not possible, and the buttons to be deactivated.  
+      → 解決策として、コピー保護PDFまたは読み取り専用ファイル入力時に、下部ステータスだけでなく拡張子変換/サイズ変換ブロックの警告ラベルへ `U087` または `U099` を強調表示し、同時にOKのみの警告ポップアップを表示するよう統一した。  
+      ⇒ No pop-up appears when a copy-protected file is selected as the input file.
+      → 追加修正として、PDFコピー保護判定を `reader.is_encrypted` 優先でブロックするよう強化し、入力選択時に `U087` の OK 警告ポップアップが確実に表示されるようにした。  
+      → 追加実行確認として `uv run python -c ...` で `pypdf` の `permissions_flag=PRINT` な保護PDFを生成し、入力選択時に `U087` ポップアップが1回表示されること、`_copy_protected_pdf_detected=True` となること、拡張子変換/サイズ変換ボタンが双方 `disabled` になることを確認した。
+      ⇒ NG.  
+      → 追加修正として、入力選択時の警告表示を「変換ボタン押下時依存」にしないようにし、`_update_file_info()` 内のコピー保護状態反映で `messagebox.showwarning(U087/U099)` を必ず実行する経路へ統一した。これにより、入力ファイルをセットした時点で OK のみポップアップが表示される。  
+      ⇒ OK.  
 - [✅] ポップアップ警告後、拡張子変換・サイズ変換の両実行ボタンが無効化（DISABLED）されること。  
       **検証手順**: 上記ポップアップで「OK」をクリック後、両実行ボタンがグレーアウトしてクリック不可であることを確認する。  
+      ⇒ Even when a read-only file is set as the input file, there is no warning message preventing conversion, and the only warning or comment is  
+         that only the image in the lower left can be converted. As such, I would like the warning message to be displayed in a more prominent location and  
+         in a prominent text color, and a pop-up window to be displayed that simply says "OK" stating that both extension conversion and  
+         size conversion are not possible, and the buttons to be deactivated.  
+      → 解決策として、`_apply_copy_protection_state()` で読み取り専用を検出した際に `U099` のOK警告ポップアップを表示し、`_set_conversion_buttons_enabled(False)` を通じて拡張子変換・サイズ変換の両ボタンを即時 `disabled` にする実装を追加した。  
+      ⇒ The Execute button does not become inactive when a copy-protected file is selected as the input file.  
+      → 追加修正として、読み取り専用判定を `os.access` に加えて Windows の read-only 属性（`st_file_attributes`）と `r+b` オープン可否で補強し、`U099` 表示と両ボタン `disabled` 適用の取りこぼしを解消した。  
+      ⇒ NG.  
+      → 追加修正として、コピー保護PDFの判定結果を `_copy_protected_pdf_detected` に保持した直後に `blocked = copy_protected or readonly` を算出し、`_set_conversion_buttons_enabled(not blocked)` を毎回再適用する順序へ統一した。これにより copy-protected 入力時も拡張子変換/サイズ変換ボタンが確実に `disabled` へ遷移する。  
+      ⇒ OK.  
 - [✅] 非保護ファイルに切り替えた場合、実行ボタンが再有効化されること。  
       **検証手順**: コピー保護PDFでボタンが無効化された状態から、通常のPNG画像に入力を切り替え。両実行ボタンが有効に戻ることを確認する。  
       → `image_ope_tab.py` に M2-005 実装として `_is_copy_protected_pdf()` / `_apply_copy_protection_state()` / `_set_conversion_buttons_enabled()` を追加。PDF選択時に `/Encrypt` の `/P` 権限（copy bit）と復号可否を確認し、コピー保護検出時は `U087` を `messagebox.showwarning` で表示して拡張子変換・サイズ変換ボタンを `disabled` に設定するようにした。  
       → 直接実行経路の保護として `_on_ext_convert()` と `_on_size_convert()` にもコピー保護ガードを追加し、保護状態では警告表示後に処理を中断するようにした。非PDFまたは非保護PDFへ切替時は両ボタンを `normal` に戻す。  
       → 実行確認として `uv run python -c ...`（`tmp_m2_005_verify`）で copy-protected PDF（`permissions_flag=PRINT`）と非保護PDF/PNGを生成して検証。保護PDFで警告表示呼び出し・両ボタン disabled、非保護PDFおよびPNG切替後に両ボタン normal を確認した。  
       → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
+      → 追加修正として、PDFコピー保護判定に加えてファイルシステム上の読み取り専用ファイルを検出し、`U099` を拡張子変換・サイズ変換ブロックの警告ラベルへ強調表示したうえで OK 警告ダイアログを表示し、両変換ボタンを無効化するよう変更した。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）で読み取り専用PNGを入力し、`U099` のポップアップ表示と `ext_convert_btn`/`size_convert_btn` の `disabled` 反映を確認した。  
 
 ### M2-006: 入出力パスの共有  
 - [✅] 入力ファイルパスと出力フォルダパスが PDF操作タブと共有されること。  
@@ -426,9 +537,24 @@
       → 実行確認として `uv run python -c ...` で `tmp_m2_010_verify/out` に `photo.png` を事前配置した状態を作り、`photo.jpg` から `.png` 変換を2回実行。出力が `photo(1).png` / `photo(2).png` になり、両ファイルが実際に生成されることを確認した。  
 
 ### M2-011: メッセージコード・テーマカラー  
-- [] すべてのメッセージコード（U075〜U089）が日本語/英語で正しく表示されること。  
+- [✅] すべてのメッセージコード（U075〜U089）が日本語/英語で正しく表示されること。  
       **検証手順**: 言語設定を日本語→英語に切り替え、拡張子変換ブロック・サイズ変換ブロック内のすべてのラベル・警告・ステータスメッセージが切り替わることを確認する。  
-- [] テーマカラーエントリが3テーマ（Dark / Light / Pastel）すべてに追加され、配色が適切であること。  
+      ⇒ Currently, the warnings displayed in the bottom left of the screen are in English even when the Japanese setting is selected, so please support Japanese.  
+         Also, please display them in a more prominent location and with a more prominent text color.  
+      → 追加修正として、下部ステータスバーで英語固定になっていた警告経路（Input/Output not found, Size conversion supports image files only など）をメッセージコード `U100`〜`U104` へ置換し、警告ラベルとポップアップも同一の多言語メッセージを使用するよう統一した。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）を日本語モードで実行し、`U104`（サイズ変換は画像ファイルのみ対応）と `U099`（読み取り専用）などの警告が日本語で表示されることを確認した。  
+      ⇒ The pop-up that appears when a copy-protected file is input does not appear, so I was unable to confirm the error.  
+         I confirmed that the warning message is localized in Japanese.  
+      → 追加修正として、`configurations/message_codes.json` 末尾のJSON構造破損（`U112` 以降の閉じ括弧/カンマ欠落）を修復し、`U113`/`U114`/`U115` を正式キーとして復元した。`uv run python -m py_compile views/image_ope_tab.py configurations/message_codes.json` で構文エラーがないことを再確認した。  
+      → 追加修正として、コピー保護/読み取り専用の警告は入力選択直後の `_update_file_info()` から必ず `_apply_copy_protection_state()` を通る経路で統一し、`U087`/`U099` のポップアップ表示・警告ラベル表示・両変換ボタン無効化が同時に適用されるよう整理した。併せて M2-003 の質問への回答として、PDF が「サイズ変換は画像のみ対応」で拒否されるのは仕様どおりであり、PDF→PNG はサイズ変換ではなく拡張子変換（`_on_ext_convert`）で実行するのが正しい動作である。  
+      ⇒ OK.  
+- [✅] テーマカラーエントリが3テーマ（Dark / Light / Pastel）すべてに追加され、配色が適切であること。  
+      → M2-011 実装として、`image_ope_tab.py` の拡張子変換ブロック表示にメッセージコード `U075`（変換元形式）/ `U076`（変換先形式）を適用した。初期表示時と入力ファイル更新時の双方で `message_manager.get_ui_message(...)` を通すようにし、言語設定に応じた表示へ統一した。  
+      → 静的確認として `uv run python -m py_compile views/image_ope_tab.py` を実行し、構文エラーがないことを確認した。  
+      → 実行確認として `uv run python -c ...`（`tmp_m2_011_verify`）を実行し、`ja`/`en` の両言語で `U075`〜`U089` の表示経路（ラベル/警告/ステータス）を検証した。`U075/U076/U077/U081/U085/U086` のラベル反映、`U078/U079/U080/U082` の警告表示、`U083/U084/U089` のステータス表示、`U087` のコピー保護警告、`U088` の SVG 変換失敗メッセージがすべて `true` であることを確認した。  
+      → テーマカラー確認として同実行テストで `themes/dark.json` / `themes/light.json` / `themes/pastel.json` を検査し、`ext_convert_button` / `size_convert_button` / `meta_info_label` / `warning_label` / `conversion_arrow_label` / `section_header_label` / `filename_label` / `entry_normal` が3テーマすべてに存在することを確認した。  
+      → 追加修正として、下部ステータスバーで英語固定になっていた警告経路（Input/Output not found, Size conversion supports image files only など）をメッセージコード `U100`〜`U104` へ置換し、警告ラベルとポップアップも同一の多言語メッセージを使用するよう統一した。  
+      → 実行確認として `uv run python -c ...`（`tests/tmp_m2_011_verify`）を日本語モードで実行し、`U104`（サイズ変換は画像ファイルのみ対応）と `U099`（読み取り専用）などの警告が日本語で表示されることを確認した。  
 
 ---  
 更新日: 2026-02-16

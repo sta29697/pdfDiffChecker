@@ -142,16 +142,29 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
         try:
             saved_base = UserSettingManager().get_setting("base_file_path")
+            use_startup_normalization = event is None
             if (
                 isinstance(saved_base, str)
                 and saved_base
                 and saved_base != placeholder_base
-                and self._base_file_path_entry.path_var.get() != saved_base
             ):
-                self._base_file_path_entry.path_var.set(saved_base)
-                self.base_path.set(saved_base)
+                base_value_to_apply = saved_base
                 base_path_obj = Path(saved_base)
-                if base_path_obj.exists() and base_path_obj.is_file() and base_path_obj.suffix.lower() == ".pdf":
+                if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
+                    # Main processing: avoid startup-time preview load by restoring only folder path.
+                    base_value_to_apply = str(base_path_obj.parent)
+                    UserSettingManager().update_setting("base_file_path", base_value_to_apply)
+
+                if self._base_file_path_entry.path_var.get() != base_value_to_apply:
+                    self._base_file_path_entry.path_var.set(base_value_to_apply)
+                    self.base_path.set(base_value_to_apply)
+
+                if (
+                    not use_startup_normalization
+                    and base_path_obj.exists()
+                    and base_path_obj.is_file()
+                    and base_path_obj.suffix.lower() == ".pdf"
+                ):
                     self._load_and_display_pdf(saved_base)
 
             saved_output = UserSettingManager().get_setting("output_folder_path")
