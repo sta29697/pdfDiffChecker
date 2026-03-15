@@ -2129,6 +2129,74 @@
         "U115": {
             "en": "A folder with the same name exists. Suffix added: {0}",
             "ja": "同名フォルダが存在するため、サフィックスを付与しました: {0}"
+        },
+        "U118": {
+            "en": "PDF Raster DPI : ",
+            "ja": "PDFラスタライズDPI : "
+        },
+        "U119": {
+            "en": "Effective Raster DPI : ",
+            "ja": "実効ラスタライズDPI : "
+        },
+        "U120": {
+            "en": "Extension conversion completed (file output).",
+            "ja": "拡張子変換が完了しました（file出力）。"
+        },
+        "U121": {
+            "en": "Extension conversion completed (folder output).",
+            "ja": "拡張子変換が完了しました（folder出力）。"
+        },
+        "U122": {
+            "en": "Selected rasterization DPI ({0}) is lower than the recommended 300 dpi. Text and thin lines may become less readable. Proceed?",
+            "ja": "指定したラスタライズDPI（{0}）は推奨値300dpi未満です。文字や細線の視認性が低下する可能性があります。続行しますか？"
+        },
+        "U123": {
+            "en": "For multi-page input, meta information is shown as representative values from the first page.",
+            "ja": "複数ページ入力時、メタ情報は1ページ目の代表値を表示しています。"
+        },
+        "U124": {
+            "en": "Input has {0} pages/frames. To reduce load, only the first {1} pages/frames will be processed. Proceed?",
+            "ja": "入力は {0} ページ/フレームです。負荷軽減のため先頭 {1} ページ/フレームのみ処理します。続行しますか？"
+        },
+        "U125": {
+            "en": "DPI Source : ",
+            "ja": "DPI参照元 : "
+        },
+        "U126": {
+            "en": "Meta information",
+            "ja": "メタ情報"
+        },
+        "U127": {
+            "en": "Calculated result",
+            "ja": "計算結果"
+        },
+        "U128": {
+            "en": "Default value (300 dpi)",
+            "ja": "既定値（300dpi）"
+        },
+        "U129": {
+            "en": "User specified",
+            "ja": "ユーザー指定"
+        },
+        "U130": {
+            "en": "Supported input formats are PDF, TIFF, JPEG, and SVG only.",
+            "ja": "入力ファイル形式は PDF / TIFF / JPEG / SVG のみ対応です。"
+        },
+        "U131": {
+            "en": "Please enter valid width and height in pixels.",
+            "ja": "サイズ変換する幅と高さを正の整数で入力してください。"
+        },
+        "U132": {
+            "en": "For multi-page or multi-frame input, only representative values from the first page/frame are shown. Width, height, and paper size are locked to avoid applying a misleading single pixel size to all pages/frames.",
+            "ja": "複数ページ/複数フレーム入力では、1ページ目/1フレーム目の代表値のみ表示しています。全ページ/全フレームへ単一のピクセルサイズを誤って適用しないよう、幅・高さ・用紙サイズは編集不可にしています。"
+        },
+        "U133": {
+            "en": "For same-size multi-page or multi-frame input, only representative values from the first page/frame are shown. Width, height, and paper size are locked.",
+            "ja": "複数ページ/複数フレーム入力でも全ページ/全フレームが同サイズの場合は、1ページ目/1フレーム目の代表値のみ表示しています。幅・高さ・用紙サイズは編集不可です。"
+        },
+        "U134": {
+            "en": "Output DPI can be changed for all pages/frames.",
+            "ja": "Output DPI は全ページ/全フレームに対して変更できます。"
         }
     }
 }

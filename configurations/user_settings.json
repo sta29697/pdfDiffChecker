@@ -3,7 +3,7 @@
         "user_settings_status": "user_settings"
     },
     "user_settings": {
-        "theme_color": "pastel",
+        "theme_color": "dark",
         "language": "japanese",
         "input_file_path": "直接入力、参照選択",
         "comparison_file_path": "直接入力、参照選択",
@@ -39,6 +39,7 @@
         "comparison_file_graph_subwindow_width": 500,
         "comparison_file_graph_subwindow_height": 10,
         "comparison_file_graph_subwindow_geometry": "500x10+300+300",
-        "base_file_path": "C:\\Users\\haya-\\Lab\\PrivateProject\\01_DiffChecker\\pdfDiffChecker\\images\\hennshinn_pose_flash.png"
+        "base_file_path": "C:\\Users\\haya-\\Lab\\PrivateProject\\01_DiffChecker\\pdfDiffChecker\\sample01_with_dpi_metadata_300dpi.pdf",
+        "image_input_dialog_filetype": "PDF files"
     }
 }

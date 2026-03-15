@@ -325,7 +325,7 @@ class WidgetsTracker:
             EventBus().subscribe(EventNames.TAB_LAYOUT_COMPLETED, self._handle_tab_layout_completed)
             
             # Log initialization with message code
-            logger.debug(message_manager.get_log_message("L258", "WidgetsTracker"))
+            # logger.debug(message_manager.get_log_message("L258", "WidgetsTracker"))
     
     def _handle_theme_changed(self, theme: Dict[str, Any], theme_name: str) -> None:
         """Handle theme changed event.
@@ -349,7 +349,10 @@ class WidgetsTracker:
         # Main processing: run one extra pass after idle to stabilize mixed tk/ttk repaint order.
         self._schedule_theme_stabilization_pass(theme, theme_name, current_generation)
         # Use the appropriate message code for theme application to multiple widgets
-        logger.debug(message_manager.get_log_message("L231", theme_name, len(self.__registered_widgets)))
+        logger.debug(
+            f"[THEME_TRACE] handle_theme_changed: theme_name={theme_name}, "
+            f"generation={current_generation}, widget_count={len(self.__registered_widgets)}"
+        )
 
     def _schedule_theme_stabilization_pass(
         self,
@@ -376,7 +379,14 @@ class WidgetsTracker:
                 """Re-apply style and widget colors once after idle."""
                 try:
                     if generation != self.__theme_apply_generation:
+                        logger.debug(
+                            f"[THEME_TRACE] stabilization_skip: generation={generation}, "
+                            f"current_generation={self.__theme_apply_generation}, theme_name={theme_name}"
+                        )
                         return
+                    logger.debug(
+                        f"[THEME_TRACE] stabilization_apply: generation={generation}, theme_name={theme_name}"
+                    )
                     self._apply_ttk_global_styles(theme, theme_name)
                     self.apply_colors_to_widgets(theme)
                 except Exception:
@@ -398,7 +408,7 @@ class WidgetsTracker:
             theme_name (str): Theme name (e.g., "dark", "light", "pastel").
         """
         try:
-            logger.debug(f"[THEME] ttk global style apply (WidgetsTracker): theme_name={theme_name}")
+            logger.debug(f"[THEME_TRACE] ttk_global_style_apply: theme_name={theme_name}")
         except Exception:
             pass
 
@@ -663,7 +673,7 @@ class WidgetsTracker:
         before widgets are registered and themed.
         """
         # Log phase 1 completion received
-        logger.debug(message_manager.get_log_message("L259", "Phase 1"))
+        # logger.debug(message_manager.get_log_message("L259", "Phase 1"))
     
     def _handle_widgets_registration_completed(self) -> None:
         """Handle widgets registration completion event.
@@ -672,7 +682,7 @@ class WidgetsTracker:
         and before themes are applied.
         """
         # Log widget registration completion received
-        logger.debug(message_manager.get_log_message("L259", "Widgets Registration"))
+        # logger.debug(message_manager.get_log_message("L259", "Widgets Registration"))
         
     def _handle_theme_application_completed(self) -> None:
         """Handle theme application completion event.
@@ -680,7 +690,7 @@ class WidgetsTracker:
         This is called when theme application has been completed for all widgets.
         """
         # Log theme application completion received
-        logger.debug(message_manager.get_log_message("L259", "Theme Application"))
+        # logger.debug(message_manager.get_log_message("L259", "Theme Application"))
         
     def _handle_tab_layout_completed(self) -> None:
         """Handle tab layout completion event.
@@ -689,7 +699,7 @@ class WidgetsTracker:
         Enables detailed widget initialization logging after this point.
         """
         # Log tab layout completion received
-        logger.debug(message_manager.get_log_message("L259", "Tab Layout"))
+        # logger.debug(message_manager.get_log_message("L259", "Tab Layout"))
         
         # Enable widget initialization logs after tabs are laid out
         # This will allow detailed logging for widgets created after this point
@@ -738,12 +748,13 @@ class WidgetsTracker:
         if uninitialized_widgets:
             count = len(uninitialized_widgets)
             # Log only the count as debug info
-            logger.debug(message_manager.get_log_message("L228", count))
+            # logger.debug(message_manager.get_log_message("L228", count))
             
             # Log detailed list at trace level (will not appear in normal debug logs)
             if count < 10:  # Only show detailed list for small numbers
                 for widget_info in uninitialized_widgets:
-                    logger.debug(message_manager.get_log_message("L264", f"{widget_info}"))
+                    # logger.debug(message_manager.get_log_message("L264", f"{widget_info}"))
+                    pass
             # Otherwise just show the count
     
     def _handle_app_initializing(self, component: str) -> None:
@@ -755,7 +766,8 @@ class WidgetsTracker:
         """
         if component == THEME_COMPONENT_NAME:
             # Use a proper message code for theme initialization started
-            logger.debug(message_manager.get_log_message("L185"))
+            # logger.debug(message_manager.get_log_message("L185"))
+            pass
             
     def _handle_app_initialized(self, component: str, theme_name: str, fallback: bool = False) -> None:
         """Handle application initialized event.
@@ -770,7 +782,8 @@ class WidgetsTracker:
             # Use theme initialization message with appropriate theme name
             # Pass theme name as an argument here, it will be formatted by the message template
             theme_info = f"fallback: {theme_name}" if fallback else theme_name
-            logger.debug(message_manager.get_log_message("L186", theme_info))
+            # logger.debug(message_manager.get_log_message("L186", theme_info))
+            _ = theme_info
     
     def apply_colors_to_widgets(self, theme: Dict[str, Any]) -> None:
         """Apply colors to all registered widgets.

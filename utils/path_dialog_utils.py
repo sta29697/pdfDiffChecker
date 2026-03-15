@@ -2,7 +2,7 @@
 Utility functions for file and folder selection dialogs.
 """
 from tkinter import filedialog
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 from logging import getLogger
 from configurations.message_manager import get_message_manager
 
@@ -15,6 +15,7 @@ def ask_file_dialog(
     initialdir: str,
     title_code: str,
     filetypes: List[Tuple[str, str]],
+    typevariable: Any | None = None,
 ) -> Optional[str]:
     """Ask user to select a file and return the selected path.
 
@@ -22,16 +23,22 @@ def ask_file_dialog(
         initialdir: Initial directory for dialog.
         title_code: Message code for dialog title.
         filetypes: File type filters.
+        typevariable: Optional Tk variable that stores the selected filter pattern.
 
     Returns:
         Selected file path or None if cancelled.
     """
     title = message_manager.get_ui_message(title_code)
     try:
+        dialog_kwargs = {
+            "initialdir": initialdir,
+            "title": title,
+            "filetypes": filetypes,
+        }
+        if typevariable is not None:
+            dialog_kwargs["typevariable"] = typevariable
         file_path = filedialog.askopenfilename(
-            initialdir=initialdir,
-            title=title,
-            filetypes=filetypes,
+            **dialog_kwargs,
         )
         return file_path or None
     except Exception as e:

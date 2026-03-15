@@ -5,6 +5,7 @@ import os
 import sys
 import traceback
 import shutil
+import ctypes
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -19,6 +20,7 @@ from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
 from configurations.user_setting_manager import get_user_setting_manager as usm
 from controllers.color_theme_manager import ColorThemeManager
+from controllers.app_state import AppState
 from utils.utils import get_resource_path
 from controllers.widgets_tracker import (
     WidgetsTracker,
@@ -34,6 +36,43 @@ from views.licenses import LicensesApp
 # Initialize singleton message manager at module level
 message_manager = get_message_manager()
 logger: Final = getLogger(__name__)
+_FOCUSED_TRACE_TAGS: Final[tuple[str, ...]] = (
+    "[RESIZE_THEME]",
+    "[THEME_TRACE]",
+)
+_INACTIVE_TRACE_STATES: Final[tuple[str, ...]] = (
+    "state=disabled",
+    "state=readonly",
+    "state='disabled'",
+    "state='readonly'",
+    "state=missing",
+)
+
+
+class FocusedDevelopmentLogFilter(logging.Filter):
+    """Allow only focused development traces while keeping warnings and errors.
+
+    This filter is used only during development mode log investigation so that
+    broad debug/info noise does not bury the yellow-green resize block traces.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return True when the record should be kept in the development log.
+
+        Args:
+            record: The logging record being evaluated.
+
+        Returns:
+            bool: True when the record should be written.
+        """
+        if record.levelno >= logging.WARNING:
+            return True
+
+        message = record.getMessage()
+        if "[ENTRY_THEME]" in message or "[COMBO_THEME]" in message:
+            return any(token in message for token in _INACTIVE_TRACE_STATES)
+
+        return any(tag in message for tag in _FOCUSED_TRACE_TAGS)
 
 def setup_logging() -> None:
     """Set up logging configuration for the application.
@@ -50,6 +89,13 @@ def setup_logging() -> None:
         log_dir.mkdir(exist_ok=True)
         log_file = log_dir / "debug.log"
 
+        if not tool_settings.program_mode:
+            try:
+                # Main processing: clear the development log before recording a new startup trace.
+                log_file.write_text("", encoding="utf-8")
+            except Exception:
+                pass
+
         # Configure root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
@@ -64,18 +110,23 @@ def setup_logging() -> None:
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
+        if not tool_settings.program_mode:
+            # Main processing: keep only focused investigation traces in development logs.
+            file_handler.addFilter(FocusedDevelopmentLogFilter())
         
+        # Main processing: clear existing handlers first to avoid duplicate outputs.
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+
         # Add handlers to root logger - file only, no console output
         root_logger.addHandler(file_handler)
-        
-        # Clear any existing handlers to avoid duplicates
-        for handler in list(root_logger.handlers):
-            if not isinstance(handler, logging.FileHandler):
-                root_logger.removeHandler(handler)
                 
         # Set PIL logger level to WARNING to suppress verbose PNG file loading logs
         pil_logger = logging.getLogger('PIL')
         pil_logger.setLevel(logging.WARNING)
+        if not tool_settings.program_mode:
+            # Main processing: enable theme tracing only in development mode.
+            AppState.enable_theme_application_logs()
         # Direct log message specification before message manager initialization
         logger.info("[SYS] Logging system initialized")
         # This log will be multilingualized later through message_manager
@@ -366,6 +417,7 @@ def create_main_window() -> tk.Tk:
         print("Creating main application window")
         # Create root window with standard window decorations
         root = tk.Tk()
+        root.withdraw()
         # Force standard window controls (minimize, maximize, close)
         root.wm_overrideredirect(False)
         root.resizable(True, True)
@@ -470,6 +522,29 @@ def set_args() -> dict:
     return {}
 
 
+def _set_windows_app_user_model_id() -> None:
+    """Set the Windows AppUserModelID for correct taskbar icon binding.
+
+    Windows can keep showing the default Tk icon on the taskbar when the
+    process identity is not explicitly assigned before the main window is
+    created. This helper binds the process to the application icon resources.
+    """
+    if not sys.platform.startswith("win"):
+        return
+
+    try:
+        # Main processing: assign a stable AppUserModelID before Tk window creation.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "sta29697.pdfDiffChecker"
+        )
+    except Exception as exc:
+        logger.warning(
+            message_manager.get_log_message(
+                "L227", f"Failed to set Windows AppUserModelID: {str(exc)}"
+            )
+        )
+
+
 def main() -> None:
     """Main entry point for the application.
     
@@ -489,6 +564,7 @@ def main() -> None:
         print("Starting application...")
         # Initialize the application (sets up logging, creates directories, etc.)
         initialize_application()
+        _set_windows_app_user_model_id()
         
         # Reinitialize message_manager if it's None or not defined
         if 'message_manager' not in globals() or message_manager is None:
@@ -617,6 +693,12 @@ def main() -> None:
         
         # Set window geometry
         main_window.geometry("800x600")
+        try:
+            main_window.update_idletasks()
+            main_window.deiconify()
+            main_window.lift()
+        except Exception:
+            pass
         
         # Initialize color theme manager for theme control
         WidgetsTracker()

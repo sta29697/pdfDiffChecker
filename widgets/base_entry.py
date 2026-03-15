@@ -83,7 +83,7 @@ class BaseEntry(tk.Entry, ThemeColorApplicable, ColoringThemeIF):
                         caller_info = f"{back_frame.f_code.co_filename}:{back_frame.f_lineno}"
                 
                 entry_info = f"{self.__color_key} in {self.__class__.__module__}.{self.__class__.__name__}(id={id(self)}, caller={caller_info})"
-                logger.debug(message_manager.get_log_message("L161", entry_info))
+                # logger.debug(message_manager.get_log_message("L161", entry_info))
                 return
                 
             # Apply theme configuration
@@ -93,63 +93,15 @@ class BaseEntry(tk.Entry, ThemeColorApplicable, ColoringThemeIF):
             # Mark that theme has been successfully initialized
             self._theme_initialized = True
 
-            # Main processing: skip heavy debug tracing in normal operation.
-            from controllers.app_state import AppState
-            if not AppState.log_theme_application:
-                return
-            
-            # Get caller information for accurate logging
-            import inspect
-            import os
-            
-            # Default caller file is current file
-            caller_file = os.path.basename(__file__)
-            
-            # Check if caller context was provided by the widgets tracker
-            if hasattr(self, "_caller_context") and isinstance(self._caller_context, dict):
-                # Use caller info from the actual caller context
-                caller_file = self._caller_context.get("file", caller_file)
-                
-                # Get the actual tab or view file name if we have that information
-                if "caller" in self._caller_context and self._caller_context["caller"] == "widgets_tracker":
-                    # Try to get actual parent module info for better context
-                    if hasattr(self.master, "__module__") and self.master.__module__.startswith("views."):
-                        caller_file = self.master.__module__.split(".")[1] + ".py"
-            else:
-                # Get caller through inspect module if no context provided
-                current_frame = inspect.currentframe()
-                if current_frame is not None:  # Explicitly check for None
-                    caller_frames = inspect.getouterframes(current_frame)
-                    if len(caller_frames) > 1:
-                        caller_file = os.path.basename(caller_frames[1].filename)
-            
-            # Log theme application with detailed info including instance ID and call source
-            fg    = entry_theme_config.get("fg")
-            bg    = entry_theme_config.get("bg")
-            hlfg  = entry_theme_config.get("highlightcolor")
-            hlbg  = entry_theme_config.get("highlightbackground")
-            
-            # Get calling frame info
-            import inspect
-            import os
-            caller_frame = inspect.currentframe()
-            caller_info = "unknown"
-            
-            # Null check for currentframe (may return None)
-            if caller_frame is not None:
-                back_frame = caller_frame.f_back
-                if back_frame is not None:
-                    # Get only filename instead of full path for better readability
-                    file_path = back_frame.f_code.co_filename
-                    file_name = os.path.basename(file_path)
-                    caller_info = f"{file_name}:{back_frame.f_lineno}"
-            
-            # Create a clearer log message that properly highlights the color_key
-            logger.debug(
-                message_manager.get_log_message(
-                    "L066", f"{self.__color_key} - fg:{fg}, bg:{bg}, highlight:{hlfg}/{hlbg}, from:{caller_info}"
+            if self.__color_key == "base_file_path_entry":
+                fg = entry_theme_config.get("fg")
+                bg = entry_theme_config.get("bg")
+                hlfg = entry_theme_config.get("highlightcolor")
+                hlbg = entry_theme_config.get("highlightbackground")
+                logger.debug(
+                    f"[ENTRY_THEME] color_key={self.__color_key}, fg={fg}, bg={bg}, "
+                    f"highlight={hlfg}/{hlbg}, widget_id={id(self)}, state={self.cget('state')}"
                 )
-            )
         except Exception as e:
             # Add more detailed error information to help with debugging
             import traceback
@@ -158,7 +110,7 @@ class BaseEntry(tk.Entry, ThemeColorApplicable, ColoringThemeIF):
             
             # Log stack trace at debug level for developers
             trace = traceback.format_exc()
-            logger.debug(message_manager.get_log_message("L241", trace))
+            # logger.debug(message_manager.get_log_message("L241", trace))
 
     def _config_widget(self, theme_settings: dict[str, Any]) -> None:
         """
