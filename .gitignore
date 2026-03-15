@@ -5,6 +5,8 @@
 build
 dist
 temp
+tmp_m2_*_verify/
+tests/tmp_m2_*_verify/
 __pycache__/
 .python-version
 memo.py

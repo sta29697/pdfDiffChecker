@@ -126,6 +126,59 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._setup_ui()
         self._setup_drag_and_drop()
 
+        # Main processing: refresh shared paths when the tab becomes visible.
+        self.bind("<Visibility>", self._sync_shared_paths_from_settings)
+        self.after_idle(self._sync_shared_paths_from_settings)
+
+    def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
+        """Synchronize shared base/output paths from persisted settings.
+
+        Args:
+            event: Tkinter visibility event (unused).
+        """
+        _ = event
+        placeholder_base = message_manager.get_ui_message("U053")
+        placeholder_output = message_manager.get_ui_message("U054")
+
+        try:
+            saved_base = UserSettingManager().get_setting("base_file_path")
+            use_startup_normalization = event is None
+            if (
+                isinstance(saved_base, str)
+                and saved_base
+                and saved_base != placeholder_base
+            ):
+                base_value_to_apply = saved_base
+                base_path_obj = Path(saved_base)
+                if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
+                    # Main processing: avoid startup-time preview load by restoring only folder path.
+                    base_value_to_apply = str(base_path_obj.parent)
+                    UserSettingManager().update_setting("base_file_path", base_value_to_apply)
+
+                if self._base_file_path_entry.path_var.get() != base_value_to_apply:
+                    self._base_file_path_entry.path_var.set(base_value_to_apply)
+                    self.base_path.set(base_value_to_apply)
+
+                if (
+                    not use_startup_normalization
+                    and base_path_obj.exists()
+                    and base_path_obj.is_file()
+                    and base_path_obj.suffix.lower() == ".pdf"
+                ):
+                    self._load_and_display_pdf(saved_base)
+
+            saved_output = UserSettingManager().get_setting("output_folder_path")
+            if (
+                isinstance(saved_output, str)
+                and saved_output
+                and saved_output != placeholder_output
+                and self._output_folder_path_entry.path_var.get() != saved_output
+            ):
+                self._output_folder_path_entry.path_var.set(saved_output)
+                self.output_path.set(saved_output)
+        except Exception as exc:
+            logger.warning(f"Shared path sync failed in pdf tab: {exc}")
+
     def _get_initial_dir_from_setting(self, setting_key: str) -> str:
         """Return an initial directory path for dialogs based on saved settings.
 
@@ -274,14 +327,36 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             logger.debug(message_manager.get_log_message("L073", folder_path))
 
     def _setup_drag_and_drop(self) -> None:
-        """Setup drag and drop functionality for the canvas."""
+        """Setup drag and drop functionality for PDF input and output folder."""
         # Try to register drop target; suppress non-fatal errors
         success = DragAndDropHandler.register_drop_target(
             self.canvas, self._on_drop, [".pdf"], self._show_drop_feedback
         )
+        DragAndDropHandler.register_drop_target(
+            self._base_file_path_entry,
+            self._on_drop,
+            [".pdf"],
+            self._show_drop_feedback,
+        )
+        DragAndDropHandler.register_drop_target(
+            self._output_folder_path_entry,
+            self._on_drop_output_folder,
+            feedback_callback=self._show_drop_feedback,
+            allow_directories=True,
+        )
         if success:
             # Log successful initialization of drag and drop
             logger.info(message_manager.get_log_message("L234"))
+
+    def _on_drop_output_folder(self, folder_path: str) -> None:
+        """Handle folder drop on the output path entry.
+
+        Args:
+            folder_path: Dropped folder path.
+        """
+        self._output_folder_path_entry.path_var.set(folder_path)
+        self.output_path.set(folder_path)
+        self._show_drop_feedback(f"Folder loaded: {folder_path}", True)
 
     def _load_and_display_pdf(self, file_path: str) -> None:
         """Load and display PDF file on canvas."""

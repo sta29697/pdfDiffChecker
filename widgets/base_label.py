@@ -60,6 +60,11 @@ class BaseLabel(tk.Label, ThemeColorApplicable, ColoringThemeIF):
             # Apply theme through _config_widget implementation
             label_theme_config = theme_data.get(self.__color_key, {})
             self._config_widget(label_theme_config)
+
+            # Main processing: skip expensive trace logs unless explicitly enabled.
+            from controllers.app_state import AppState
+            if not AppState.log_theme_application:
+                return
             
             # Get caller information for accurate logging
             import inspect

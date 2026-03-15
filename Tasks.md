@@ -1,192 +1,166 @@
 # タスクリスト
 
-## M1: PDF Operations / Canvas 操作の整理
-  
-### M1-001: 現状実装監査と計画（docs/milestone/M1_PLAN.md）  
-- [✅] `docs/milestone/M1_PLAN.md` を作成し、現状実装の監査結果と差分・懸念点を統合する。  
-  
-### M1-002: `Tasks.md` の世代交代（M0→M1）  
-- [✅] 旧 `Tasks.md` を `docs/tasks/M0_Tasks.md` へ退避する。  
-- [✅] 新しい `./Tasks.md` を作成し、M1用チェック項目を整理する。  
-  
-### M1-003: コピー保護PDFの操作禁止（表示のみ可）  
-- [✅] コピー保護PDFの場合、Canvas表示は許可し、操作（ズーム/パン/回転/変換/挿入/削除/書き出し等）を禁止する。  
-       ⇒ ズーム/パン/回転/移動のような表示の変更は許可するが、読み込み時に保存や挿入ができない注意書きを表示して、  
-          OKしかない確認Windowを表示して、保存（完了）、挿入のボタンを無効にする。  
-       ⇒ 現状、ズーム、パン、移動はできるが、注意書きのWindowの表示が一瞬で消えるため見ることはできない。  
-          また、挿入、完了のボタンが押せるようになっている。  
-          更に、回転操作をすると現在の仕様と異なる表示をする。  
-       → コピー保護PDFの確認ダイアログが即消える問題を、ProgressWindowのgrab解放＋parent指定＋wait_windowで修正しました。  
-       → 入力PDF切替時にCanvas上のタイトル/ガイド等のoverlayをクリアするように修正しました（ページ切替は維持）。  
-       → テーマ更新等でボタンの state が上書きされるケースに備え、edit系ボタンの有効/無効状態を保持して再適用するように修正しました（state をテーマ適用から除外）。  
-       ⇒ OK
-       → パステルテーマ等で無効ボタンがクリック可能に見える問題を、set_edit_buttons_enabled で disabled 時に bg=#b0b0b0 / disabledforeground=#808080 のグレーアウト外観を明示設定し、enabled 時にテーマ色を復元するよう修正しました。
-- [✅] 禁止操作が試みられた場合、Canvas中央に警告を表示する（赤枠・薄赤背景・白文字、言語対応）。  
-       ⇒ For copy-protected PDFs, change the actions to “insert blank page” and disable the “Complete” button.  
-  
-### M1-004: ショートカットガイド（Ctrl+?）の見た目を仕様へ合わせる  
-- [✅] `M049` のショートカットガイダンス表示を、背景=薄黄／枠=濃い黄／文字=緑 に変更する。  
-       ⇒ It doesn't display.  
-       → `controllers/mouse_event_handler.py` の `_show_shortcut_help()` を、背景=`#fff2a8`／枠=`#e6c200`／文字=`#008000` へ修正しました。  
-       → ガイド表示位置をCanvas右上（可視領域の⇒上）＋paddingに固定し、ズーム/スクロールでもずれないように再配置するよう修正しました。 
-       ⇒ Regarding the position of the shortcut guide, please adjust the padding to be similar in the upper right corner.  
-       → ショートカットガイド表示位置をCanvas可視領域の右上（outer_pad=12）に変更し、_show_shortcut_help() と refresh_overlay_positions() の両方を修正しました。
-       ⇒ OK.  
-  
-### M1-005: 変換通知（Ctrl+R/L/V/H/B）の見た目を仕様へ合わせる  
-- [✅] Canvas上部中央に「赤字・赤枠・透明背景」の通知表示を追加し、`M044`〜`M048` を表示する。  
-       ⇒ It never displayed even once, not even for an instant, with any shortcut.  
-       → `controllers/mouse_event_handler.py` の `_show_notification()` を、赤字/赤枠/透明背景で 1秒以上表示し、連打時は前回タイマーを cancel するよう修正しました。  
-       → ページ再描画時に通知が消える問題を、update_stateでoverlayをクリアしない方針へ変更し、可視領域上部中央へ固定表示するよう修正しました。  
-       ⇒ OK
-  
-### M1-006: Ctrl+回転操作（中心点設定/回転ドラッグ）の安定化  
-- [✕] Ctrl+クリックで回転中心設定、Ctrl+ドラッグで回転が安定して動作すること。  
-       ⇒ Even though I held down the Ctrl button, the red dot moved to the initial point where I first placed the mouse cursor to drag.  
-       ⇒ Also, even though I was just slowly moving the mouse downward to drag, it repeatedly rotated in tiny clockwise and counterclockwise angles.  
-       → `controllers/mouse_event_handler.py` で回転中心のCanvas座標変換、中心点=赤点固定、角度差の正規化と丸め撤廃、Ctrl解放で回転モード終了を実装しました。  
-       → Ctrl+ドラッグ回転の再描画後も回転中心の赤点を再生成し、Ctrl解放まで消えないよう修正しました。  
-       → 画面座標（Y下向き）の補正＋角度アンラップにより回転方向をドラッグ方向へ一致させ、最小刻みを0.1°にしました。  
-       → Ctrl押下中の再クリックで回転中心（赤点）が移動する挙動を廃止し、最初のクリック位置に固定してCtrl解放まで維持するよう修正しました（ホイールズーム後もoverlay再配置）。  
-       → 回転中心（赤点）を画像座標系（原画像中心からのオフセット）で管理し、_canvas_to_image_offset / _image_offset_to_canvas ヘルパーで座標変換することで、ズーム/回転/パン後も画像上の同一点に追従するよう修正しました。  
-       → 回転時にピボット補正付きtranslation調整を実装し、赤点を中心として画像が回転するよう修正しました（_compute_rotated_dims で回転後画像サイズを算出し、新tx/tyを逆算）。  
-       → 回転角度の量子化を floor→round に変更し、0.1°未満の変化を無視するヒステリシスを追加してジッタ（CW/CCW行き来）を解消しました。  
-       → ガイダンス表示（M042等）を黒地stipple背景から赤字・赤枠(outline=#ff0000)・透明背景(fill="")に変更しました。  
-       → pdf_ope_tab.py の _display_page で原画像サイズを mouse_handler.set_original_image_size() に渡し、回転ピボット計算に使用するよう修正しました。
-       ⇒ NG.  
-          When moving the mouse, it repeatedly rotates clockwise ⇔ counterclockwise by approximately ±20° during movement. Additionally,  
-          it continues rotating for about 1 second even after releasing the Ctrl button to turn off rotation mode.  
-          Moving the mouse slowly only reduces the rotation angle but has the same effect. Can this be fixed?  
-          If not, we'll consider a different operation method.  
-       → ±20°振動の根本原因を特定: ドラッグ中に毎フレーム回転中心Canvas座標を再計算(`_rotation_center_canvas_pos`)していたため、座標変換の微小誤差がフィードバックループを形成し角度が発散していました。  
-       → 修正1: ドラッグ中は回転中心のCanvas座標を更新せず、初期クリック位置に固定（赤点位置も固定）。ドラッグ終了後に画像座標から再計算。  
-       → 修正2: 増分累積方式（delta蓄積）を廃止し、ドラッグ開始角度と現在角度の**絶対差分方式**に変更。浮動小数点誤差の累積を根本排除。  
-       → 修正3: 回転更新を~30fps（33ms間隔）にレートリミットし、イベントキュー滞留を防止。Ctrl解放後の残留回転を大幅に短縮。  
-       ⇒ Much smoother. However, vibrations may still occur at certain angles. Mouse release doesn't stop rotation as quickly as Ctrl release.  
-       → 修正4: ±180°境界でatan2がジャンプする問題に対し、1フレームあたり120°超の角度変化を棄却するアンチジャンプフィルタを追加。  
-       → 修正5: ヒステリシスを0.05°→0.2°に増加し、マウス位置ジッタによる微小振動を吸収。  
-       → マウス解放時の遅延はTkinterイベントキュー特性（ButtonRelease前の滞留Motionイベント処理）に起因。レートリミットにより最大33ms程度に抑制済み。  
-       ⇒ Indeed,  
-          ・ Jumping near specific angles no longer occurs.  
-          ・ Slow dragging has become even smoother and more stable.  
-          ・ Rotation stops faster upon mouse release than before.  
-          ・ High-speed drag angle jumps still occur. I understand an anti-jump filter has been added for angles exceeding 120° per frame,  
-             but what exactly constitutes “per frame”? Could you clarify the time duration, assuming standard display specs in frames per second?  
-             I suspect further fine-tuning here will be key.  
-       → B案採用: 絶対角度差分方式を廃止し、増分累積方式（delta蓄積）に戻しました。回転中心Canvas座標の固定・30fpsレートリミット・0.2°ヒステリシスは維持。  
-       → 増分方式では各フレーム間のdeltaが常に小さいため、±180°境界問題が構造的に発生せず、アンチジャンプフィルタを削除。>360°回転にも自然に対応。  
-       → レートリミットでスキップされた期間のdeltaは次処理フレームにまとめて反映（回転中心固定のため安定）。  
-       ⇒ I uploaded one image.  
-         ・ I slowly rotated it as indicated by the blue arrow.  
-         ・ When I paused the mouse at the red arrow location, the image jumped multiple times.  
-        　　At this point, after releasing both Ctrl and the mouse, it felt like it jumped for about one second.  
-         ・ My guess is that mouse movements crossing the four quadrants separated by the yellow-green lines cause the jumping.  
-       → 残留イベント即時破棄(M1-006): Ctrl解放後もキューに残るMotionイベントが回転を継続させていた問題を修正。  
-         (1) `_is_ctrl_physically_pressed()` を追加: Windows API `GetAsyncKeyState(VK_CONTROL)` でCtrlキーのリアルタイムハードウェア状態を取得。キュー内のMotionイベント処理時にCtrlが既に離されていれば即座に回転モードを終了し残りを破棄。非Windowsではフォールバックで `True` を返しKeyReleaseイベントに依存。  
-         (2) `_on_ctrl_key_release()` で `self.__dragging = False` を設定: KeyRelease以降のキュー内Motionイベントが `on_mouse_drag` 冒頭の `if not self.__dragging: return` で即スキップされるようにした。  
-         (3) `on_mouse_drag()` 回転ブランチ冒頭に `_is_ctrl_physically_pressed()` チェックを追加: イベントの `state` にCtrlフラグがあっても実キーが離されていれば `_on_ctrl_key_release()` を呼び出して即終了。  
-- [✅] 回転モード表示のメッセージコード（M042 vs 仕様）を確定し、コードと `message_codes.json` の整合を取る。  
-       ⇒ OK.
+## M2.1: ファイル拡張子・サイズ変換タブ追加仕様 (U006)
 
-### M1-007: 表示ページ削除ボタンの追加（M1_PLAN.mdのNo.11）
-- [✅] 「空白ページ挿入」のボタンの下に「表示ページ削除」ボタンを追加する。  
-      ボタンが押されたら、表示中のページを削除する。削除前に「削除してよろしいですか？」の確認ダイアログを表示する。  
-       → UIメッセージコード U061（ページ削除）、U062（確認ダイアログ）、U063（最後の1ページ削除不可）を `message_codes.json` に追加。  
-       → 3テーマJSON（dark/light/pastel）に `delete_page_button` エントリを追加。  
-       → `PageControlFrame.__init__` に `on_delete_page` コールバックパラメータを追加し、`BaseButton` で削除ボタンを row=5 に配置。export を row=6、transform セクションを row=7〜12 にシフト。  
-       → `set_edit_buttons_enabled()` に `delete_page_btn` の有効/無効制御を追加（コピー保護PDF対応）。  
-       → `pdf_ope_tab.py` に `_on_delete_page()` を実装: 残1ページ時は削除拒否（U063）、`messagebox.askyesno` で確認後に `base_transform_data`・`base_page_paths` から該当ページを除去、`page_count` 更新、UI再構築。  
-       ⇒ Images 1 and 2 are of the screen after a blank page was inserted as page two.  
-          Image 3 is the image after the inserted blank page was deleted.  
-          Image 4 is the first image of page two, and the part framed in red is different from the image of page two in the other images.  
-          Images 1 through 3 have the same image for the last two pages, so I think you forgot to change the path of the read file name when adding or deleting pages.
-       → パス管理バグ修正: `_on_insert_blank_page()` で空白ページのファイル名に `uuid` を使用し既存ファイルの上書きを防止。さらに新規パスを `base_page_paths` の正しい位置に `insert()` するよう修正。これにより挿入・削除後もページインデックスとファイルパスの対応が維持される。  
-       ⇒ OK.  
-### M1-008: 座標/角度/移動距離の表示・入力UIの追加（M1_PLAN.mdのNo.12）
-- [✅] Canvas右のボタンエリアに座標/角度/移動距離の表示・入力UIを追加する。  
-      座標はCanvas上の表示位置、角度は回転角度、移動距離はCanvas上の移動距離を表示する。  
-      入力UIは、それぞれの値を直接入力することができる。  
-       → `PageControlFrame` に変換情報セクションを追加（セパレータ＋ヘッダ＋X/Y/Angle/Scaleの4つのラベル付きEntry）。  
-       → UIメッセージコード U064-U069 を `message_codes.json` に追加（Transform/X:/Y:/Angle:/Scale:/Apply）。U061-U063はM1-007用に予約。  
-       → `_display_page()` 末尾で `update_transform_info()` を呼び出し、ページ切替・回転・移動・ズーム時にリアルタイム反映。  
-       → Entryにフォーカス中は外部からの値上書きをスキップし、ユーザー入力を保護。  
-       → EnterキーでEntryの値を読み取り→バリデーション→ `base_transform_data` に反映→ `_on_transform_update()` で再描画。  
-       ⇒ For the block added this time, please add validation to convert full-width characters to half-width.  
-          For the block added this time, since it's the same for all color themes, please adjust it to match the theme color.
-       → 全角→半角変換: `_normalize_fullwidth()` を追加。`unicodedata.normalize("NFKC")` で全角数字・記号を半角化し、カタカナ長音符（ー）もマイナスに変換。`_on_transform_entry_submit` で適用。  
-       → テーマカラー対応: `apply_theme_color()` にセパレータ・ヘッダ・サブフレーム・ラベル・Entryのテーマ更新処理を追加。ウィジェット参照をインスタンス変数に保存。  
-       → 「完了」ボタンを「保存」に変更（U037: "Complete"→"Save" / "完了"→"保存"）。  
-       → 重複ログ修正: `color_theme_change_button.py` の `_update_button_theme` 内の L121 ログ出力を削除（`_on_click` で既に出力済み）。  
-       ⇒ The text color in the “Transformation Information” section added to the right-side operation menu  
-          in Canvas is a uniform color that does not match the theme color. Please make this match the theme color as well.  
-       → テーマカラー未追従修正: `apply_theme_color()` で `__swfg`/`__swbg` を `component_theme` から更新するように修正。これによりセパレータ・ヘッダ・ラベルの色がテーマ変更に追従する。  
-       → 重複ログ修正: `apply_theme_color()` 内の `total_pages_label`/`prev_page_btn`/`next_page_btn`/`insert_blank_btn` への明示的 `apply_theme_color` 呼び出しを削除（`WidgetsTracker` が自動呼び出し済みのため重複していた）。  
-       ⇒ ・ The color of the fixed text in the “Conversion Information” block (highlighted in red) is the same across all themes.  
-             Please change this text color to match the theme color as well.  
-          ・ Also, please insert a half-width space between X and :, and between Y and :.  
-          ・ Regarding the logs, duplicates still exist as shown below. Please resolve them.  
-       → ラベル色修正: `"page_control"` キーが各テーマJSONに存在しないため `__swfg` がデフォルト固定だった。`Frame.fg` をフォールバックに使用するよう `__init__` と `apply_theme_color()` を修正。dark=`#43c0cd`、light=`#000000`、pastel=`#6b6b6b` に追従。  
-       → U065/U066 修正: `message_codes.json` の "X:" → "X :"、"Y:" → "Y :" に半角スペースを挿入。  
-       → 重複ログ修正: `base_label.py` の `_config_widget()` 内 L049 ログ出力を削除。`apply_theme_color()` の L087 ログのみ残し、1ウィジェット1行に削減。  
-       ⇒ - We confirmed that the text color of the "Change Information" block has changed for each color theme, and that X: and Y: have been changed.  
-          - There are duplicates in the log.  
-          - The following error log has been saved, so please investigate and take action. Since no other similar errors have been reported,  
-            this may be an error that only occurs when building operation blocks next to the Canvas.
-       → `__color_key` エラー修正: `BasePageChangeButton` と `InsertBlankPageButton` が `super().__init__()` の後に `self.__color_key` を設定していたが、`BaseButton.__init__` 内で `WidgetsTracker` に登録→即テーマ適用→MROにより子クラスの `apply_theme_color` が呼ばれ、未設定の `_子クラス__color_key` を参照して AttributeError が発生していた。子クラスの冗長な `__color_key`・`apply_theme_color`・`_config_widget`・`WidgetsTracker` 登録を削除し、`BaseButton` に委任。  
-       → ログ重複修正: `base_path_select_button.py` の L083 ログが `color_key` なしで出力されていたため、2つのインスタンスが同一メッセージを出力。L083 メッセージに `{0}` パラメータを追加し、呼び出し側で `color_key` を渡すよう修正。  
-       ⇒ OK.
+### M2.1-001: PDF入力時のDPI指定（M2-003拡張）
+- [✕] PDF→画像変換時に、ラスタライズDPIをユーザー指定できること（72 / 96 / 150 / 300 / 600 + カスタム入力）。  
+      **検証手順**: PDFファイルを入力し、拡張子変換ブロックでDPIを変更して変換を実行。設定したDPIが実際の変換に使われることを確認する。  
+      → 仕様整合（2026-02-28）として本項目は削除せず存置し、意味を「検出DPIが取得できない場合の代替値/明示上書き値としてラスタライズDPIを指定できること」として扱う。優先順位は `検出DPI → ラスタライズDPI → 300dpi`。  
+      ⇒ NG:  
+          As you can see in the first uploaded image, the red-framed area remains. This is not necessary.  
+          The yellow-green area also detects 300 dpi. Also, since this is a multi-page file, the box containing the format and  
+          other information needs a warning message stating that this information is for the first page only.  
+          Also, the pink-framed area should be able to be processed by combining the PNG file into a single page at the end.  
+      → M2.1-001 再修正（2026-02-28）として、検出DPIが取得できたPDFでは拡張子変換ブロックの `PDF Raster DPI` 入力欄を非表示にし、重複表示（赤枠相当）が出ないようにした。あわせて複数ページPDF時のメタ情報に `U123` 注記（「1ページ目の代表値表示」）を追加した。  
+      → なお、同NG内の「size変換でmulti-page入力を最終単一ファイルへ統合して処理する」要件は本修正には未含有（別途 M2.1-003/004 のmulti-pageサイズ変換実装として継続対応）。  
+      ⇒ 「メタ情報に `U123` 注記（「1ページ目の代表値表示」）を追加した。」：NG  
+      　 The warning that the information in the meta information display box only displays the first page of the file when importing multi-size PDF or  
+         Tif files, has not been implemented.  
+      → M2.1-001 追加修正（2026-03-01）として、PDF入力時だけでなくmulti-frame TIF入力時のメタ情報にも `U123` 注記を付与した。これにより、拡張子変換ブロックのメタ情報欄で「1ページ目代表値」であることをPDF/TIFの両方で明示する。  
+- [✅] 既定値が 300dpi であること。  
+      **検証手順**: PDF入力直後のDPI表示を確認し、300dpiが初期値として選択されていることを確認する。  
+      → M2.1-001 追加修正として、Resizeブロックの `Output DPI` 既定値を `72` から `300` に変更した。さらに入力ファイル選択時は、画像DPIが取得できる場合はその値（例: 96）を自動反映し、取得不能時は `300` を設定するよう更新した。`uv run python -c ...`（`tests/tmp_m2_1_q_fix`）で `initial_size_dpi=300`、`size_dpi_matches_input_png96=96`、`size_dpi_unknown_defaults_300=300` を確認した。  
+      ⇒ OK.  
+- [✕] 低DPI指定時に画質低下の可能性を示す警告（ラベル/ポップアップ）が表示されること。  
+      **検証手順**: 同一PDFで低DPIを指定して実行し、警告表示とOK/Cancelの動作を確認する。  
+      → M2.1-001 実装として、拡張子変換ブロックにPDF入力時のみ表示される `U118: PDF Raster DPI` コンボ（既定300、`72/96/150/300/600` + カスタム入力）を追加し、PDF変換のレンダリングDPIに直接反映するよう変更した。さらに `U122` を追加し、300dpi未満の指定時は警告ラベルと `askokcancel` に同一メッセージが表示されるよう統一した。`uv run python -c ...`（`tests/tmp_m2_1_verify`）で `pdf_controls_visible=True`、`default_pdf_dpi_300=True`、`low_dpi_warning=True` を確認した。  
+      → 仕様変更（2026-02-28）として、`docs/milestone/M2_1_PLAN.md` のDPI決定順序を「入力PDFから検出できたDPI → ラスタライズDPI（ユーザー指定）→ 既定値300dpi」に更新した。合わせて、ラスタライズDPI欄は「検出不可時の代替値/明示上書き値」として扱う方針を追記した。  
+      → M2.1-001 追加実装（2026-02-28）として、`views/image_ope_tab.py` に `_resolve_pdf_effective_dpi()` を追加し、PDFの有効DPI解決を `検出DPI → ラスタライズDPI → 300dpi` へ統一した。これに合わせて、PDFメタ表示（`Effective Raster DPI`）、拡張子変換時の実レンダリングDPI、低DPI警告判定、用紙サイズ優先時のDPI参照を同一ロジックへ揃えた。  
+      ⇒ NG:  
+          As you can see in the second uploaded image, the red-framed area indicates the PNG file size, so isn't the pink-framed warning unnecessary?  
+          Also, for image files, I thought I'd changed the title "Output DPI" and the dropdown menu to display as inactive, but this hasn't happened.  
+      → M2.1-001 再修正（2026-02-28）として、非PDF入力時はResizeブロックの `Output DPI` ラベル/コンボを disabled 表示（ラベル灰色化＋コンボ無効）に統一した。さらに非PDF入力ではDPI由来の劣化警告（`U106/U107`）を出さないようにし、画像サイズが既知のケースで不要な警告表示（ピンク枠相当）が出ないよう調整した。  
+      → M2.1-001 追加修正（2026-02-28）として、拡張子変換ブロックから `PDF Raster DPI` UI（`U118` ラベル＋コンボ）を完全削除し、PDFの有効DPIは `検出DPI → 既定300dpi` の自動決定に統一した。併せてResizeブロックの `Output DPI` は非PDF入力時に値表示を含めて視覚的に非活性化されるよう、disabled専用Comboboxスタイルを適用した。  
+      ⇒ NG:  
+          When importing a PNG file, the DPI section of the size conversion block should become inactive, but the title, which was inactive last time, has returned to active.  
+          Also, the display is strange because the file has not been expanded to other color modes.  
+      → M2.1-001 追加修正（2026-03-01）として、テーマ再適用時の `Output DPI` ラベル色参照を初期値固定からテーマ色参照へ変更し、非PDF時は常に灰色で非活性表示されるよう修正した。併せてdisabled時Comboboxの文字色/背景色をテーマ連動に変更し、light/dark/pastel いずれでも表示崩れが出ないよう調整した。  
 
-### M1-009: フッターに小さく表示するメタ情報（M1_PLAN.mdのNo.13）
-- [✅] フッターに小さくメタ情報（DPI、サイズ等）を表示する。  
-      情報が無い場合は"-"を表示する。  
-       → `pdf_ope_tab.py` の `frame_main2` に `_footer_meta_label`（font=8pt, anchor=w）を row=1 に配置。初期値は "-"。  
-       → `_update_footer_meta()` メソッドを追加: PIL Image から `width`/`height`（px）と `info["dpi"]` を取得し、`"595 x 842 px  |  96 DPI"` 形式で表示。情報欠落時は "-" を表示。  
-       → `_display_page()` 末尾で `_update_footer_meta(pil_image)` を呼び出し、ページ切替時にリアルタイム更新。  
-       → `apply_theme_color()` にフッターラベルの bg/fg テーマ適用処理を追加。  
-       → DPI表示修正: PNG ファイルは DPI メタデータを埋め込まないため `pil_image.info["dpi"]` が常に None だった。`tool_settings.setted_dpi`（変換時の DPI 設定値）から取得するよう修正。  
-       → 用紙サイズ推定: `_estimate_paper_size()` を追加。ピクセル寸法と DPI から物理サイズ（mm）を算出し、A0〜A5・B3〜B5・Letter・Legal と±5mm 許容で照合。一致時はフッターに `"510 x 361 px  |  96 DPI  |  A4"` のように表示。  
-       ⇒ Is it correct that the paper size isn't displayed because there's no DPI information for the paper?  
-          A title would be nice. Something like "Pixel size: 〇px x 〇px | Pixel density: 〇dpi | Paper size: 〇".  
-          I assume the title changes depending on the language settings.  
-          The third file was printed from PDF to PDF at 300dpi, but is it possible that the meta information isn't being accessed properly?  
-          I also had it read a company's product introduction PDF and a research paper PDF, but it couldn't read the dpi for all of them.  
-       → DPI取得バグ修正: `getattr(tool_settings, 'setted_dpi', None)` は `tool_settings` がモジュールのため常に `None` を返していた。`UserSettingManager.get_setting("setted_dpi")` で設定値を取得し、`_load_and_display_pdf()` で `self._conversion_dpi` に保存。さらに変換時に `dpi=self._conversion_dpi` を `process_with_progress_window()` に渡すよう修正。  
-       → i18nタイトル追加: UIメッセージコード U072（ピクセルサイズ:）、U073（ピクセル密度:）、U074（用紙サイズ:）を追加。フッター表示を `"ピクセルサイズ: 595 x 842 px  |  ピクセル密度: 96dpi  |  用紙サイズ: A4"` 形式に変更。言語設定に応じてラベルが英語/日本語で切り替わる。  
-       ⇒ As you can see in the red frames in both images, the zoom ratio has not been taken into account, so if you zoom in and out with the mouse wheel,  
-          the "paper size" will change even if the document is the same. Please correct the calculation formula so that the correct paper size is fixed regardless  
-          of zooming in and out in Canvas.   
-          Also, in the case of multi-page images, this may be different for each page, so please make sure the accurate "paper size" for each page is displayed.  
-       → ズーム不変修正: `_display_page()` で PNG 読込直後（変形前）に `self._original_page_width` / `self._original_page_height` を保存。`_update_footer_meta()` は変形後の `pil_image` サイズではなく保存済み原寸値を使用するよう変更。これによりズーム・回転に依らず用紙サイズが一定になる。マルチページでもページ切替時に各ページの原寸が再取得されるため正確に表示。  
-       ⇒ OK.  
+### M2.1-002: 用紙サイズ（物理サイズ）対応
+- [] PDFページサイズ（pt）と指定DPIから、`px = pt × dpi / 72` に基づいて出力サイズが決定されること。  
+      **検証手順**: 既知のptサイズPDFでDPIを変更し、出力画像のpxサイズが式どおりに変化することを確認する。  
+      ⇒ Isn't the "/72" in the formula a number that changes depending on whether it's meta information, the calculation result, or the default value?  
+         I think the formula is wrong.  
+      → M2.1-002 仕様補正（2026-03-01）として、`/72` は「1 inch = 72 pt」の固定定数であり変化しないことを `docs/milestone/M2_1_PLAN.md` に明記した。変化するのは `dpi` の参照元のみ（メタ情報 / 計算結果 / 既定値）である。  
+- [✅] 用紙サイズを指定した場合は、指定用紙サイズを優先して出力サイズが決定されること。  
+      **検証手順**: 用紙サイズを指定して変換し、元PDFサイズではなく指定用紙サイズ由来のpxで出力されることを確認する。  
+      ⇒ OK.  
+- [] Portrait/Landscape の向きが維持されること。  
+      **検証手順**: 縦横それぞれの用紙設定で変換し、出力画像の向きが設定どおりであることを確認する。  
+      → M2.1-002 実装として、PDFメタ更新と変換前計算で `px = pt × dpi / 72` を適用する `_resolve_pdf_output_pixels(...)` を導入し、用紙サイズ優先時は選択された用紙（Portrait/Landscape）の mm 値を `px = mm × dpi / 25.4` でそのまま採用するようにした。PDF単ページ/複数ページ変換ともに `target_size_px` を受け取り、必要時のみリサイズする。`uv run python -c ...` 検証で `natural_formula_ok=True`、`paper_priority_ok=True`（期待値一致）を確認した。  
+      → ユーザー指摘（拡張子変換のみで縦横が変わる）対応として、拡張子変換処理から用紙サイズ優先リサイズ経路を削除し、PDF→画像は常にページそのものを `raster_dpi` でラスタライズしたサイズで保存するよう修正した。`uv run python -c ...`（`tests/tmp_m2_1_q_fix`）で、用紙優先を有効化した状態でも `landscape.pdf` の変換結果が `3509x2480`（横長維持）であることを確認した。  
+      ⇒ Isn't the "/72" in the formula a number that changes depending on whether it's meta information, the calculation result, or the default value?  
+         I think the formula is wrong.  
+      → M2.1-002 追加実装（2026-03-01）として、PDFメタ情報に `DPI Source`（メタ情報 / 計算結果 / 既定値）を表示し、同一式 `px = pt × dpi / 72` の `dpi` がどこから決定されたかを画面上で判別できるようにした。  
 
-### M1-010: 一括編集チェックボタンの追加（M1_PLAN.mdの要求4に対応）
-- [✅] Canvas右のボタンエリアに「一括編集」チェックボタンを追加する。  
-      入力ファイルが縦横ページ混合やサイズが異なっている場合は、一括編集チェックボックスを無効にして禁止する。
-      同じ縦横、同じサイズの入力ファイルが指定されている場合は、一括編集チェックボックスを有効にして許可する。
-      チェックボックスがONの場合、１つのページの操作を全ページに反映させる。
-      チェックボックスがOFFの場合は、表示中のページの操作を個別に行う。
-       → UIメッセージコード U070（一括編集）、U071（サイズ不一致時の無効メッセージ）を `message_codes.json` に追加。  
-       → `PageControlFrame` に `tk.Checkbutton`（`batch_edit_var: BooleanVar`）を row=7 に配置。transform セクションを row=8〜13 にシフト。テーマ適用処理を `apply_theme_color()` に追加。  
-       → `set_batch_edit_enabled()` メソッドを追加: 無効時はチェックボックスを DISABLED にし `batch_edit_var` を False にリセット。  
-       → `pdf_ope_tab.py` に `_check_batch_edit_eligibility()` を追加: 全ページの PNG 画像サイズを比較し、全ページ同一サイズなら有効、異なれば無効にする。PDF読み込み・ページ挿入・ページ削除後に呼び出し。  
-       → `_on_transform_update()` を拡張: `batch_edit_var` が True の場合、現在ページの transform データを全ページにコピーしてから再描画。マウス操作（ズーム/パン/回転）・Entry入力の両方で一括反映。  
-       → 空白ページサイズ修正: `_on_insert_blank_page()` で挿入する空白ページのサイズを、現在表示中のページの画像サイズ（width×height）に合わせるよう変更。A4縦表示中ならA4縦、A3横表示中ならA3横の空白ページが挿入される。現ページ画像が読めない場合はフォールバックとして 595×842（A4縦相当）を使用。  
-       → U071 は将来のツールチップ表示等に使用可能な予備コードとして保持。  
-       ⇒ OK.  
+### M2.1-003: file / folder 文言統一（M2-003正式反映）
+- [✅] 単一出力時に `file` 文言が使われること。  
+      **検証手順**: 単一ページPDFで変換し、ステータス/警告/確認ダイアログの文言が `file` で統一されていることを確認する。  
+      ⇒ OK.  
+- [✅] 複数ページ/複数フレーム出力時に `folder` 文言が使われること。  
+      **検証手順**: 複数ページPDFまたは複数フレーム画像で変換し、ステータス/警告/確認ダイアログの文言が `folder` で統一されていることを確認する。  
+      → 仕様追加（2026-02-28）としてA案を採用し、Resizeブロックでもmulti-page PDF / multi-frame TIFを処理対象に含める方針を `docs/milestone/M2_1_PLAN.md` へ追記した。処理はページ単位で一時フォルダへ出力し、統合可能な組み合わせ（PDF→TIF、TIF→PDF）は最終的に単一ファイルへ統合、統合不能時はfolder出力へフォールバックする。  
+      → M2.1-003 追加実装（2026-02-28）として、Resizeブロックで multi-page PDF / multi-frame TIF のサイズ変換を許可し、ページ上限（初期値20）内で全ページをリサイズ後、PDFは単一multi-page PDF、TIFは単一multi-page TIFとして統合保存する経路を実装した。上限超過時は `U124` 警告で先頭Nページのみ処理する確認を行う。  
+      ⇒ OK.  
+      → M2.1-003 追加修正（2026-03-01）として、拡張子変換でも統合可能ケース（multi-page PDF→TIF / multi-frame TIF→PDF）はfolder分割を行わず、全ページ/全フレームを処理して単一ファイル（multi-page TIFF / multi-page PDF）へ統合出力するよう更新した。  
+- [✅] 重複回避時の文言も出力単位（file/folder）に合わせて表示されること。  
+      **検証手順**: 出力先に同名ファイル/フォルダがある状態で変換し、重複回避メッセージの語彙が適切であることを確認する。  
+      → M2.1-003 実装として、拡張子変換完了メッセージを `U120`（file output）/`U121`（folder output）へ分離し、単一出力と複数ページ出力で使い分けるよう更新した。重複時は従来どおり `U089`（file）/`U115`（folder）を連結する。`uv run python -c ...`（`tests/tmp_m2_1_verify`）で `single_status_file_word=True`、`multi_status_folder_word=True`、`single_output_exists=True`、`multi_folder_output_exists=True` を確認した。  
+      ⇒ OK.  
 
-### M1-011: ショートカットガイド（ヘルプオーバーレイ）の表示制御改善
-- [✅] ページ切替や再描画のたびにショートカットガイドが再表示される問題を修正する。  
-      `_display_page()` → `refresh_overlay_positions()` 等の再描画パスで、ガイドの表示状態フラグが保持されない。  
-      表示/非表示状態を明示的なフラグ（例: `__shortcut_help_visible`）で管理し、`refresh_overlay_positions()` ではフラグがTrueの場合のみ再描画する。  
-      将来的に他のタブでも同じショートカットガイド機構を使うため、表示制御ロジックを汎用化しておく。  
-      検証: ページ切替・ズーム・回転操作後にガイドの表示状態が意図通り維持されるか手動確認。  
-       → 重複バインド除去: `attach_to_canvas()` から Ctrl+?/Ctrl+Shift+H 等のショートカットヘルプ用バインドを削除。`pdf_ope_tab._bind_global_shortcuts()` の `bind_all` のみでイベント処理し、キャンバスフォーカス有無で二重発火する問題を解消。  
-       → フラグ―アイテム整合検証: `refresh_overlay_positions()` でヘルプ再配置前に `find_withtag("overlay_shortcut_help")` でキャンバスアイテムの存在を検証。外部削除（`canvas.delete("all")`等）でアイテムが消えた場合、`__shortcut_help_visible` フラグを False にリセットし「非表示なのに再表示される」状態を防止。  
-       → 汎用API追加: `shortcut_help_visible` プロパティ（読取専用）と `set_shortcut_help_visibility(visible)` メソッドを `MouseEventHandler` に追加。外部タブからプログラム的にヘルプ表示を制御でき、将来の他タブ対応が容易になる。  
-       ⇒ The shortcut guide flickers when rotating or zooming.  
-       → フリッカー修正: `refresh_overlay_positions()` 内でヘルプテキストを一時的に (0,0) へ移動し `update_idletasks()` で強制再描画していた処理を削除。現在位置のまま `bbox()` でサイズを取得し、直接目標位置へ `coords()` するよう変更。また `_display_page()` 内の `refresh_overlay_positions()` 二重呼び出し（画像描画直後＋状態更新後）を1回（状態更新後のみ）に統合し、不要な再配置を排除。  
-       → 重複バインド除去を撤回: `attach_to_canvas()` のキャンバスレベルバインドを復元。Tkinter では `bind` コールバックが `"break"` を返すと `bind_all` への伝播が止まるため二重発火は起きない。キャンバスバインドと `bind_all` の両方を維持し、フォーカス状態に依存せず確実にショートカットが動作するようにした。  
-       ⇒ OK.  
+### M2.1-004: U006内のUI要件
+※ Item 1（PDF入力時のみ有効な「PDF出力DPI」入力欄）は仕様変更により削除。  
+- [✅] PDF入力時のDPIラベルが「ラスタライズDPI」であることを明示できていること。  
+      **検証手順**: PDF入力時のラベル文言を確認し、用途が誤解なく伝わる表記になっていることを確認する。  
+      ⇒ OK.  
+- [✅] メタ情報欄に Format / Page size (pt) / Page count / Effective raster DPI が表示されること。  
+      **検証手順**: PDF入力時のメタ情報欄を確認し、必要項目がすべて表示されることを確認する。  
+      → M2.1-004 実装として、PDFメタ情報は `U119: Effective Raster DPI` を使って表示し、`Format: PDF`、`Size: W×H pt (Np)`、`Effective Raster DPI: X:... / Y:...` を表示するよう更新した。PDF Raster DPI 変更時は `_on_pdf_raster_dpi_changed()` で即時再計算・再表示する。`uv run python -c ...`（`tests/tmp_m2_1_verify`）で `meta_effective_label=True`、`meta_150dpi=True` を確認した。  
+      → 仕様変更（2026-02-28）として、`docs/milestone/M2_1_PLAN.md` のUI要件へ「ResizeブロックのOutput DPIはPDF以外入力時に無効化（disabled）」と「ResizeブロックでDPI値が必要な場合の決定順序（検出DPI → ラスタライズDPI → 300dpi）」を追記した。  
+      → 仕様追加（2026-02-28）として、multi-page入力時のメタ情報は1ページ目の代表値表示である旨を明示する注記を `docs/milestone/M2_1_PLAN.md` に追記した。  
+      → 仕様追加（2026-02-28）として、業務PC（メモリ約8GB）での負荷対策のため、multi-page処理は内部ページ上限変数（初期値20）で制御し、上限超過時は処理前警告を出す方針を `docs/milestone/M2_1_PLAN.md` に追記した。  
+      → M2.1-004 追加実装（2026-02-28）として、PDFメタ情報の `U123` 注記（1ページ目代表値）は維持したまま、PDF専用DPI入力欄はUIから削除した。DPI表示は `Effective Raster DPI` のみを残し、自動決定結果を一貫表示する構成へ整理した。`uv run python -m py_compile views/image_ope_tab.py` と `uv run python -m json.tool configurations/message_codes.json` で構文検証済み。  
+　　　⇒ NG:  
+        Not specified. It should be meta information, the calculation result, or the default value. (See uploaded file 5.)
+      → M2.1-004 追加修正（2026-03-01）として、PDFメタ情報へ `DPI Source` 項目（`U125`）を追加し、値を `メタ情報`（`U126`）/ `計算結果`（`U127`）/ `既定値（300dpi）`（`U128`）で表示するよう更新した。これにより、実効DPIがどの経路で決定されたかをメタ情報欄で明示する。  
+      → M2.1-004 追加修正（2026-03-07）として、`pypdf.PdfReader.metadata` に含まれる document metadata の `/DPI`、`/XResolution`、`/YResolution`、`/ResolutionUnit` も PDF のメタDPI候補として参照するよう `views/image_ope_tab.py` を更新した。これにより、埋め込み画像XObjectを持たない PDF でも、document metadata 側に 300dpi 等が入っていれば `DPI Source=メタ情報` として `Effective Raster DPI` へ反映できる。`sample01_with_dpi_metadata_300dpi.pdf` では `uv run python -c ...` により `doc_meta_pair (300, 300)` を確認した。  
+      ⇒ OK.  
 
+### M2.1-005: DPI採用ポリシー再調整（2026-03-01追加）
+- [✅] meta情報が存在する場合は `X/Y DPI` の乖離があってもmetaを採用し、meta情報がない場合のみ計算DPIを評価して `X/Y` 乖離率が閾値（初期値10%）超過なら不採用とすること。  
+      **検証手順**: (1) `X/Y` が乖離していてもmeta情報ありPDFでは `DPI Source=メタ情報` になること、(2) meta情報なしPDFでは計算DPIを評価し、`X/Y` 乖離率が閾値超過なら計算DPIが不採用になることを確認する。  
+      → 新仕様として、DPI決定順序を「有効meta DPI（乖離率チェック通過）→ ユーザー指定ラスタライズDPI → 既定値300dpi」へ再定義した。  
+      → UI仕様追加（2026-03-01）として、拡張子変換ブロックの `PDF Raster DPI` ドロップダウンは「meta未取得または乖離率チェック不採用」の場合のみ再表示・有効化し、必要時のみ入力値を実効DPIへ反映する。  
+      → M2.1-005 実装（2026-03-01）として、`views/image_ope_tab.py` に `X/Y DPI` 乖離率判定（初期値10%）を追加し、閾値超過時はmeta採用を行わないよう更新した。`_resolve_pdf_effective_dpi(...)` は `meta（乖離チェック通過）→ user fallback → default` の順で解決し、meta有効時は平均値を実効DPIとして採用する。  
+      → 仕様再変更（2026-03-01）として、meta情報がある場合は `X/Y` 乖離の有無にかかわらずmeta採用へ戻し、meta情報がない場合のみ計算DPIの `X/Y` 乖離率判定を行う方針へ更新した。計算DPIが不採用/算出不能時は既定値300dpiを適用し、ドロップダウンでユーザーが選択できる。  
+      → M2.1-005 再実装（2026-03-01）として、`_resolve_pdf_effective_dpi(...)` を `meta（常時採用）→ calculated（metaなし時のみ、乖離率チェック）→ user fallback → default` へ変更した。UI側は `dpi_source in ("user", "default")` の場合のみフォールバック入力を有効化し、`calculated` は自動採用として表示のみ行う。  
+      → M2.1-005 不具合修正（2026-03-01）として、`X/Y DPI` が閾値超過で乖離するmeta値は不採用に戻し、`_resolve_pdf_effective_dpi(...)` を `meta（乖離チェック通過）→ calculated（metaなし時のみ、乖離チェック）→ user fallback → default` へ修正した。これにより、乖離meta入力時は拡張子変換ブロックの `PDF Raster DPI` ドロップダウンが再表示され、平均値の自動採用（例: 226dpi）を回避する。  
+      → M2.1-005 再修正（2026-03-01）として、仕様文言どおり「meta情報DPIは `X/Y` 乖離があっても採用」を復元し、乖離判定は `rasterization/calculated DPI` のみに限定した。`_resolve_pdf_effective_dpi(...)` は `meta（metadata由来・乖離判定なし）→ calculated（乖離判定あり）→ user fallback → default` へ再調整し、rasterization側が乖離したケースのみ拡張子変換 `PDF Raster DPI` とResize `Output DPI` を有効化する。  
+      ⇒ OK.  
+- [✅] meta DPI が読めない、または乖離率チェックで不採用になった場合、ユーザー指定ラスタライズDPIを優先採用すること。  
+      **検証手順**: meta未取得/不採用ケースでユーザー指定DPIを変更し、出力サイズ（px）と `DPI Source` 表示が追従することを確認する。  
+      → 補助情報としての Calculation DPI は表示可能とするが、通常の採用優先順位には含めない。  
+      → UI仕様追加（2026-03-01）として、サイズ変換ブロックの `Output DPI` ラベル/ドロップダウンは常時disabledではなく、「PDF入力かつmeta未取得/不採用でフォールバック入力が必要」な場合にのみ有効化する。  
+      → M2.1-005 実装（2026-03-01）として、拡張子変換ブロックへ `PDF Raster DPI` 入力欄（`U118`）を再導入し、必要時のみ表示・有効化する制御を実装した。さらにサイズ変換ブロックの `Output DPI` は `PDF入力かつmanual fallback必要時` のみ有効化し、それ以外はラベル灰色＋disabled表示に統一した。`DPI Source` 表示も `メタ情報 / ユーザー指定 / 既定値` へ追従する。  
+      → M2.1-005 不具合修正（2026-03-01）として、Resizeブロックの `Output DPI` 無効時スタイルを全テーマで灰色に統一した。`_update_size_dpi_controls_state()` で入力拡張子を実パスから再判定し、非PDF入力時は必ずdisabled配色（ラベル/矢印色/入力文字色）を適用するよう `DisabledOutputDPI.TCombobox` の `foreground/selectforeground/arrowcolor/fieldbackground` を明示設定した。  
+      → M2.1-005 テーマ反映修正（2026-03-07）として、Resizeブロック黄緑枠（`Output DPI`、幅/高さ入力欄）の起動時およびテーマ切替後の配色を全カラーモードで再同期するよう更新した。`views/image_ope_tab.py` で `base_file_path_entry` 系テーマ色を保持し、`EnabledOutputDPI.TCombobox` / `DisabledOutputDPI.TCombobox` に active/disabled 両方の `foreground/background/fieldbackground/arrowcolor` を明示適用したうえで、`_apply_size_entry_theme_colors()` から幅/高さ `BaseEntry` の `disabledbackground/disabledforeground` を直接設定するよう修正した。これにより、黄緑枠の背景色は入力ファイルパス表示セクションと同系色で維持され、初期表示時・dark再切替時・light/pastel 各モードでも未反映が起きないようにした。  
+      → M2.1-005 テーマ反映再修正（2026-03-07）として、起動時darkで黄緑枠の入力欄/文字色と変換ボタンが未反映のまま残る原因を、`WidgetsTracker` の子ウィジェットテーマ適用がタブ側の手動上書き後にも走っていたためと特定した。`views/image_ope_tab.py` では幅/高さ入力欄の `color_key` を `entry_normal` から `base_file_path_entry` へ変更し、`_apply_current_theme_after_build()` と `apply_theme_color()` の双方から `after_idle` で `_apply_theme_postprocess()` を実行して、Resizeブロック入力欄・`Output DPI`・変換ボタンの最終配色を入力パス系テーマ色へ再固定するよう更新した。これにより、起動時darkは Image 2 相当の表示へ揃い、pastel でも青枠箇所の背景が入力パス欄と同系色になるよう修正した。  
+      → M2.1-005 テーマ反映再修正（2026-03-07 追補）として、dark起動時に黄緑枠のボタン色と画面広範囲の文字色がなお未反映だった根本原因を、`controllers/color_theme_manager.py` の `load_theme()` が「現在テーマ名が `dark` なら既に読込済み」と早期returnしてしまい、`DEFAULT_COLOR_THEME_SET` の `Label.fg=#fffae3` を保持したまま `themes/dark.json` を実読込していなかったためと特定した。`ColorThemeManager` に `__loaded_from_default` を追加し、既定テーマ由来の状態では同名テーマでも early return せず `themes/dark.json` / `themes/light.json` / `themes/pastel.json` を実読込するよう修正した。これにより、起動時darkでも黄緑枠の変換ボタン色と plain `tk.Label` 群の文字色が実テーマ定義へ揃うよう更新した。  
+      → M2.1-005 追加修正（2026-03-07）として、複数ページ/複数フレーム入力の検出後に幅/高さ `BaseEntry` を `disabled` へ切り替えた直後、Windows が white fallback で再描画していたため、`_set_size_controls_for_multisize()` の末尾で `_apply_size_entry_theme_colors()` を再実行するよう更新した。これにより、multi-page PDF 読込後でも pink 指摘箇所の背景が dark テーマの入力欄色から白へ戻らないよう補正した。  
+      → M2.1-005 仕様改訂対応（2026-03-07）として、`docs/milestone/M2_1_PLAN.md` のUI要件を更新し、Resizeブロックの `Output DPI` は `PDF` / `TIF` 入力時に常時active、`JPEG` / `SVG` 入力時はdisabled、その他形式は入力パス選択時 validation で reject する方針へ改めた。これに合わせて `views/image_ope_tab.py` の `_IMAGE_EXTENSIONS` / `_DROP_EXTENSIONS` を `PDF / TIFF / JPEG / SVG` のみへ絞り、`_is_supported_input_extension()` と `_try_accept_input_file()` を追加して未対応形式選択時は `U130` を表示して受理しないよう更新した。  
+      → M2.1-005 追加修正（2026-03-07）として、Resizeブロックの `Output DPI` を「サイズ変換時に実際に使用するDPI値」として扱うよう整理し、`_update_size_dpi_controls_state()` の活性条件を `PDF / TIF` 入力へ変更した。さらに `PDF` / `TIF` のサイズ変換では `_on_size_convert()`、`_convert_multipage_size_file()`、`_apply_paper_size_to_target_dimensions()` が yellow-green 枠の選択値を優先して参照するよう更新し、既知DPIのPDFでも初期値300dpi等を表示したうえでユーザーが別DPIへ変更できるよう修正した。  
+      → M2.1-005 追加修正（2026-03-07）として、multi-page PDF の代表値注記が長い1行メタ表示に埋もれて見えなくなる問題を避けるため、拡張子変換ブロックのメタ情報ラベルへ `justify="left"` と `wraplength` を設定し、`U123` 注記は改行付きで追記する構成へ変更した。併せて、サイズ変換で幅/高さ未入力時に `U052: 無効なパス形式` が status bar へ出ていた不整合を修正し、`U131`（幅・高さの正整数入力を促す文言）を追加して pink 指摘箇所のメッセージをサイズ入力不足の内容へ置き換えた。  
+      → M2.1-005 差し戻し対応（2026-03-07）として、前回追記した「入力パス選択時 validation で未対応形式を reject する」解釈は、既存の選択可能拡張子数を任意に減らす内容となっていたため撤回した。`docs/milestone/M2_1_PLAN.md` は「既存UIで選択可能な入力形式は維持し、`Output DPI` の active / disabled 制御のみ入力種別で切り替える」文言へ補正し、`views/image_ope_tab.py` でも `_IMAGE_EXTENSIONS` / `_DROP_EXTENSIONS`、ファイル選択ダイアログ、D&D受理処理を従前どおりへ戻した。今回維持した修正は、`PDF / TIF` 時の `Output DPI` 利用、multi-page 代表注記の視認性改善、サイズ未入力時の専用文言 `U131` のみとした。  
+      → M2.1-005 仕様文言整理（2026-03-07）として、`docs/milestone/M2_1_PLAN.md` の `Output DPI` 要件で enable / disable 条件が二重定義に見える記述を整理した。状態定義は「`PDF` / `TIF` で有効、それ以外で無効」、補足は「既存UIで選択可能な入力形式は減らさず維持する」に分離し、初期値・編集可否の節では `PDF` / `TIF` の初期値規則と、`JPEG` / `SVG` を含むその他形式は参考表示のみで編集不可とする扱いへ整理した。これにより、状態条件と初期値条件が競合せず、同一仕様が二重定義されないよう補正した。  
+      → M2.1-005 テーマ反映再整理（2026-03-07）として、黄緑枠（幅/高さ入力欄・`Output DPI`）だけが dark 系色へ戻る再発原因を、`views/image_ope_tab.py` が通常の `WidgetsTracker` テーマ適用とは別に `after_idle` 後処理で当該部位を再塗装していたうえ、その deferred 処理に世代管理がなく、起動時の複数回テーマ適用とテーマ切替時の再適用が競合しうる構造だったためと特定した。対策として、黄緑枠専用の色解決処理を `_refresh_resize_theme_cache(...)` へ集約し、`apply_theme_color()` / `_apply_theme_postprocess()` の双方で毎回同じ theme snapshot から再計算する構成へ整理した。さらに `_schedule_theme_postprocess()` と `_theme_postprocess_generation` を追加して古い deferred callback を無効化し、`_apply_current_theme_after_build()` の重複 postprocess 予約も除去した。これにより、起動時とテーマ切替時で後勝ちする stale callback によって幅/高さ入力欄・`Output DPI` が dark 色へ巻き戻る経路を断ち、各カラーモードの色に収束するよう補正した。再発防止案として、今後は U006 黄緑枠の配色責務を「theme snapshot からの純粋計算 + generation guard 付き deferred finalize」に固定し、個別 widget ごとの都度上書きや重複 `after_idle` を増やさない方針とする。  
+      → M2.1-005 黄緑枠UX/テーマ再整理（2026-03-07）として、複数ページ/複数フレーム入力時に黄緑枠の一部だけが有効に見え続けていた原因を、`_set_size_controls_for_multisize()` が `width/height` と `paper size` の state だけを切り替え、ラベル・チェックボックス・`Output DPI`・disabled配色を同じ責務で更新していなかったためと特定した。さらに pastel 起動後の dark/light 切替で黄緑枠に pastel 色が残る経路として、deferred 後処理が予約時の theme snapshot を使い続ける設計も残っていた。対策として `views/image_ope_tab.py` に `_apply_size_controls_visual_state()` を追加し、黄緑枠の `width/height`・`paper size`・`縦横比を固定`・`Output DPI` を multi-page 時に一括で inactive 配色へ落とすよう整理した。`_refresh_size_warning_label()` では `U132` を新設して「1ページ目/1フレーム目の代表値のみ表示しているため単一のピクセルサイズ指定を許可していない」理由を常時表示し、`_on_size_convert()` でも同理由で処理を中断するよう補正した。あわせて `_apply_theme_postprocess()` は実行時点の `ColorThemeManager.get_current_theme()` を再取得してから黄緑枠の最終配色を再計算するよう更新し、pastel 起動後でも最新テーマへ収束するよう補正した。再発防止案として、黄緑枠の state 変更は今後も `state` 切替だけで終わらせず、「state変更 + 視覚状態更新 + 理由表示」を同一メソッドで完結させる。  
+      → M2.1-005 追加追修正（2026-03-08）として、最新指摘の「黄緑枠が起動時テーマ色のまま残る」「黄色枠（`縦横比を固定`）の見た目が前回から変わった」「タスクバーアイコンが Tk 既定へ見える」問題を再調査した。黄緑枠再発の根因は、テーマ切替イベント後だけでなくファイル情報更新や state 更新 (`_update_size_dpi_controls_state()` / `_apply_size_entry_theme_colors()` / `_apply_size_controls_visual_state()`) でもローカル色キャッシュを使って再描画しており、その経路で最新テーマ再取得をしていなかったため、起動時色が後勝ちしうる構造だったためと特定した。対策として `views/image_ope_tab.py` に `_refresh_resize_theme_cache_from_current_theme()` を追加し、黄緑枠の state 依存再描画前に毎回 `ColorThemeManager.get_current_theme()` から最新色を引き直すよう修正した。さらに黄色枠の見た目変化は `縦横比を固定` チェックボックスへ disabled 状態と `selectcolor` を強制指定した追加ロジックが原因だったため、その強制指定を戻して従前に近い表示へ補正した。アイコンについては `main.py` で `icon_multi.ico` / PNG 群を設定済みであることを再確認したうえで、Windows が Tk 既定アイコンへ関連付ける経路を減らすため `_set_windows_app_user_model_id()` を追加し、メインウィンドウ生成前に `SetCurrentProcessExplicitAppUserModelID("sta29697.pdfDiffChecker")` を呼ぶよう更新した。再発防止案として、黄緑枠の配色更新は「theme event 時の後処理」だけでなく「ファイル情報更新・state 更新時の再描画」まで含めて必ず最新テーマ取得を経由させ、チェックボックスのような既存見た目に依存する部位へは disabled 見た目変更を加える前に実機差分を確認する。  
+      → M2.1-005 追加追修正（2026-03-08 再調査）として、ユーザー画像で黄緑枠の inactive 表示が active 時と十分に差別化されず、かつ pastel 起動時に dark 系の入力欄色が残る件を再度追跡した。`views/image_ope_tab.py` ではテーマ切替時だけでなく、ファイル読込後の `_update_file_info()` → `_update_meta_info()` → `_set_size_controls_for_multisize()` の経路でも黄緑枠を再描画しており、inactive 表示自体も `width/height` と `paper size` 中心で、`現在サイズ`・入出力ファイル名・矢印・`縦横比を固定`・`サイズ変換` ボタンまで同じ inactive 方針で揃っていなかった。対策として、`_refresh_resize_theme_cache(...)` の disabled 色解決を `Frame.disabledforeground` の生値依存から `LabelDisabled.fg` 優先 + `ensure_contrast_color(...)` によるコントラスト補正へ変更し、黄緑枠の inactive 色を各テーマで背景と十分に区別できるよう補正した。さらに `_apply_size_controls_visual_state()` は `現在サイズ`・入出力ファイル名・矢印・`縦横比を固定`・`サイズ変換` ボタンまで含めて visual state を一括反映し、multi-page / multi-frame 時は `縦横比を固定` と `サイズ変換` も disabled にして「操作不能」と「見た目」を一致させた。ログ確認が必要な再発に備えて、`main.py` の `setup_logging()` では development mode のみ `logs/debug.log` を起動時クリアし、同条件で `AppState.enable_theme_application_logs()` を有効化してテーマ適用順を追跡できるようにした（production mode ではログクリアも追加追跡も行わない）。タスクバーアイコンについては、アイコンファイル自体は既に設定済みである一方、ウィンドウ表示前に既定 Tk アイコンで一度可視化されると Windows taskbar 側がそれを掴む可能性があるため、`create_main_window()` で root を `withdraw()` してから `iconbitmap` / `iconphoto` 適用後に `deiconify()` する順へ変更した。再発防止案として、黄緑枠の inactive 表示は個別 widget ごとに都度対症療法せず `_apply_size_controls_visual_state()` へ責務を集約し、色差確認が必要な修正では development mode のみクリーンログからテーマ適用順を確認する。  
+      ⇒ OK.  
+- [✅] 低解像度警告の文言を見直し、実効DPIが300未満になる処理では必ず確認ダイアログを表示すること。  
+      **検証手順**: 実効DPIが 300 未満となるケースで変換を実行し、下記文言が表示されることを確認する。  
+      `指定したラスタライズDPI（{dpi}）は推奨値300dpi未満です。文字や細線の視認性が低下する可能性があります。続行しますか？`  
+      → 既存の「画質劣化の可能性あり」警告は削除せず、上記の具体文言へ差し替えて継続利用する。  
+      → M2.1-005 実装（2026-03-01）として、`configurations/message_codes.json` の `U122` 文言を上記の具体文言へ更新し、拡張子変換のPDF系警告判定で実効DPIが300未満の場合に確認メッセージとして表示するよう維持した。併せて `U127` を「ユーザー指定」へ更新し、新しいDPI参照元表示と整合させた。  
 ---  
-更新日: 2026-02-15
+更新日: 2026-03-01
+
+      → M2.1-005 追加追修正（2026-03-08 継続対応）として、拡張子変換ブロックの出力拡張子選択が入力ファイル再読込のたびに先頭候補へ戻っていた原因を、`views/image_ope_tab.py` の `_update_file_info()` が `filtered[0]` を都度代入し、ユーザー選択を永続化していなかったためと特定した。対策として `image_ext_target` を user settings に保存し、`_update_file_info()` では入力拡張子を除いた候補集合の中に保存値が残っている場合はその値を優先復元し、候補外になった場合のみ現在値または先頭候補へフォールバックするよう更新した。さらに `<<ComboboxSelected>>` を `_on_ext_target_changed()` へ集約し、選択直後に保存されるよう補正した。
+      → M2.1-005 追加追修正（2026-03-08 継続対応）として、入力ファイル選択ダイアログの拡張子フィルタ（image / pdf / svg / all）が次回起動時に維持されない問題へ対応した。`views/image_ope_tab.py` に `image_input_dialog_filetype` の読込・保存処理を追加し、ドラッグ&ドロップ時は拡張子から、通常のファイルダイアログ時は Tk の `typevariable` から最終選択フィルタを復元・保存する構成へ変更した。`utils/path_dialog_utils.py` の `ask_file_dialog()` は `typevariable` を任意引数で受け取れるよう拡張し、次回表示時の filter order も前回選択を先頭へ出すよう整理した。
+      → M2.1-005 黄緑枠 inactive 表示再整理（2026-03-08 継続対応）として、赤枠へ波及せず黄緑枠だけで inactive 色を揃えるため、`views/image_ope_tab.py` の resize-block 用 `ttk.Combobox` style 名をインスタンス固有名へ変更した。これにより `EnabledResizePaper.TCombobox` / `DisabledResizePaper.TCombobox` / `EnabledOutputDPI.TCombobox` / `DisabledOutputDPI.TCombobox` のグローバル衝突を避け、用紙サイズや Output DPI の disabled 配色が他ブロックへ漏れる経路を遮断した。併せて黄緑枠のファイル名ラベル専用に active / inactive 背景色を分離し、`LabelDisabled.fg` と `ensure_contrast_color(...)` に加えて背景側も `adjust_hex_color(...)` で段差を付けることで、「通常ファイル名」と「inactive 表示」の見分けが付くよう補正した。
+      → M2.1-005 PDF DPI 再評価（2026-03-08 継続対応）として、補足説明 A の「PDF→PNG/TIF 変換で 72dpi のような低い calculated 値が使われると文字が読めなくなるのではないか」という懸念をコードで再確認した。`views/image_ope_tab.py` の `_calculate_pdf_page_dpi()` は `page.render(scale=1.0)` を基準に逆算するため、PDF に明示DPIが無いケースでは 72dpi 相当へ収束しやすく、これをそのまま実効DPIへ採用すると実際に粗いラスタライズを誘発し得る構造だった。対策として `_resolve_pdf_effective_dpi()` では、この scale=1.0 基準の calculated 値を export DPI の採用候補から外し、優先順位を「埋め込み画像メタデータ / 埋め込み画像画素数から読める値」→「ユーザー指定 fallback DPI」→「既定 300dpi」に整理した。これにより、DPI情報が曖昧なPDFでも unsafe な 72dpi 側へ自動的に落ちず、少なくともユーザー指定値または既定 300dpi の安全側へ倒すよう補正した。
+      → M2.1-005 multi-page / embedded state 再評価（2026-03-08 継続対応）として、補足説明 B の根拠を整理した。現行のサイズ変換ロックは「各ページ/各フレームに単一の width/height を強制すると代表値しか見えていないUIでは誤変換を招く」ことを避ける設計であり、判定自体はページサイズ差の有無ではなく `PDF/TIFF の multi-frame 検出（page_count > 1 / n_frames > 1）` に基づいている。そのため、同サイズの複数ページ PDF でも現在は一律に黄緑枠を inactive にしている。これは temporary folder の有無が理由ではなく、UI が 1組の target size しか持たず、ページ単位の確認や個別補正を行わない以上、同サイズ混在・同サイズ固定・embedded raster / vector 混在を見分けない状態で自動実行しないためである。ここでいう embedded state は「PDF 内に画像や情報が埋め込まれている状態」を指し、今回の DPI 判定では `/XObject` の埋め込み画像から DPI メタデータや画素寸法を読めるかどうかを意味する。仕様改善案としては、将来もし multi-page 同サイズのみ解放したい場合でも、まず全ページサイズ一致確認・代表値ではなく全ページ対象の確認ダイアログ・page ごとの差分検出結果表示を先に実装し、その後に opt-in で許可するのが安全と整理した。
+      → M2.1-005 起動クラッシュ即応修正（2026-03-08）として、前回の拡張子選択保存対応後に `uv run main.py` で `ImageOperationApp object has no attribute '_on_ext_target_changed'` が発生した。原因は `views/image_ope_tab.py` の `_build_frame_ext()` で `<<ComboboxSelected>>` の bind 先を `_on_ext_target_changed` へ変更した一方、メソッド本体の追加がパッチ崩れで反映されていなかったため。対策として `_on_output_folder_select()` の直後に `_on_ext_target_changed()` を追加し、拡張子選択時の即時保存 (`image_ext_target`) と warning 再計算を担当させる構成へ復旧した。あわせて `uv run python -m py_compile views/image_ope_tab.py utils/path_dialog_utils.py` を再実行し、少なくとも構文・名前解決レベルではクラッシュしない状態へ戻した。
+      → M2.1-005 黄緑枠テーマ再追跡（2026-03-08）として、起動時・pastel 切替時・dark へ戻した後で黄緑枠の disabled Entry/Combobox 配色が初回起動時と一致しない現象を再調査した。テーマ定義自体は `themes/pastel.json` の `base_file_path_entry.bg=#ece8ff` / `filename_label.bg=#ece8ff` を返しており、黒背景はテーマ値ではなく、`BaseEntry` / ttk 再描画後に disabled state の見た目が OS/ttk 側へ巻き戻されるタイミング差が原因と判断した。対策として `views/image_ope_tab.py` の `_schedule_theme_postprocess()` から `after(25, ...)` の late pass `_apply_theme_postprocess_late()` を追加し、global widget tracker と ttk style の適用完了後に黄緑枠だけ再度 theme cache → visual state → entry colors → DPI combo state を強制再適用するよう補強した。さらに `_apply_size_entry_theme_colors()` と `_apply_size_controls_visual_state()` では disabled の `BaseEntry` を一度 `normal` に戻してから色を再設定し、最後に `disabled` へ戻すことで、Windows 側の disabled 背景/前テーマ色残留を抑える構成へ更新した。dark→pastel→dark の見た目差停止はこの経路の安定化を狙った修正であり、赤枠は対象外のまま維持している。
+      → M2.1-005 入力ファイル変更トリガー再追跡（2026-03-08）として、黄緑枠の色ずれは起動時や theme switch だけでなく、`_update_file_info()` → `_update_pdf_meta_info()` / `_update_meta_info()` → `_set_size_controls_for_multisize()` の経路でも再発し得ることを再確認した。つまり、入力ファイル変更後の multi-page / DPI / paper-state 更新が黄緑枠の再描画トリガーになっており、ここに theme switch 用の late repair と同等の最終補正が無かったため、3枚目・4枚目のように「dark に戻した後」や「入力ファイル変更後」に色が揃わない状態が残っていた。対策として `views/image_ope_tab.py` に `_schedule_resize_visual_refresh()` / `_apply_resize_visual_refresh()` を追加し、`_set_size_controls_for_multisize()` の末尾から after_idle + after(25ms) の二段 deferred repaint を必ず実行するよう変更した。これにより、入力ファイル変更後も現在テーマの snapshot から黄緑枠の cache・disabled entry 色・DPI combobox style を再適用し、theme switch と file change の両方で同じ補正経路を通すよう整理した。
+      → M2.1-005 黄緑枠根本対策着手（2026-03-14）として、`views/image_ope_tab.py` の黄緑枠描画責務を `theme switch後に局所補修する構成` から、`_render_resize_block_visuals()` を最終見た目決定器として集約する構成へ切り替えた。`_resolve_resize_theme_snapshot()` で現在テーマ snapshot を一元解決し、theme change (`_apply_theme_postprocess*`)・input file change (`_set_size_controls_for_multisize`)・state change (`_apply_resize_visual_refresh`) の各経路は最終的に同じ renderer を通すよう整理した。これにより、黄緑枠だけが個別補正の積み重ねで赤寄り/濃色へ崩れる経路を減らし、部品追加時も「最終見た目決定器へ寄せる」方針で追従漏れを抑える土台へ更新した。加えて `_on_output_folder_select()` には「output folder 変更だけでは黄緑枠を再描画しない」意図を明示し、出力先変更が別トリガーとして混入しないよう防御線を残した。
+      → M2.1-005 仕様更新先行反映（2026-03-14）として、`docs/milestone/M2_1_PLAN.md` を現在の方針へ更新した。内容は `px指定廃止→倍率指定`、`同サイズ複数ページのみ Resize 許可`、`multi-frame入力は対象外`、`サイズ不一致複数ページは対象外`、および確認ダイアログ方針の再整理である。これにより、今後の実装・検証・会話で古い A案（temporary folder 前提の multi-frame 含む扱い）へ戻らないよう仕様基準を先に固定した。
+      → M2.1-005 ログ追跡整理（2026-03-14）として、今回の黄緑枠表示追跡に無関係な debug/info ログを `views/image_ope_tab.py`、`controllers/widgets_tracker.py`、`widgets/base_entry.py`、`widgets/base_value_combobox.py` でコメントアウトし、代わりに表示不具合の現経路だけを追うための集中特化ログを追加した。主な新規ログタグは ` [RESIZE_THEME] `、` [THEME_TRACE] `、` [ENTRY_THEME] `、` [COMBO_THEME] ` であり、黄緑枠については `schedule_theme_postprocess`、`render_resize_block_visuals`、`update_file_info_start/done`、`set_size_controls_for_multisize`、`apply_size_controls_visual_state`、`apply_size_entry_theme_colors`、`update_size_dpi_controls_state`、`apply_theme_postprocess`、`output_folder_changed_without_resize_repaint` を時系列で追えるようにした。これにより、theme switch / file change / late repaint のどの経路で色と state が崩れるかをログから切り分けやすくした。
+      → M2.1-005 全体ログ抑制（2026-03-14）として、4ファイルだけのコメントアウトでは依然としてプロジェクト全体の一般 debug/info ログが多すぎ、黄緑枠の追跡ログが埋もれる問題が残ったため、`main.py` の `setup_logging()` に開発時限定の `FocusedDevelopmentLogFilter` を追加した。このフィルタは `warning/error` をそのまま残しつつ、`debug/info` は ` [RESIZE_THEME] `、` [THEME_TRACE] `、` [ENTRY_THEME] `、` [COMBO_THEME] `、` [SYS] ` を含むレコードだけを `logs/debug.log` へ通す構成である。これにより、`main.py`、`views/pdf_ope_tab.py`、`controllers/file2png_by_page.py`、`configurations/user_setting_manager.py` など他ファイル由来の大量一般ログを個別に潰し切らなくても、今回の表示不具合調査で必要なログだけを実質的に抽出できるようにした。
+      → M2.1-005 全体ログ抑制再調整（2026-03-14）として、上記フィルタ適用後も起動直後の ` [SYS] ` ログと `widgets/base_entry.py` 由来の `state=normal` な ` [ENTRY_THEME] ` がなお多く、対象ファイル選択前の解析を妨げることが確認された。そのため `main.py` の `FocusedDevelopmentLogFilter` を再度絞り込み、`debug/info` は原則 ` [RESIZE_THEME] ` と ` [THEME_TRACE] ` のみ許可し、` [ENTRY_THEME] ` / ` [COMBO_THEME] ` は `state=disabled` / `state=readonly` / `state=missing` を含む inactive 系ログだけを通す構成へ変更した。これにより、起動時の通常 state テーマ適用ログやシステム進行ログを除外しつつ、黄緑枠の inactive 表示崩れに直接関係する trace だけを残すようにした。
+
+      → M2.1-005 黄緑枠 state 崩れ根因特定（2026-03-14）として、今回の debug.log と画像を突き合わせた結果、`views/image_ope_tab.py` では `is_multisize=True` が検出されている一方、直後の `apply_size_entry_theme_colors` ログで `_width_entry` / `_height_entry` の `state` が `normal` と記録されており、黄緑枠の幅/高さ Entry が最終描画段で inactive のまま維持されていないことを根因候補として特定した。これにより pastel 切替時も disabled 配色ではなく通常 Entry 系の見た目が再混入し、dark→pastel→dark の切替後に黄緑枠だけ前テーマ寄りの背景色を残す経路が生じていたと判断した。
+      → M2.1-005 黄緑枠 state 最終復元（2026-03-14）として、`views/image_ope_tab.py` の `_apply_size_entry_theme_colors()` を補正し、テーマ色再適用後の幅/高さ Entry に対して `is_multisize` から導いた `desired_state` を最終的に必ず再設定するよう変更した。従来は `original_state == "disabled"` のときだけ `disabled` へ戻していたため、途中で `normal` 化された Entry がそのまま残る経路を取りこぼしていたが、修正後は `is_multisize=True` なら最終 state を強制的に `disabled` へ揃える。あわせて trace に `desired_state` を追加し、今後のログでも「multi-size 判定」と「最終 state」の不一致を直ちに見分けられるようにした。
+
+      → M2.1-005 黄緑枠 theme change 再分析（2026-03-14）として、今回の悪化時ログを再確認したところ、`widgets/base_entry.py` の ` [ENTRY_THEME] ` では pastel / dark の theme 値が幅・高さ Entry へ到達していても、同じタイミングの `views/image_ope_tab.py` には `apply_theme_postprocess` / `schedule_theme_postprocess` が記録されていなかった。つまり、`BaseEntry` 単体の theme 適用は走っていても、黄緑枠全体の最終補正 renderer が theme switch 時に必ずしも再実行されず、結果として dark 時代の disabled 背景・枠色が pastel 側へ残留していたと判断した。
+      → M2.1-005 黄緑枠 theme change 直接補正（2026-03-14）として、`views/image_ope_tab.py` の `ImageOperationApp` を `EventBus` の `THEME_CHANGED` に直接購読させ、`_on_theme_changed()` から `_schedule_theme_postprocess()` を必ず予約するよう変更した。これにより `WidgetsTracker` の適用順や再描画タイミングに依存せず、theme toggle のたびに黄緑枠だけが現在 theme snapshot で最終再描画される。追加 trace `theme_changed_event` により、今後は「theme event 自体が届いていない」のか「届いたが postprocess が skip された」のかもログで切り分け可能になった。
+
+      → M2.1-005 起動時間短縮用タブ限定表示（2026-03-14）として、黄緑枠の表示不具合を短いサイクルで再検証できるよう、`main.py` で現在調整対象の `image_ope_tab` 以外の Notebook 追加とタブ内容初期化を一時的にコメントアウトした。これにより `pdf_ope_tab`、説明タブ、ライセンス情報タブの生成を抑止し、起動時の widget 構築と theme 適用負荷を削減した。調査完了後はこの一時コメントアウトを元へ戻す前提である。
+
+      → M2.1-005 TIF/PDF の DPI・複数ページ挙動確認（2026-03-15）として、`views/image_ope_tab.py` を確認した。TIF は Pillow の `img.info["dpi"]` を読める場合があり、現実装でも単一フレーム入力ではその値を `self._dpi_var` に取り込み、サイズ変換出力時にも `save(..., dpi=(dpi, dpi))` で保存に使っている。一方で複数フレーム TIF は `self._multi_frame_detected = n_frames > 1` となり、`_update_size_dpi_controls_state()` で `dpi_editable = False` に落とされるため、現時点では複数ページ PDF と同じく「DPI も含めてサイズ変換側は一律無効」の挙動である。
+      → M2.1-005 起動高速化の要因整理（2026-03-15）として、今回の体感差は「他タブが未統一テーマだから遅い」というより、`main.py` が全タブ生成後に `theme_manager.apply_color_theme_all_widgets()` を複数回呼び、各 widget が `WidgetsTracker().add_widgets(...)` で theme 適用対象へ登録される構造のため、非表示化したタブ群の widget 生成コストと theme 全走査コストが丸ごと減った影響が大きいと判断した。つまり色管理の未統一有無より、生成される widget 総数と theme 再適用回数の削減が効いている。
+      → M2.1-005 黄緑枠 inactive 配色強調（2026-03-15）として、`views/image_ope_tab.py` の resize-block theme cache で disabled 背景の補正量を拡大し、disabled 文字色は block 背景との差が出る neutral 系の色へ再計算するよう変更した。さらに `render_resize_block_visuals()` 内で `ConvertImageButton` の theme 再適用順を先に寄せたうえで、`_apply_size_controls_visual_state()` から縦横比チェックボックスとサイズ変換ボタンへ最終 disabled 色を明示設定し、dark/pastel の両 theme で「無効だが active に見える」状態を弱めた。
+
+      → M2.1-005 起動時 theme 多重適用の整理（2026-03-15）として、`main.py` と `views/image_ope_tab.py` を再確認した。起動直後は widget 未生成・ttk style 未確定・plain tk widget の既定色残り・`after_idle` 後の再描画が重なるため、現実装は「初期 theme 読込 → 全 widget 構築後の全体 apply → tab 内の after_build 補正 → idle 後の再 apply」という多段構成になっている。一般論としても Tkinter/ttk 混在画面では 1 回で安定しないことがあり、最終 1 回だけへ単純化できるのは全 widget の生成完了時点と再描画順を完全に統制できる場合に限られる、という整理を行った。
+      → M2.1-005 赤枠・黄緑枠 state 不整合の原因修正（2026-03-15）として、`views/image_ope_tab.py` の state 制御を見直した。原因は (1) 起動時の no-input 状態で拡張子変換/サイズ変換の既定 disabled を明示していなかったこと、(2) 複数ページ/複数フレーム入力で `_set_size_controls_for_multisize()` がサイズ変換ボタンを disabled にしても、その後 `apply_copy_protection_state()`→`_set_conversion_buttons_enabled(True)` が size 側まで再度 normal に戻していたこと、(3) 黄緑枠の最終 visual renderer が `is_multisize` のみ見ており no-input の inactive 表示を拾っていなかったこと、である。対策として `self._is_size_controls_locked()` を追加し、「入力なし or multi-frame」を黄緑枠の単一の lock 条件へ統合したうえで、起動直後に `_set_size_controls_for_multisize(False)` と `_set_conversion_buttons_enabled(False)` を明示実行し、さらに `_set_conversion_buttons_enabled()` は ext 側と size 側を別判定に変更した。
+      → M2.1-005 inactive 色方針の明確化（2026-03-15）として、今回の方針は「完全な灰色固定」ではなく、「背景との差が出る neutral 系 disabled 色」であると整理した。実装上は block 背景から十分なコントラストを確保する neutral 寄りの色へ寄せており、結果として従来よりグレー寄りに見えるが、意図は全 theme で inactive 判別性を上げることにある。併せて `views/image_ope_tab.py` の DPI / 用紙サイズ combobox disabled style に `bordercolor` / `lightcolor` / `darkcolor` も設定し、無効時の枠線だけ active に見える状態を弱めた。
+
+      → M2.1-005 same-size multi-page DPI-only unlock 実装（2026-03-15）として、`views/image_ope_tab.py` に `self._multi_frame_same_size_detected` と PDF/TIFF 用の代表サイズ判定を追加した。TIF は全フレームの `img.size` を走査し、PDF は全ページのページサイズから実効DPI時の出力ピクセル寸法を算出して、1ページ目と一致する場合のみ same-size 扱いにしている。
+      → 同修正として、黄緑枠の state 制御を 2 段階から 3 段階へ再整理した。すなわち「通常編集可」「same-size multi-page の DPI-only」「mixed-size multi-page の全面lock」である。`Output DPI` は `pdf/tif` 入力かつ same-size multi-page 時のみ編集可能とし、幅・高さ・用紙サイズ・縦横比固定は引き続き inactive のままにした。
+      → 同修正として、サイズ変換実行側も `DPI-only` 分岐を追加した。same-size multi-page PDF/TIF では width/height 入力値を直接使わず、代表ページ/フレームの寸法と指定 DPI から最終ピクセルサイズを再計算し、その値で multi-page resize 実行を許可する。既存の mixed-size multi-page は従来どおり `U132` で停止し、same-size multi-page は新設 `U133` で「幅・高さはlock、Output DPIのみ変更可」と案内するよう整理した。
+
+      → M2.1-005 DPI-only visual-state 不整合修正（2026-03-15）として、`views/image_ope_tab.py` の resize-block visual 判定を再分離した。原因は `same-size multi-page` で `Output DPI` とサイズ変換ボタンは有効でも、上段の変換式行（入力ファイル名 / 出力ファイル名 / 上段矢印）が `_multi_frame_detected` だけで disabled 配色へ落ちていたことにある。対策として `_is_size_expression_locked()` を追加し、same-size multi-page の `DPI-only` 時は上段行だけ active 配色を維持しつつ、幅・高さ・用紙サイズ・縦横比固定・下段矢印は従来どおり inactive のままにした。
+
+      → M2.1-005 DPI-only warning 配置修正（2026-03-15）として、`configurations/message_codes.json` の same-size multi-page 文言を役割分離した。`U133` は下段 warning 用に「代表値表示＋幅・高さ・用紙サイズ lock」の説明だけへ短縮し、新設 `U134` を「Output DPI は全ページ/全フレームに対して変更可能」の専用ヒント文として追加した。`views/image_ope_tab.py` では `self._size_dpi_hint_label` を `Output DPI` 近傍の専用行として追加し、従来下段 warning に混在していた DPI 可変案内をここへ移した。
+      → 同修正として、黄緑枠の上段矢印色の根因は `apply_theme_color()` が一度 `conversion_arrow_label` を適用した後、`_render_extension_block_visuals()` と `_apply_size_controls_visual_state()` が最終段で矢印色を `section_header_label` ではなく通常 label/DPI label 系色へ上書きしていた点にあると整理した。対策として `section_header_label` の色を cache し、拡張子変換・サイズ変換の上段矢印は final renderer でも block title と同じ色へ戻すよう修正した。dark だけ目立ちにくかったのは、dark theme では上書き先の色が title 色と近く、light/pastel では差が大きかったためである。
+      ⇒ OK.

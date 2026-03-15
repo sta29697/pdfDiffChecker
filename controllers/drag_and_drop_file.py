@@ -47,6 +47,7 @@ class DragAndDropHandler:
         on_drop: Callable[[str], None],
         allowed_extensions: Optional[List[str]] = None,
         feedback_callback: Optional[Callable[[str, bool], None]] = None,
+        allow_directories: bool = False,
     ) -> bool:
         """Register a widget as a drop target.
 
@@ -55,6 +56,7 @@ class DragAndDropHandler:
             on_drop: Callback function to handle dropped files
             allowed_extensions: List of allowed file extensions
             feedback_callback: Optional callback for user feedback
+            allow_directories: Whether dropped directories are accepted
 
         Returns:
             bool: True if registration is successful, False otherwise
@@ -76,15 +78,6 @@ class DragAndDropHandler:
                 if file_path.startswith("{") and file_path.endswith("}"):
                     file_path = file_path[1:-1]
 
-                if not os.path.isfile(file_path):
-                    error_manager = message_manager
-                    # E003: The dropped file does not exist: {0}
-                    error_msg = error_manager.get_error_message("E003", file_path)
-                    logger.error(error_msg)
-                    if feedback_callback:
-                        feedback_callback(error_msg, False)
-                    return
-
                 # Check if the file exists
                 # os.path.exists() checks if the path is a file or directory
                 # This check is necessary to prevent errors when trying to access the file
@@ -97,8 +90,26 @@ class DragAndDropHandler:
                         feedback_callback(error_msg, False)
                     return
 
+                # Check whether dropped item type is allowed.
+                if allow_directories:
+                    if not os.path.isdir(file_path):
+                        error_manager = message_manager
+                        error_msg = error_manager.get_error_message("E003", file_path)
+                        logger.error(error_msg)
+                        if feedback_callback:
+                            feedback_callback(error_msg, False)
+                        return
+                else:
+                    if not os.path.isfile(file_path):
+                        error_manager = message_manager
+                        error_msg = error_manager.get_error_message("E003", file_path)
+                        logger.error(error_msg)
+                        if feedback_callback:
+                            feedback_callback(error_msg, False)
+                        return
+
                 # Check if the file extension is allowed
-                if allowed_extensions:
+                if allowed_extensions and not allow_directories:
                     _, ext = os.path.splitext(file_path)
                     # ext represents the file extension (e.g., .pdf, .jpg, etc.)
                     # The file extension is used to determine the type of file

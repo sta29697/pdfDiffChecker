@@ -67,6 +67,7 @@ class ColorThemeManager:
     __current_theme: ThemeColors = cast(ThemeColors, {})
     __current_theme_name: ThemeType = DEFAULT_THEME
     __initialization_complete: bool = False
+    __loaded_from_default: bool = True
 
     def __new__(cls) -> ColorThemeManager:
         """Create a new instance of ColorThemeManager using singleton pattern.
@@ -89,6 +90,7 @@ class ColorThemeManager:
         """Load the default color theme."""
         cls.__current_theme = cast(ThemeColors, DEFAULT_COLOR_THEME_SET)
         cls.__current_theme_name = DEFAULT_THEME
+        cls.__loaded_from_default = True
         message_manager = get_message_manager()
         # L038: Loaded default color theme
         # Log default theme load event
@@ -173,8 +175,16 @@ class ColorThemeManager:
             bool: True if theme was loaded or already loaded, False if loading failed
         """
         try:
-            # Skip if theme is already loaded and force_reload is False
-            if cls.__current_theme_name == theme_name and cls.__current_theme and not force_reload:
+            # Main processing: do not skip reload when the current theme still
+            # comes from DEFAULT_COLOR_THEME_SET. This avoids startup-time dark
+            # mode keeping the fallback label/button colors instead of the
+            # actual themes/dark.json values.
+            if (
+                cls.__current_theme_name == theme_name
+                and cls.__current_theme
+                and not force_reload
+                and not cls.__loaded_from_default
+            ):
                 message_manager = get_message_manager()
                 logger.debug(message_manager.get_log_message("L154", f"{theme_name} (already loaded)"))
                 return True
@@ -191,6 +201,7 @@ class ColorThemeManager:
                     theme_data = json.load(f)
                     cls.__current_theme = cast(ThemeColors, theme_data)
                     cls.__current_theme_name = theme_name
+                    cls.__loaded_from_default = False
 
                 message_manager = get_message_manager()
                 # Log detailed theme load including file source
@@ -348,10 +359,11 @@ class ColorThemeManager:
         """
         try:
             current = cls.__current_theme_name
+            # Main processing: keep random branch from dark to light/pastel.
             if current == "dark":
-                # 70% -> light, 30% -> pastel
+                # 50% -> light, 50% -> pastel
                 new_theme = cast(
-                    ThemeType, "pastel" if random.random() < 0.3 else "light"
+                    ThemeType, "pastel" if random.random() < 0.5 else "light"
                 )
             else:
                 # from 'light' or 'pastel' to 'dark'

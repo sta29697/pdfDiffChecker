@@ -65,7 +65,7 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
         # BaseValueCombobox initialized with values: {values}
-        logger.debug(message_manager.get_log_message("L112", values))
+        # logger.debug(message_manager.get_log_message("L112", values))
 
     def get_value(self) -> Union[str, int, float]:
         """Get the current selected value.
@@ -90,10 +90,11 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         if str_value in [str(v) for v in self.__values]:
             self.set(str_value)
             # Value set to: {value}
-            logger.debug(message_manager.get_log_message("L113", value))
+            # logger.debug(message_manager.get_log_message("L113", value))
         else:
             # Invalid value: {value}
-            logger.warning(message_manager.get_log_message("L114", value))
+            # logger.warning(message_manager.get_log_message("L114", value))
+            pass
 
     def apply_theme_color(self, theme_data: Dict[str, Dict[str, str]]) -> None:
         """Apply theme colors to the combobox.
@@ -104,8 +105,11 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         try:
             combobox_theme_config = theme_data.get(self.__color_key, {})
             self.configure(**combobox_theme_config)
-            # Applied theme to combobox: {color_key}
-            logger.debug(message_manager.get_log_message("L115", self.__color_key))
+            if self.__color_key in {"base_file_path_entry", "filename_label"}:
+                logger.debug(
+                    f"[COMBO_THEME] color_key={self.__color_key}, config={combobox_theme_config}, "
+                    f"widget_id={id(self)}, state={self.cget('state')}"
+                )
         except Exception as e:
             # Failed to apply theme to combobox: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
@@ -119,7 +123,7 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         try:
             self.configure(**theme_settings)
             # Configured combobox with settings: {settings}
-            logger.debug(message_manager.get_log_message("L116", theme_settings))
+            # logger.debug(message_manager.get_log_message("L116", theme_settings))
         except Exception as e:
             # Failed to configure combobox: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
