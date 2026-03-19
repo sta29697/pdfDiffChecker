@@ -1,6 +1,6 @@
 from __future__ import annotations
 import tkinter as tk
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 from logging import getLogger
 from widgets.base_button import BaseButton
 from widgets.progress_window import ProgressWindow
@@ -44,8 +44,18 @@ class BaseFileAnalyzeButton(BaseButton):
             fr, color_key=color_key, text=text, command=command, **kwargs
         )
         self.__color_key = color_key
-        # Initialize progress window
-        self.progress_window = ProgressWindow(self)
+        # Main processing: create the progress window lazily to avoid startup-time hidden Toplevels.
+        self.progress_window: Optional[ProgressWindow] = None
+
+    def _get_or_create_progress_window(self) -> ProgressWindow:
+        """Return the lazily initialized progress window.
+
+        Returns:
+            ProgressWindow: Progress window bound to this analyze button.
+        """
+        if self.progress_window is None or not self.progress_window.winfo_exists():
+            self.progress_window = ProgressWindow(self)
+        return self.progress_window
 
     def _config_widget(self, theme_settings: dict[str, Any]) -> None:
         """
@@ -132,24 +142,26 @@ class BaseFileAnalyzeButton(BaseButton):
     def run_analysis(self) -> None:
         """Run the file analysis process."""
         try:
-            # Create progress window
-            self.progress_window.show()
+            # Main processing: create and show the progress window only for active analysis.
+            progress_window = self._get_or_create_progress_window()
+            progress_window.show()
 
             # UI text for progress update
-            self.progress_window.update_progress(0, message_manager.get_ui_message("U029"))
+            progress_window.update_progress(0, message_manager.get_ui_message("U029"))
 
             # Analyze file
             self._analyze_file_impl()
 
             # Hide progress window
-            self.progress_window.hide()
+            progress_window.hide()
 
             # Log message for analysis completion
             logger.debug(message_manager.get_log_message("L081"))
         except Exception as err:
             # Failed to analyze file: {error}
             logger.error(message_manager.get_log_message("L067", str(err)))
-            self.progress_window.hide()
+            if self.progress_window is not None and self.progress_window.winfo_exists():
+                self.progress_window.hide()
             raise
 
     def _analyze_file_impl(self) -> None:

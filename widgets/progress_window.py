@@ -92,7 +92,6 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         self.resizable(False, False)
         # Set transient only if parent is Tk or Toplevel
         self.transient(cast(tk.Wm, parent))  # Make window modal
-        self.grab_set()  # Make window modal
 
         # Create main frame
         self.main_frame = ttk.Frame(self, padding=10)
@@ -156,10 +155,23 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         except Exception:
             pass
 
+        try:
+            # Main processing: acquire modal grab only while the window is actually visible.
+            self.grab_set()
+        except Exception:
+            pass
+
         self.update()
 
     def hide(self) -> None:
         """Hide the progress window."""
+        try:
+            # Main processing: release the modal grab before withdrawing the window.
+            current_grab = self.grab_current()
+            if current_grab == self:
+                self.grab_release()
+        except Exception:
+            pass
         self.withdraw()
         self.update()
 

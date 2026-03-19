@@ -565,6 +565,7 @@ def main() -> None:
         # Initialize the application (sets up logging, creates directories, etc.)
         initialize_application()
         _set_windows_app_user_model_id()
+        settings_manager = usm()
         
         # Reinitialize message_manager if it's None or not defined
         if 'message_manager' not in globals() or message_manager is None:
@@ -1007,11 +1008,11 @@ def main() -> None:
         notebook = ttk.Notebook(main_window)
         
         # Create frames for each tab
-        # main_tab = tk.Frame(notebook)  # Main tab is still disabled
-        pdf_ope_tab = tk.Frame(notebook)  # PDF Operation tab
-        image_ope_tab = tk.Frame(notebook)  # Image Operation tab (U006)
-        description_tab = tk.Frame(notebook)  # Description tab
-        licenses_tab = tk.Frame(notebook)  # Licenses tab
+        main_tab = tk.Frame(notebook)
+        # pdf_ope_tab = tk.Frame(notebook)  # PDF Operation tab
+        # image_ope_tab = tk.Frame(notebook)  # Image Operation tab (U006)
+        # description_tab = tk.Frame(notebook)  # Description tab
+        # licenses_tab = tk.Frame(notebook)  # Licenses tab
 
         class TabContainerBgUpdater:
             """Update tab container backgrounds when the theme changes.
@@ -1047,7 +1048,7 @@ def main() -> None:
                         continue
 
         tab_container_bg_updater = TabContainerBgUpdater(
-            containers=[pdf_ope_tab, image_ope_tab, description_tab, licenses_tab]
+            containers=[main_tab]
         )
         EventBus().subscribe(EventNames.THEME_CHANGED, tab_container_bg_updater.handle_theme_changed)
         tab_container_bg_updater.handle_theme_changed(
@@ -1056,11 +1057,11 @@ def main() -> None:
         )
         
         # Add tabs to notebook (text only, no icons)
-        # notebook.add(main_tab, text=message_manager.get_ui_message("U001"))  # Main tab
-        notebook.add(pdf_ope_tab, text=message_manager.get_ui_message("U005"))  # PDF Operation tab
-        notebook.add(image_ope_tab, text=message_manager.get_ui_message("U006"))  # Image Operation tab (File Extension and Size)
-        notebook.add(description_tab, text=message_manager.get_ui_message("U007"))  # Description tab
-        notebook.add(licenses_tab, text=message_manager.get_ui_message("U008"))  # Licenses tab
+        notebook.add(main_tab, text=message_manager.get_ui_message("U004"))  # Main tab
+        # notebook.add(pdf_ope_tab, text=message_manager.get_ui_message("U005"))  # PDF Operation tab
+        # notebook.add(image_ope_tab, text=message_manager.get_ui_message("U006"))  # Image Operation tab (File Extension and Size)
+        # notebook.add(description_tab, text=message_manager.get_ui_message("U007"))  # Description tab
+        # notebook.add(licenses_tab, text=message_manager.get_ui_message("U008"))  # Licenses tab
         
         # Configure notebook to expand properly
         notebook.pack(fill="both", expand=True, padx=5, pady=5)
@@ -1068,23 +1069,28 @@ def main() -> None:
         # Initialize tab content using views and pack to fill frames
         # Create and pack instances so they fill their container frames
         
+        # Initialize Main tab
+        from views.main_tab import CreateComparisonFileApp
+        main_app = CreateComparisonFileApp(main_tab, settings_manager)
+        main_app.pack(expand=True, fill="both")
+
         # Initialize PDF Operation tab
-        from views.pdf_ope_tab import PDFOperationApp
-        pdf_app = PDFOperationApp(pdf_ope_tab)
-        pdf_app.pack(expand=True, fill="both")
+        # from views.pdf_ope_tab import PDFOperationApp
+        # pdf_app = PDFOperationApp(pdf_ope_tab)
+        # pdf_app.pack(expand=True, fill="both")
         
         # Initialize Image Operation tab (U006)
-        from views.image_ope_tab import ImageOperationApp
-        image_app = ImageOperationApp(image_ope_tab)
-        image_app.pack(expand=True, fill="both")
+        # from views.image_ope_tab import ImageOperationApp
+        # image_app = ImageOperationApp(image_ope_tab)
+        # image_app.pack(expand=True, fill="both")
         
         # Initialize Description tab
-        desc_app = DescriptionApp(description_tab)
-        desc_app.pack(expand=True, fill="both")
+        # desc_app = DescriptionApp(description_tab)
+        # desc_app.pack(expand=True, fill="both")
         
         # Initialize Licenses tab
-        license_app = LicensesApp(licenses_tab)
-        license_app.pack(expand=True, fill="both")
+        # license_app = LicensesApp(licenses_tab)
+        # license_app.pack(expand=True, fill="both")
 
         # Main processing: re-apply theme after tab contents are created.
         theme_manager.apply_color_theme_all_widgets()
