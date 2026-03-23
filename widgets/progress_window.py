@@ -8,6 +8,7 @@ import os
 
 from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from configurations import tool_settings
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
@@ -41,7 +42,7 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
 
         # Main processing: apply application icon to this Toplevel window.
         icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
-        runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+        runtime_ico_path = str(tool_settings.RUNTIME_ICON_ICO_PATH)
 
         ico_path = icon_multi_ico_path if os.path.exists(icon_multi_ico_path) else runtime_ico_path
         if os.path.exists(ico_path):

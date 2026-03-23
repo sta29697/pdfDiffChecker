@@ -1589,12 +1589,12 @@
             "ja": "比較画像の処理に失敗しました: {0}"
         },
         "M039": {
-            "en": "Changing language requires application restart.",
-            "ja": "言語設定変更にはアプリの再起動が必要になります。"
+            "en": "言語設定変更にはアプリの再起動が必要になります。",
+            "ja": "Changing language requires application restart."
         },
         "M040": {
-            "en": "Restart application to apply language changes.",
-            "ja": "設定変更を反映させるためにはアプリの再起動が必要です。"
+            "en": "設定変更を反映させるためにはアプリの再起動が必要です。",
+            "ja": "Restart application to apply language changes."
         },
         "M041": {
             "en": "Theme configuration not found for button: {0}",
@@ -2197,6 +2197,118 @@
         "U134": {
             "en": "Output DPI can be changed for all pages/frames.",
             "ja": "Output DPI は全ページ/全フレームに対して変更できます。"
+        },
+        "U135": {
+            "en": "Comment",
+            "ja": "コメント"
+        },
+        "U136": {
+            "en": "Color Processing:",
+            "ja": "色処理:"
+        },
+        "U137": {
+            "en": "Adjust thresholds before processing when needed. Individual adjustment is available, but using the same value reduces noise.",
+            "ja": "必要に応じて、処理前に閾値を調整してください。個別調整できますが、同じ数値の方がノイズが減ります。"
+        },
+        "U138": {
+            "en": "Color Shading",
+            "ja": "指定色濃淡"
+        },
+        "U139": {
+            "en": "Binarization",
+            "ja": "二色化"
+        },
+        "U140": {
+            "en": "Show Base File",
+            "ja": "ベースファイル表示"
+        },
+        "U141": {
+            "en": "Show Comparison File",
+            "ja": "比較ファイル表示"
+        },
+        "U142": {
+            "en": "Thresholds:",
+            "ja": "閾値"
+        },
+        "U143": {
+            "en": "Base:",
+            "ja": "元:"
+        },
+        "U144": {
+            "en": "/ Comparison:",
+            "ja": "／ 比較:"
+        },
+        "U145": {
+            "en": "Execute",
+            "ja": "実行"
+        },
+        "U146": {
+            "en": "Apply the threshold changes to the lower preview.",
+            "ja": "閾値変更結果を下の表示へ反映します。"
+        },
+        "U147": {
+            "en": "Apply the selected DPI to the preview so you can inspect image granularity.",
+            "ja": "選択中のDPIをプレビューに反映させ、画像粒度確認ができます。"
+        },
+        "U148": {
+            "en": "Detected",
+            "ja": "読取値"
+        },
+        "U149": {
+            "en": "Show Reference Grid",
+            "ja": "基準罫線を表示"
+        },
+        "U150": {
+            "en": "Shortcut Guide: Ctrl+? / Ctrl+/\nCanvas guide: Mouse wheel = zoom, drag = pan. To affect only the displayed canvas image, use these operations while holding Ctrl+Shift.",
+            "ja": "ショートカットガイド：Ctrl＋？／Ctrl＋/\nCanvasガイド：マウスホイールで拡大・縮小、ドラッグで移動できます。表示画面のみに反映する場合は、Ctrl＋Shiftを押しながら操作してください。"
+        },
+        "U151": {
+            "en": "Custom Rotation Guide",
+            "ja": "カスタム回転ガイド"
+        },
+        "U152": {
+            "en": "Set the rotation center with Ctrl+Click. Keep holding Ctrl, release the mouse button, and then drag to rotate.",
+            "ja": "Ctrl＋クリックで回転の中心を決めて、Ctrlボタンは押したまま、クリックを解除してドラッグすると回転します。"
+        },
+        "U153": {
+            "en": "Lower Preview",
+            "ja": "下のプレビュー"
+        },
+        "U154": {
+            "en": "Base PDF",
+            "ja": "元PDF"
+        },
+        "U155": {
+            "en": "Comparison PDF",
+            "ja": "比較PDF"
+        },
+        "U156": {
+            "en": "Output Folder",
+            "ja": "出力フォルダ"
+        },
+        "U157": {
+            "en": "Page",
+            "ja": "ページ"
+        },
+        "U158": {
+            "en": "Transform",
+            "ja": "変形"
+        },
+        "U159": {
+            "en": "Status",
+            "ja": "状態"
+        },
+        "U160": {
+            "en": "Comparison",
+            "ja": "比較"
+        },
+        "U161": {
+            "en": "Rotation",
+            "ja": "回転"
+        },
+        "U162": {
+            "en": "Scale",
+            "ja": "拡大率"
         }
     }
 }

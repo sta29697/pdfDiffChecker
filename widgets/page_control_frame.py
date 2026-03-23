@@ -7,10 +7,11 @@ from typing import Dict, Any, Callable, List, Optional, Tuple, cast
 
 from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
 from controllers.color_theme_manager import ColorThemeManager
-from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker, resolve_disabled_visual_colors
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_tab_widgets import BaseTabWidgets as btw
+from widgets.base_button import BaseButton
 from widgets.base_label_class import BaseLabelClass
 from widgets.base_page_change_button import BasePageChangeButton
 from widgets.insert_blank_page_button import InsertBlankPageButton
@@ -49,7 +50,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         on_delete_page: Optional[Callable[[], None]] = None,
         on_export: Optional[Callable[[], None]] = None,
         on_page_entry: Optional[Callable[[tk.Event], None]] = None,
-        on_transform_value_change: Optional[Callable[[float, float, float, float], None]] = None,
+        on_transform_value_change: Optional[Callable[[float, float, float, float, set[str]], None]] = None,
+        initial_batch_edit_checked: bool = True,
+        on_batch_edit_toggle: Optional[Callable[[bool], None]] = None,
     ) -> None:
         """
         Initialize the page control frame.
@@ -69,12 +72,15 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_delete_page: Callback for delete page button
             on_export: Callback for export button
             on_page_entry: Callback for page number entry
+            initial_batch_edit_checked: Initial checkbox state for batch edit.
+            on_batch_edit_toggle: Callback when the batch edit checkbox changes.
         """
         try:
             super().__init__(parent)
             self.__parent: tk.Frame = parent
             self.__color_key: str = color_key
             self.__page_amount_limit: int = page_amount_limit
+            self.__on_batch_edit_toggle = on_batch_edit_toggle
         except Exception as e:
             # Failed to initialize PageControlFrame: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
@@ -127,7 +133,14 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.__base_bg: str = self.__theme_dict.get("base_bg_color", "#1d1d29")
 
         # Configure frame
-        self.configure(bg=self.__base_bg)
+        self.configure(
+            bg=self.__base_bg,
+            highlightthickness=1,
+            highlightbackground=self.__swfg,
+            highlightcolor=self.__swfg,
+            bd=0,
+            relief=tk.FLAT,
+        )
 
         # Page variables
         self.page_var = tk.IntVar(value=1)  # Current page (1-based)
@@ -135,6 +148,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
 
         # Main processing: keep desired edit button enabled state across theme updates.
         self.__edit_buttons_enabled: bool = True
+        self.__workspace_controls_enabled: bool = True
 
         # Page navigation buttons
         self.prev_page_btn = BasePageChangeButton(
@@ -202,7 +216,6 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.insert_blank_btn.grid(row=4, column=0, padx=5, pady=5, sticky="ew")
 
         # Delete current page button (M1-007)
-        from widgets.base_button import BaseButton
         self.delete_page_btn = BaseButton(
             fr=self,
             color_key="delete_page_button",
@@ -212,20 +225,20 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.delete_page_btn.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
 
         # Export button
-        self.export_btn: tk.Button = tk.Button(
-            self,
+        self.export_btn = BaseButton(
+            fr=self,
+            color_key="pdf_save_button",
             text=message_manager.get_ui_message("U037"), # Save
-            font=btw.base_font,
-            bg=self.__bg,
-            fg=self.__fg,
-            activeforeground=self.__acfg,
-            activebackground=self.__acbg,
             command=on_export if on_export else lambda: None,
+            font=btw.base_font,
+            relief=tk.RAISED,
+            bd=2,
+            highlightthickness=1,
         )
         self.export_btn.grid(row=6, column=0, padx=5, pady=5, sticky="ew")
 
         # --- Batch edit checkbox (M1-010) ---
-        self.batch_edit_var = tk.BooleanVar(value=False)
+        self.batch_edit_var = tk.BooleanVar(value=bool(initial_batch_edit_checked))
         self.__batch_edit_cb = tk.Checkbutton(
             self,
             text=message_manager.get_ui_message("U070"),  # "Batch Edit" / "一括編集"
@@ -237,6 +250,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             activebackground=self.__base_bg,
             activeforeground=self.__swfg,
             anchor="center",
+            command=self._on_batch_edit_changed,
         )
         self.__batch_edit_cb.grid(row=7, column=0, padx=5, pady=(5, 0), sticky="ew")
 
@@ -317,6 +331,13 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             ent.bind("<Return>", self._on_transform_entry_submit)
             ent.bind("<KP_Enter>", self._on_transform_entry_submit)
 
+        self.__last_transform_values: Dict[str, float] = {
+            "tx": 0.0,
+            "ty": 0.0,
+            "rotation": 0.0,
+            "scale": 1.0,
+        }
+
         # Initialize entries with default values
         self._set_transform_entries(0.0, 0.0, 0.0, 1.0)
 
@@ -355,6 +376,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
 
         This method controls the availability of:
         - Insert Blank Page
+        - Delete Page
         - Finish (export)
 
         When disabled, buttons are visually grayed out so they are clearly
@@ -364,55 +386,140 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             enabled: True to enable, False to disable.
         """
         self.__edit_buttons_enabled = bool(enabled)
-        # Main processing: disable edit operations for copy-protected PDFs.
         state = tk.NORMAL if enabled else tk.DISABLED
-        # Disabled appearance: uniform gray to make inactivity obvious
-        disabled_bg = "#b0b0b0"
-        disabled_fg = "#808080"
+        for widget in (
+            getattr(self, "insert_blank_btn", None),
+            getattr(self, "delete_page_btn", None),
+            getattr(self, "export_btn", None),
+        ):
+            if widget is None:
+                continue
+            self._apply_edit_button_visual_state(widget, state)
+
+    def set_workspace_controls_enabled(self, enabled: bool) -> None:
+        """Enable or disable page-navigation and transform-entry controls.
+
+        Args:
+            enabled: True to enable interactive workspace controls, False to disable them.
+        """
+        self.__workspace_controls_enabled = bool(enabled)
+        state = tk.NORMAL if enabled else tk.DISABLED
+
+        for widget in (
+            getattr(self, "prev_page_btn", None),
+            getattr(self, "next_page_btn", None),
+        ):
+            if widget is None:
+                continue
+            self._apply_edit_button_visual_state(widget, state)
+
+        entry_theme = self.__entry_theme_dict if isinstance(self.__entry_theme_dict, dict) else {}
+        disabled_visuals = resolve_disabled_visual_colors(
+            str(entry_theme.get("bg", self.__acbg)),
+            str(ColorThemeManager().get_current_theme().get("LabelDisabled", {}).get("fg", self.__fg)),
+            fallback_bg=self.__base_bg,
+            use_emphasis_surface=True,
+        )
+        disabled_bg = str(disabled_visuals.get("disabled_bg", self.__base_bg))
+        disabled_fg = str(disabled_visuals.get("disabled_fg", self.__fg))
+
         try:
-            if hasattr(self, "insert_blank_btn"):
-                if enabled:
-                    self.insert_blank_btn.configure(
-                        state=state, bg=self.__bg, fg=self.__fg,
-                        disabledforeground=disabled_fg,
-                    )
-                else:
-                    self.insert_blank_btn.configure(
-                        state=state, bg=disabled_bg,
-                        disabledforeground=disabled_fg,
-                    )
+            self.current_page_label.configure(
+                state=state,
+                disabledbackground=disabled_bg,
+                disabledforeground=disabled_fg,
+                readonlybackground=disabled_bg,
+                bg=entry_theme.get("bg", self.__acbg) if enabled else disabled_bg,
+                fg=entry_theme.get("fg", self.__acfg) if enabled else disabled_fg,
+                insertbackground=entry_theme.get("insertbackground", self.__acfg) if enabled else disabled_fg,
+            )
         except Exception:
             pass
 
-        try:
-            if hasattr(self, "delete_page_btn"):
-                if enabled:
-                    self.delete_page_btn.configure(
-                        state=state, bg=self.__bg, fg=self.__fg,
-                        disabledforeground=disabled_fg,
-                    )
-                else:
-                    self.delete_page_btn.configure(
-                        state=state, bg=disabled_bg,
-                        disabledforeground=disabled_fg,
-                    )
-        except Exception:
-            pass
+        for ent in (
+            getattr(self, "_PageControlFrame__transform_x_entry", None),
+            getattr(self, "_PageControlFrame__transform_y_entry", None),
+            getattr(self, "_PageControlFrame__transform_angle_entry", None),
+            getattr(self, "_PageControlFrame__transform_scale_entry", None),
+        ):
+            if ent is None:
+                continue
+            try:
+                ent.configure(
+                    state=state,
+                    disabledbackground=disabled_bg,
+                    disabledforeground=disabled_fg,
+                    readonlybackground=disabled_bg,
+                    bg=entry_theme.get("bg", self.__acbg) if enabled else disabled_bg,
+                    fg=entry_theme.get("fg", self.__acfg) if enabled else disabled_fg,
+                    insertbackground=entry_theme.get("insertbackground", self.__acfg) if enabled else disabled_fg,
+                )
+            except Exception:
+                continue
+
+    def _apply_edit_button_visual_state(self, widget: tk.Button, state: str) -> None:
+        """Apply the page edit button visual state using the resize-tab disabled pattern.
+
+        Args:
+            widget: Target button widget.
+            state: Target Tk state string.
+        """
+        theme_snapshot = ColorThemeManager().get_current_theme()
+        label_disabled_theme = dict(theme_snapshot.get("LabelDisabled", {}))
+        button_theme = dict(
+            theme_snapshot.get(
+                getattr(widget, "_BaseButton__color_key", "Button"),
+                theme_snapshot.get("Button", {}),
+            )
+        )
+        button_bg = str(button_theme.get("bg", self.__bg))
+        button_fg = str(button_theme.get("fg", self.__fg))
+        active_bg = str(button_theme.get("activebackground", self.__acbg))
+        active_fg = str(button_theme.get("activeforeground", self.__acfg))
+        disabled_visuals = resolve_disabled_visual_colors(
+            button_bg,
+            str(label_disabled_theme.get("fg", "#808080")),
+            fallback_bg=self.__base_bg,
+            use_emphasis_surface=True,
+        )
+        disabled_bg = disabled_visuals.get("disabled_bg", button_bg)
+        disabled_fg = disabled_visuals.get("disabled_fg", button_fg)
 
         try:
-            if hasattr(self, "export_btn"):
-                if enabled:
-                    self.export_btn.configure(
-                        state=state, bg=self.__bg, fg=self.__fg,
-                        disabledforeground=disabled_fg,
-                    )
-                else:
-                    self.export_btn.configure(
-                        state=state, bg=disabled_bg,
-                        disabledforeground=disabled_fg,
-                    )
+            if state == tk.DISABLED:
+                if hasattr(widget, "_disabled_visual_bg"):
+                    setattr(widget, "_disabled_visual_bg", str(disabled_bg))
+                if hasattr(widget, "_disabled_visual_fg"):
+                    setattr(widget, "_disabled_visual_fg", str(disabled_fg))
+                widget.configure(
+                    state=state,
+                    bg=disabled_bg,
+                    fg=disabled_fg,
+                    disabledforeground=disabled_fg,
+                    activebackground=disabled_bg,
+                    activeforeground=disabled_fg,
+                    highlightbackground=self.__base_bg,
+                )
+                return
+
+            if hasattr(widget, "_disabled_visual_bg"):
+                setattr(widget, "_disabled_visual_bg", str(disabled_bg))
+            if hasattr(widget, "_disabled_visual_fg"):
+                setattr(widget, "_disabled_visual_fg", str(disabled_fg))
+            widget.configure(
+                state=state,
+                bg=button_bg,
+                fg=button_fg,
+                disabledforeground=disabled_fg,
+                activebackground=active_bg,
+                activeforeground=active_fg,
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
+                highlightbackground=active_bg,
+            )
         except Exception:
-            pass
+            return
 
     def set_batch_edit_enabled(self, enabled: bool) -> None:
         """Enable or disable the batch edit checkbox (M1-010).
@@ -428,6 +535,40 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 self.__batch_edit_cb.configure(state=state)
                 if not enabled:
                     self.batch_edit_var.set(False)
+                    self._on_batch_edit_changed()
+        except Exception:
+            pass
+
+    def set_batch_edit_checked(self, checked: bool) -> None:
+        """Set the batch edit checkbox value.
+
+        Args:
+            checked: Checkbox state to apply.
+        """
+        try:
+            self.batch_edit_var.set(bool(checked))
+            self._on_batch_edit_changed()
+        except Exception:
+            pass
+
+    def is_batch_edit_checked(self) -> bool:
+        """Return whether batch edit is currently checked.
+
+        Returns:
+            ``True`` when the checkbox is checked.
+        """
+        try:
+            return bool(self.batch_edit_var.get())
+        except Exception:
+            return False
+
+    def _on_batch_edit_changed(self) -> None:
+        """Notify listeners when the batch edit checkbox state changes."""
+        if self.__on_batch_edit_toggle is None:
+            return
+
+        try:
+            self.__on_batch_edit_toggle(bool(self.batch_edit_var.get()))
         except Exception:
             pass
 
@@ -509,7 +650,14 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 "base_bg_color", frame_theme.get("bg", self.__swbg))
 
             # Apply to frame
-            self.configure(bg=self.__base_bg)
+            self.configure(
+                bg=self.__base_bg,
+                highlightthickness=1,
+                highlightbackground=self.__swfg,
+                highlightcolor=self.__swfg,
+                bd=0,
+                relief=tk.FLAT,
+            )
 
             # Update Entry widget colors (use the same style as other input entries)
             entry_theme = theme_data.get(
@@ -536,14 +684,6 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             # Note: total_pages_label, prev/next_page_btn, insert_blank_btn
             # are self-registered with WidgetsTracker and receive
             # apply_theme_color calls automatically. No explicit loop needed.
-
-            # Apply theme to export button (plain tk.Button, not self-registered)
-            self.export_btn.configure(
-                bg=self.__bg,
-                fg=self.__fg,
-                activeforeground=self.__acfg,
-                activebackground=self.__acbg,
-            )
 
             # Apply theme to batch edit checkbox (M1-010)
             if hasattr(self, '_PageControlFrame__batch_edit_cb'):
@@ -572,7 +712,10 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                     )
 
             # Main processing: re-apply edit buttons state (e.g. copy-protected mode).
+            self.__entry_theme_dict = cast(Dict[str, Any], entry_theme)
+            self.set_workspace_controls_enabled(self.__workspace_controls_enabled)
             self.set_edit_buttons_enabled(self.__edit_buttons_enabled)
+            self.set_batch_edit_checked(self.is_batch_edit_checked())
 
             logger.debug(message_manager.get_log_message("L173"))
         except Exception as e:
@@ -636,6 +779,12 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         ):
             ent.delete(0, tk.END)
             ent.insert(0, fmt.format(val))
+        self.__last_transform_values = {
+            "tx": float(tx),
+            "ty": float(ty),
+            "rotation": float(angle),
+            "scale": float(scale),
+        }
 
     def update_transform_info(self, rotation: float, tx: float,
                               ty: float, scale: float) -> None:
@@ -707,12 +856,29 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         elif scale > 10.0:
             scale = 10.0
 
+        previous_values = dict(self.__last_transform_values)
+
         # Update display with validated values
         self._set_transform_entries(tx, ty, angle, scale)
 
         # Invoke callback to apply the new transform
         if self.__on_transform_value_change is not None:
-            self.__on_transform_value_change(angle, tx, ty, scale)
+            changed_fields: set[str] = set()
+            if abs(tx - float(previous_values.get("tx", 0.0))) > 1e-6:
+                changed_fields.add("tx")
+            if abs(ty - float(previous_values.get("ty", 0.0))) > 1e-6:
+                changed_fields.add("ty")
+            if abs(angle - float(previous_values.get("rotation", 0.0))) > 1e-6:
+                changed_fields.add("rotation")
+            if abs(scale - float(previous_values.get("scale", 1.0))) > 1e-6:
+                changed_fields.add("scale")
+            self.__on_transform_value_change(angle, tx, ty, scale, changed_fields)
+            self.__last_transform_values = {
+                "tx": float(tx),
+                "ty": float(ty),
+                "rotation": float(angle),
+                "scale": float(scale),
+            }
 
         # Move focus away from entry so subsequent updates are not blocked
         self.focus_set()

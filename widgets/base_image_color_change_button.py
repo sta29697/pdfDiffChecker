@@ -3,7 +3,6 @@ import tkinter as tk
 from typing import Dict, Any, Callable, Optional, cast
 from logging import getLogger
 from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
-from configurations.user_setting_manager import UserSettingManager
 from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
 from themes.coloring_theme_interface import ColoringThemeIF
@@ -39,9 +38,9 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
             color_key (str): Color key.
             command (Optional[Callable[..., Any]], optional): Command to execute. Defaults to None.
         """
+        self.__command = command
         self.__fr: tk.Frame = fr
         self.__color_key: str = color_key
-        self.__settings: UserSettingManager = UserSettingManager()
         self.__selected_color: Optional[tuple] = None
         self.__new_selected_color: Optional[str] = None
         self.__theme_dict: Dict[str, str] = {}
@@ -49,14 +48,17 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
         # Acquire theme color from ColorThemeManager
         try:
             current_theme = ctm.get_current_theme()
-            self.__theme_dict = cast(Dict[str, str], current_theme.get("Button", {}))
+            self.__theme_dict = cast(
+                Dict[str, str],
+                current_theme.get(self.__color_key, current_theme.get("Button", {})),
+            )
         except Exception as e:
             # Failed to get theme for image color change button
             logger.error(message_manager.get_log_message("L067", str(e)))
             self.__theme_dict = cast(Dict[str, str], DEFAULT_COLOR_THEME_SET.get(self.__color_key, {}))
 
-        self.__fg: str = self.__theme_dict.get("button_inactive_font_color", "#0000FF")
-        self.__bg: str = self.__theme_dict.get("button_inactive_bg_color", "#0000FF")
+        self.__fg: str = self.__theme_dict.get("fg", self.__theme_dict.get("button_inactive_font_color", "#0000FF"))
+        self.__bg: str = self.__theme_dict.get("bg", self.__theme_dict.get("button_inactive_bg_color", "#0000FF"))
         self.__acfg: str = self.__theme_dict.get("button_active_font_color", "#574ed6")
         self.__acbg: str = self.__theme_dict.get("button_active_bg_color", "#0fd2d6")
 
@@ -78,15 +80,21 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
     def __color_select_btn_clicked(self) -> None:
         """Handle color selection button click."""
         import tkinter.colorchooser as colorchooser
+
         self.__selected_color = colorchooser.askcolor()
         if self.__selected_color and self.__selected_color[1]:
             self.__new_selected_color = str(self.__selected_color[1])
+            # Main processing: keep the button swatch and theme cache aligned with the selected color.
+            updated_theme_dict = dict(ctm.get_current_theme().get(self.__color_key, DEFAULT_COLOR_THEME_SET.get(self.__color_key, {})))
+            updated_theme_dict["bg"] = self.__new_selected_color
+            updated_theme_dict["fg"] = self.__new_selected_color
+            self._config_widget(updated_theme_dict)
             ctm.update_theme_color(
                 self.__color_key,
-                {
-                    "button_inactive_font_color": self.__new_selected_color,
-                },
+                updated_theme_dict,
             )
+            if self.__command is not None:
+                self.__command()
 
     def grid(self, **kwargs: Any) -> None:
         """Grid the image color select button widget.
@@ -110,7 +118,10 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
                 key = "comparison_image_color_change_button"
             else:
                 key = self.__color_key
-            theme_dict = theme_colors.get(key, DEFAULT_COLOR_THEME_SET.get(key, {}))
+            theme_dict = dict(theme_colors.get(key, DEFAULT_COLOR_THEME_SET.get(key, {})))
+            if self.__new_selected_color:
+                theme_dict["bg"] = self.__new_selected_color
+                theme_dict["fg"] = self.__new_selected_color
             self._config_widget(theme_dict)
         except Exception as e:
             # Failed to apply theme color to image color change button
@@ -140,5 +151,21 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
             key = "comparison_image_color_change_button"
         else:
             key = self.__color_key
-        theme = DEFAULT_COLOR_THEME_SET.get(key, {})
-        return theme.get("bg")
+        if self.__new_selected_color:
+            return self.__new_selected_color
+        try:
+            current_bg = str(self.image_color_select_btn.cget("bg"))
+            if current_bg:
+                return current_bg
+        except Exception:
+            pass
+        theme = ctm.get_current_theme().get(key, DEFAULT_COLOR_THEME_SET.get(key, {}))
+        return cast(Optional[str], theme.get("bg"))
+
+    def get_selected_color_hex(self) -> Optional[str]:
+        """Return the currently selected color as a hex string.
+
+        Returns:
+            Optional[str]: Selected color such as ``"#3366ff"``.
+        """
+        return self.get_base_color()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, Any
 
@@ -14,9 +15,40 @@ THEME_COLOR_FILE: Path = BASE_DIR / "themes" / "dark.json"
 
 # Program mode
 # Switch between development and production (Nuitka) modes
-PRODUCTION_MODE: bool = True
-DEVELOP_MODE: bool = False
-program_mode: bool = PRODUCTION_MODE if getattr(sys, "frozen", False) else DEVELOP_MODE
+PRODUCTION_MODE: bool = bool(getattr(sys, "frozen", False))
+DEVELOP_MODE: bool = not PRODUCTION_MODE
+program_mode: bool = PRODUCTION_MODE
+is_production_mode: bool = PRODUCTION_MODE
+is_development_mode: bool = DEVELOP_MODE
+
+
+def _resolve_runtime_storage_root() -> Path:
+    """Resolve the storage root for runtime-generated files.
+
+    Returns:
+        Path: Root directory for temporary and log files.
+    """
+    if is_production_mode:
+        return Path(tempfile.gettempdir()) / "pdfDiffChecker"
+    return BASE_DIR
+
+
+RUNTIME_STORAGE_ROOT: Path = _resolve_runtime_storage_root()
+TEMP_DIR: Path = RUNTIME_STORAGE_ROOT / "temp"
+LOG_DIR: Path = (RUNTIME_STORAGE_ROOT if is_production_mode else BASE_DIR / "logs")
+LOG_FILE_PATH: Path = (
+    LOG_DIR / "pdfDiffChecker.log"
+    if is_production_mode
+    else LOG_DIR / "debug.log"
+)
+RUNTIME_ICON_ICO_PATH: Path = TEMP_DIR / "LOGOm.ico"
+
+
+def ensure_runtime_directories() -> None:
+    """Create the runtime temp and log directories when they are missing."""
+    # Main processing: centralize runtime-generated file locations for both modes.
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Application title - Using message code instead of hardcoded string
 APP_TITLE_CODE: str = "U009"  # "PDF Difference Checker"
@@ -40,10 +72,10 @@ LANGUAGE_CODES: Dict[str, str] = {
 DEFAULT_LANGUAGE: str = "ja"
 
 # Logging information
-LOG_FILE: str = r".\logs\debug.log"
+LOG_FILE: str = str(LOG_FILE_PATH)
 LOG_LEVEL = (
     logging.DEBUG
-    if program_mode else logging.INFO
+    if is_development_mode else logging.INFO
 )
 
 # Font settings
@@ -51,7 +83,7 @@ font_family: str = "BIZ UDゴシック"
 font_size: int = 12
 
 # Operation setting flags
-window_set: bool = False
+window_set: bool = True
 is_base_path_set: bool = False
 is_compare_path_set: bool = False
 is_output_path_set: bool = False
@@ -62,6 +94,7 @@ DEFAULT_USER_SET: Dict[str, Dict[str, Any]] = {
     "default": {
         "theme_color": "dark",
         "language": "ja",
+        "window_set": True,
         "input_file_path": "直接入力、参照選択",
         "comparison_file_path": "直接入力、参照選択",
         "output_folder_path": "直接入力、参照選択",
@@ -70,8 +103,16 @@ DEFAULT_USER_SET: Dict[str, Dict[str, Any]] = {
         "window_width": 800,
         "window_height": 600,
         "window_geometry": "800x600+500+10",
+        "window_state": "normal",
+        "window_display_width": 0,
+        "window_display_height": 0,
         "separat_color_threshold": 700,
-        "setted_dpi": 96,
+        "base_separat_color_threshold": 700,
+        "comparison_separat_color_threshold": 700,
+        "color_processing_mode": "指定色濃淡",
+        "setted_dpi": 300,
+        "setted_dpi_mode": "detected",
+        "preview_scale": 1.0,
         "setted_alpha": 127,
         "dpi_list": [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000],
         "base_file_graph_subwindow_pos_x": 300,

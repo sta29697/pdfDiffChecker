@@ -36,43 +36,127 @@ from views.licenses import LicensesApp
 # Initialize singleton message manager at module level
 message_manager = get_message_manager()
 logger: Final = getLogger(__name__)
-_FOCUSED_TRACE_TAGS: Final[tuple[str, ...]] = (
-    "[RESIZE_THEME]",
-    "[THEME_TRACE]",
-)
-_INACTIVE_TRACE_STATES: Final[tuple[str, ...]] = (
-    "state=disabled",
-    "state=readonly",
-    "state='disabled'",
-    "state='readonly'",
-    "state=missing",
-)
+main_window: Optional[tk.Tk] = None
 
 
-class FocusedDevelopmentLogFilter(logging.Filter):
-    """Allow only focused development traces while keeping warnings and errors.
+def _save_main_window_geometry(root: tk.Tk) -> None:
+    """Persist the current main window geometry and display information.
 
-    This filter is used only during development mode log investigation so that
-    broad debug/info noise does not bury the yellow-green resize block traces.
+    Args:
+        root: Main Tk window.
+    """
+    settings = usm()
+    try:
+        # Main processing: capture the normal geometry even when the window is maximized.
+        root.update_idletasks()
+        current_state = str(root.state())
+        width = int(root.winfo_width())
+        height = int(root.winfo_height())
+        pos_x = int(root.winfo_x())
+        pos_y = int(root.winfo_y())
+        if current_state == "zoomed":
+            try:
+                root.state("normal")
+                root.update_idletasks()
+                width = int(root.winfo_width())
+                height = int(root.winfo_height())
+                pos_x = int(root.winfo_x())
+                pos_y = int(root.winfo_y())
+            finally:
+                root.state("zoomed")
+                root.update_idletasks()
+
+        geometry = f"{width}x{height}{pos_x:+d}{pos_y:+d}"
+        settings.update_setting("window_width", width)
+        settings.update_setting("window_height", height)
+        settings.update_setting("window_position_x", pos_x)
+        settings.update_setting("window_position_y", pos_y)
+        settings.update_setting("window_geometry", geometry)
+        settings.update_setting("window_state", current_state)
+        settings.update_setting("window_display_width", int(root.winfo_screenwidth()))
+        settings.update_setting("window_display_height", int(root.winfo_screenheight()))
+    except Exception as exc:
+        logger.warning(
+            message_manager.get_log_message(
+                "L227", f"Failed to save main window geometry: {str(exc)}"
+            )
+        )
+
+
+def _restore_main_window_geometry(root: tk.Tk) -> None:
+    """Restore the main window geometry when the saved display still matches.
+
+    Args:
+        root: Main Tk window.
+    """
+    settings = usm()
+    try:
+        saved_display_width = int(settings.get_setting("window_display_width", 0) or 0)
+        saved_display_height = int(settings.get_setting("window_display_height", 0) or 0)
+        current_display_width = int(root.winfo_screenwidth())
+        current_display_height = int(root.winfo_screenheight())
+        saved_geometry = str(settings.get_setting("window_geometry", "800x600+500+10") or "800x600+500+10")
+        saved_state = str(settings.get_setting("window_state", "normal") or "normal")
+
+        same_display = (
+            saved_display_width == current_display_width
+            and saved_display_height == current_display_height
+            and saved_display_width > 0
+            and saved_display_height > 0
+        )
+
+        geometry_to_apply = saved_geometry if same_display else "800x600"
+        root.geometry(geometry_to_apply)
+        root.update_idletasks()
+        if same_display and saved_state == "zoomed":
+            root.state("zoomed")
+    except Exception as exc:
+        logger.warning(
+            message_manager.get_log_message(
+                "L227", f"Failed to restore main window geometry: {str(exc)}"
+            )
+        )
+
+
+def _apply_main_window_minimum_size(root: tk.Tk) -> None:
+    """Apply the persisted user window size as the main-window minimum size.
+
+    Args:
+        root: Main Tk window.
+    """
+    settings = usm()
+    try:
+        min_width = int(settings.get_setting("window_width", 800) or 800)
+        min_height = int(settings.get_setting("window_height", 600) or 600)
+        root.minsize(max(1, min_width), max(1, min_height))
+    except Exception as exc:
+        logger.warning(
+            message_manager.get_log_message(
+                "L227", f"Failed to apply main window minimum size: {str(exc)}"
+            )
+        )
+
+
+class ProductionLogFilter(logging.Filter):
+    """Allow only production-critical logs and app lifecycle messages.
+
+    Production logging should remain lightweight so end users only keep error
+    reports plus startup, shutdown, and save traces.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Return True when the record should be kept in the development log.
+        """Return True when the record should be written in production mode.
 
         Args:
             record: The logging record being evaluated.
 
         Returns:
-            bool: True when the record should be written.
+            bool: True when the record should be preserved.
         """
-        if record.levelno >= logging.WARNING:
+        if record.levelno >= logging.ERROR:
             return True
-
         message = record.getMessage()
-        if "[ENTRY_THEME]" in message or "[COMBO_THEME]" in message:
-            return any(token in message for token in _INACTIVE_TRACE_STATES)
-
-        return any(tag in message for tag in _FOCUSED_TRACE_TAGS)
+        return "[APP_LIFECYCLE]" in message or "[APP_SAVE]" in message
 
 def setup_logging() -> None:
     """Set up logging configuration for the application.
@@ -82,14 +166,15 @@ def setup_logging() -> None:
     2. Console output for debugging
     3. File handler for persistent logging
 
-    The log file is stored in the 'logs' directory with the name 'debug.log'.
+    The log file is stored as ``./logs/debug.log`` in development mode and as
+    ``pdfDiffChecker.log`` under the Windows temp app folder in production mode.
     """
     try:
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
-        log_file = log_dir / "debug.log"
+        tool_settings.ensure_runtime_directories()
+        log_dir = tool_settings.LOG_DIR
+        log_file = tool_settings.LOG_FILE_PATH
 
-        if not tool_settings.program_mode:
+        if tool_settings.is_development_mode:
             try:
                 # Main processing: clear the development log before recording a new startup trace.
                 log_file.write_text("", encoding="utf-8")
@@ -98,7 +183,7 @@ def setup_logging() -> None:
 
         # Configure root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG)
+        root_logger.setLevel(logging.DEBUG if tool_settings.is_development_mode else logging.INFO)
         
         # Create formatter
         formatter = logging.Formatter(
@@ -108,11 +193,11 @@ def setup_logging() -> None:
         
         # File handler for logging to file
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.DEBUG if tool_settings.is_development_mode else logging.INFO)
         file_handler.setFormatter(formatter)
-        if not tool_settings.program_mode:
-            # Main processing: keep only focused investigation traces in development logs.
-            file_handler.addFilter(FocusedDevelopmentLogFilter())
+        if tool_settings.is_production_mode:
+            # Main processing: keep production logs limited to errors and lifecycle events.
+            file_handler.addFilter(ProductionLogFilter())
         
         # Main processing: clear existing handlers first to avoid duplicate outputs.
         for handler in list(root_logger.handlers):
@@ -124,15 +209,14 @@ def setup_logging() -> None:
         # Set PIL logger level to WARNING to suppress verbose PNG file loading logs
         pil_logger = logging.getLogger('PIL')
         pil_logger.setLevel(logging.WARNING)
-        if not tool_settings.program_mode:
+        if tool_settings.is_development_mode:
             # Main processing: enable theme tracing only in development mode.
             AppState.enable_theme_application_logs()
-        # Direct log message specification before message manager initialization
-        logger.info("[SYS] Logging system initialized")
+        logger.info("[APP_LIFECYCLE] Logging system initialized")
         # This log will be multilingualized later through message_manager
     except Exception as e:
         error_msg = str(e)
-        # Direct log message specification before message manager initialization
+        # Direct log message specification before message_manager initialization
         logger.error(f"[SYS] Failed to initialize logging: {error_msg}")
         # Only English messages are used in the initialization phase
         # Use English for errors during initialization phase
@@ -160,12 +244,13 @@ def initialize_application() -> str:
         logger.debug(message_manager.get_log_message("L178"))
         # Setup logging
         setup_logging()
+        logger.info("[APP_LIFECYCLE] Application startup")
         logger.debug(message_manager.get_log_message("L179"))
 
         # Create necessary directories
         logger.debug(message_manager.get_log_message("L180"))
-        temp_dir = Path(tool_settings.BASE_DIR) / "temp"
-        temp_dir.mkdir(exist_ok=True)
+        tool_settings.ensure_runtime_directories()
+        temp_dir = tool_settings.TEMP_DIR
         logger.debug(message_manager.get_log_message("L181", temp_dir, os.path.exists(temp_dir)))
         logger.info(message_manager.get_log_message("L182", temp_dir))
 
@@ -442,7 +527,7 @@ def change_logo_icon() -> str:
     """Get path to the application logo icon using resource resolver."""
     # Resolve icon path from project resources
     # Main processing: prefer the runtime-generated transparent ICO.
-    return get_resource_path("temp/LOGOm.ico")
+    return str(tool_settings.RUNTIME_ICON_ICO_PATH)
 
 
 def cleanup() -> None:
@@ -461,8 +546,8 @@ def cleanup() -> None:
     
     try:
         # Remove temporary files
-        # Use project-local temp directory for cleanup
-        temp_dir = Path(tool_settings.BASE_DIR) / "temp"
+        # Main processing: clean the active runtime temp directory.
+        temp_dir = tool_settings.TEMP_DIR
         if temp_dir.exists():
             try:
                 for entry in temp_dir.iterdir():
@@ -484,10 +569,13 @@ def cleanup() -> None:
 
         # Save user settings
         try:
+            if 'main_window' in globals() and main_window is not None:
+                _save_main_window_geometry(main_window)
             settings = usm()
             settings.save_settings()
             # Use the global message_manager
             logger.info(message_manager.get_log_message("L226", ""))
+            logger.info("[APP_LIFECYCLE] Application shutdown")
         except Exception as e:
             # Log but continue if settings can't be saved
             logger.error(message_manager.get_log_message("L229", str(e)))
@@ -558,7 +646,7 @@ def main() -> None:
         None
     """
     # Explicitly declare message_manager as a global variable
-    global message_manager
+    global message_manager, main_window
     
     try:
         print("Starting application...")
@@ -572,7 +660,7 @@ def main() -> None:
             message_manager = get_message_manager()
             
         # Directory creation log with directory path
-        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        temp_dir = str(tool_settings.TEMP_DIR)
         exists_temp_dir = os.path.exists(temp_dir)
         if exists_temp_dir:
             logger.info(message_manager.get_log_message("L192", temp_dir))
@@ -589,7 +677,7 @@ def main() -> None:
         # Set window icon
         icon_png_path = get_resource_path("images/LOGOm.png")
         icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
-        runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+        runtime_ico_path = str(tool_settings.RUNTIME_ICON_ICO_PATH)
         icon_path = ""
         base_img: Optional[Image.Image] = None
 
@@ -693,7 +781,8 @@ def main() -> None:
             )
         
         # Set window geometry
-        main_window.geometry("800x600")
+        _apply_main_window_minimum_size(main_window)
+        _restore_main_window_geometry(main_window)
         try:
             main_window.update_idletasks()
             main_window.deiconify()
@@ -771,10 +860,12 @@ def main() -> None:
                 unselected_tab_bg = notebook_bg
 
                 if theme_key == "dark":
-                    selected_tab_bg = window_bg
+                    selected_tab_bg = frame_bg
                     unselected_tab_bg = adjust_hex_color(str(tab_bg), 0.06)
                     active_tab_bg = adjust_hex_color(str(tab_bg), 0.10)
                 elif theme_key in ("light", "pastel"):
+                    selected_tab_bg = frame_bg
+                    active_tab_bg = frame_bg
                     unselected_tab_bg = adjust_hex_color(str(notebook_bg), -0.05)
 
                 # Main processing: unify tab edge rendering to avoid thin/bright borders.
@@ -788,6 +879,7 @@ def main() -> None:
                 try:
                     self._style.configure(
                         "TNotebook",
+                        borderwidth=1,
                         bordercolor=border_color,
                         lightcolor=border_color,
                         darkcolor=border_color,
@@ -1010,8 +1102,8 @@ def main() -> None:
         # Create frames for each tab
         main_tab = tk.Frame(notebook)
         # pdf_ope_tab = tk.Frame(notebook)  # PDF Operation tab
-        # image_ope_tab = tk.Frame(notebook)  # Image Operation tab (U006)
-        # description_tab = tk.Frame(notebook)  # Description tab
+        image_ope_tab = tk.Frame(notebook)  # Image Operation tab (U006)
+        description_tab = tk.Frame(notebook)  # Description tab
         # licenses_tab = tk.Frame(notebook)  # Licenses tab
 
         class TabContainerBgUpdater:
@@ -1048,7 +1140,7 @@ def main() -> None:
                         continue
 
         tab_container_bg_updater = TabContainerBgUpdater(
-            containers=[main_tab]
+            containers=[main_tab, image_ope_tab, description_tab]
         )
         EventBus().subscribe(EventNames.THEME_CHANGED, tab_container_bg_updater.handle_theme_changed)
         tab_container_bg_updater.handle_theme_changed(
@@ -1059,8 +1151,8 @@ def main() -> None:
         # Add tabs to notebook (text only, no icons)
         notebook.add(main_tab, text=message_manager.get_ui_message("U004"))  # Main tab
         # notebook.add(pdf_ope_tab, text=message_manager.get_ui_message("U005"))  # PDF Operation tab
-        # notebook.add(image_ope_tab, text=message_manager.get_ui_message("U006"))  # Image Operation tab (File Extension and Size)
-        # notebook.add(description_tab, text=message_manager.get_ui_message("U007"))  # Description tab
+        notebook.add(image_ope_tab, text=message_manager.get_ui_message("U006"))  # Image Operation tab (File Extension and Size)
+        notebook.add(description_tab, text=message_manager.get_ui_message("U007"))  # Description tab
         # notebook.add(licenses_tab, text=message_manager.get_ui_message("U008"))  # Licenses tab
         
         # Configure notebook to expand properly
@@ -1080,13 +1172,13 @@ def main() -> None:
         # pdf_app.pack(expand=True, fill="both")
         
         # Initialize Image Operation tab (U006)
-        # from views.image_ope_tab import ImageOperationApp
-        # image_app = ImageOperationApp(image_ope_tab)
-        # image_app.pack(expand=True, fill="both")
+        from views.image_ope_tab import ImageOperationApp
+        image_app = ImageOperationApp(image_ope_tab)
+        image_app.pack(expand=True, fill="both")
         
         # Initialize Description tab
-        # desc_app = DescriptionApp(description_tab)
-        # desc_app.pack(expand=True, fill="both")
+        desc_app = DescriptionApp(description_tab)
+        desc_app.pack(expand=True, fill="both")
         
         # Initialize Licenses tab
         # license_app = LicensesApp(licenses_tab)

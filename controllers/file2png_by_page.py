@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from logging import getLogger
 import tkinter as tk
+import numpy as np
 from PIL import Image, ImageOps, ImageFile
 from typing import Any, Dict, Optional, Protocol, TypedDict, cast
 
@@ -180,12 +181,36 @@ class BaseImageConverter:
 
         # Calculate and store histogram data for later analysis
         try:
-            histogram = img_to_save.histogram()
+            histogram = self._build_rgb_total_histogram(img_to_save)
             if self.file_info.file_histogram_data is None:
                 self.file_info.file_histogram_data = []
             self.file_info.file_histogram_data.append(histogram)
         except Exception as e:
             logger.error(message_manager.get_log_message("L055", str(e)))
+
+    def _build_rgb_total_histogram(self, page_img: Image.Image) -> list[int]:
+        """Build a histogram whose bins represent the RGB total from 0 to 765.
+
+        Args:
+            page_img (Image.Image): Source page image.
+
+        Returns:
+            list[int]: Histogram counts indexed by ``R + G + B``.
+        """
+        if page_img.mode not in ("RGB", "RGBA"):
+            rgb_image = page_img.convert("RGB")
+        else:
+            rgb_image = page_img.convert("RGB")
+
+        rgb_array = np.asarray(rgb_image, dtype=np.uint16)
+        if rgb_array.ndim != 3 or rgb_array.shape[2] < 3:
+            grayscale_array = np.asarray(rgb_image.convert("L"), dtype=np.uint16)
+            rgb_total = grayscale_array * 3
+        else:
+            rgb_total = rgb_array[:, :, 0] + rgb_array[:, :, 1] + rgb_array[:, :, 2]
+
+        histogram = np.bincount(rgb_total.reshape(-1), minlength=766)
+        return histogram.astype(int).tolist()
 
     def _generate_filename(self, name_flag: str, page_num: int) -> str:
         """Generate a filename for each page using the specified naming convention.
@@ -471,6 +496,11 @@ class Pdf2PngByPages(BaseImageConverter):
                 # No pages found in PDF file
                 logger.error(message_manager.get_log_message("L324"))
                 raise ValueError(message_manager.get_error_message("E101"))
+
+            start_page = int(kwargs.get("start_page", 1) or 1)
+            end_page = int(kwargs.get("end_page", page_count) or page_count)
+            start_page = max(1, min(page_count, start_page))
+            end_page = max(start_page, min(page_count, end_page))
             
             # Calculate scale factor (1.0 = 72 DPI, standard PDF resolution)
             # User can override with kwargs
@@ -496,7 +526,7 @@ class Pdf2PngByPages(BaseImageConverter):
             pdf = pdfium.PdfDocument(pdf_path)
             
             # Process each page
-            for page_num in range(1, page_count + 1):
+            for page_num in range(start_page, end_page + 1):
                 if progress_callback:
                     progress_callback(page_num, page_count, 
                                      message_manager.get_log_message("L310", page_num, page_count))
@@ -506,10 +536,6 @@ class Pdf2PngByPages(BaseImageConverter):
                     name_flag = self._get_name_flag()
                     target_filename = self._generate_filename(name_flag, page_num)
                     target_path = os.path.join(str(self._temp_dir), target_filename)
-                    
-                    # Also create base_XXXX.png format that the app expects
-                    base_filename = f"base_{page_num:04d}.png"
-                    base_path = os.path.join(str(self._temp_dir), base_filename)
                     
                     logger.info(message_manager.get_log_message("L332", page_num, target_path))
                     
@@ -556,11 +582,7 @@ class Pdf2PngByPages(BaseImageConverter):
                     except Exception:
                         pil_image = white_bg
                     
-                    # Save the rendered page to both required paths
-                    pil_image.save(target_path, format="PNG")
-                    pil_image.save(base_path, format="PNG")
-                    
-                    # Store histogram and other data using the base method
+                    # Main processing: persist a single PNG series per converter side.
                     self._save_page(pil_image, page_num, name_flag)
                     
                     logger.info(message_manager.get_log_message("L328", page_num, page_count))
@@ -572,10 +594,8 @@ class Pdf2PngByPages(BaseImageConverter):
                     
                     # Create a fallback image with light gray background
                     blank_img = cast(ImageFile.ImageFile, Image.new('RGBA', (595, 842), (240, 240, 240, 255)))
-                    blank_img.save(target_path, format="PNG")
-                    blank_img.save(base_path, format="PNG")
                     
-                    # Save the fallback image with our tracking method
+                    # Main processing: persist only the fallback page needed by this converter side.
                     self._save_page(blank_img, page_num, name_flag)
             
             # Clean up resources

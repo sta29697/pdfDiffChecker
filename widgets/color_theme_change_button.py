@@ -72,7 +72,7 @@ class ColorThemeChangeButton(tk.Frame):
         self.color_theme_change_btn_img: (
             SwitchPaths
         ) = ImageSwPaths().set_color_theme_change_btn_image(
-            program_mode=tool_settings.program_mode == "PRODUCTION_MODE",
+            program_mode=tool_settings.is_production_mode,
             theme_color=self.__current_theme_color_name,
         )
 
@@ -268,7 +268,7 @@ class ColorThemeChangeButton(tk.Frame):
             self.__color_theme_change_btn_status_on = True
             self.color_theme_change_btn_img = (
                 ImageSwPaths().set_color_theme_change_btn_image(
-                    program_mode=tool_settings.program_mode == "PRODUCTION_MODE",
+                    program_mode=tool_settings.is_production_mode,
                     theme_color=theme_color,
                 )
             )
