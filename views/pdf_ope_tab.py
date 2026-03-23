@@ -389,7 +389,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             from configurations import tool_settings
             self.current_pdf_converter = Pdf2PngByPages(
                 pdf_obj=file_path_info,
-                program_mode=tool_settings.program_mode,  # Use actual program mode from settings
+                program_mode=tool_settings.is_production_mode,  # Use actual production mode flag
                 name_flag="base"  # This is the base file
             )
             
@@ -1218,7 +1218,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._display_page(self.current_page_index)
     
     def _on_transform_value_input(self, rotation: float, tx: float,
-                                   ty: float, scale: float) -> None:
+                                   ty: float, scale: float,
+                                   changed_fields: Optional[set[str]] = None) -> None:
         """Apply user-entered transform values to the current page.
 
         Called from PageControlFrame when the user presses Enter in one of the
@@ -1229,7 +1230,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             tx: X translation offset.
             ty: Y translation offset.
             scale: Scale factor.
+            changed_fields: Explicitly confirmed entry field names.
         """
+        _ = changed_fields
         if not hasattr(self, 'base_transform_data'):
             return
         if self.current_page_index >= len(self.base_transform_data):

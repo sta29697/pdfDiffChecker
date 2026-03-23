@@ -3,8 +3,9 @@ from __future__ import annotations
 from logging import getLogger
 from typing import Dict, Any, Optional
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, messagebox
 
+from configurations import tool_settings
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
 from widgets.base_tab_widgets import BaseTabWidgets
@@ -20,7 +21,7 @@ widget_description = """
 PDFファイルを比較し、差分を確認するためのタブです。
 以下の機能があります：
 1. ベースPDFと比較PDFの選択
-2. PDFの内容を単色グレースケール化と透明度を変更して表示と比較
+2. PDFの内容を指定色濃淡と透明度を変更して表示と比較
 3. DPI設定による画質調整
 4. ページ移動と表示制御
 
@@ -87,7 +88,7 @@ Application Description
 This tab is used to compare PDF files and check differences.
 Features include:
 1. Selection of base PDF and comparison PDF
-2. Display and comparison by converting PDFs to monochrome grayscale with adjustable transparency
+2. Display and comparison by applying color shading with adjustable transparency
 3. Image quality adjustment via DPI settings
 4. Page navigation and display controls
 
@@ -170,14 +171,16 @@ class DescriptionApp(tk.Frame, ColoringThemeIF):
         super().__init__(master)
         self.root = master
         self.base_widgets = BaseTabWidgets()
+        self._temp_path_button: Optional[tk.Button] = None
+        self._log_path_button: Optional[tk.Button] = None
 
-        # Create main frame
-        frame = tk.Frame(self)
-        frame.pack(expand=True, fill="both")
+        # Main processing: split the tab into a scrollable description area and a bottom path-action area.
+        self._content_frame = tk.Frame(self)
+        self._content_frame.pack(expand=True, fill="both")
 
         # Create and configure description text widget
         self.description_text = scrolledtext.ScrolledText(
-            frame, wrap=tk.WORD, font=("Meiryo UI", 10)
+            self._content_frame, wrap=tk.WORD, font=("Meiryo UI", 10)
         )
         
         # Get current language and set appropriate text
@@ -187,9 +190,44 @@ class DescriptionApp(tk.Frame, ColoringThemeIF):
         self.description_text.insert("1.0", description)
         self.description_text.config(state="disabled")
         self.description_text.pack(expand=True, fill="both")
+
+        self._button_frame = tk.Frame(self)
+        self._button_frame.pack(fill="x", side="bottom", padx=8, pady=(4, 8))
+
+        self._temp_path_button = tk.Button(
+            self._button_frame,
+            text="一時ファイル保存先を表示",
+            command=self._show_temp_path,
+        )
+        self._temp_path_button.pack(side="left", padx=(0, 8))
+
+        self._log_path_button = tk.Button(
+            self._button_frame,
+            text="ログ保存先を表示",
+            command=self._show_log_path,
+        )
+        self._log_path_button.pack(side="left")
         # Display description tab
         # Log description tab display event
         logger.debug(message_manager.get_log_message("L146"))
+
+    def _show_temp_path(self) -> None:
+        """Show the absolute runtime temporary-directory path."""
+        # Main processing: expose the current temp directory without requiring file-system navigation.
+        messagebox.showinfo(
+            title="一時ファイル保存先",
+            message=str(tool_settings.TEMP_DIR.resolve()),
+            parent=self.winfo_toplevel(),
+        )
+
+    def _show_log_path(self) -> None:
+        """Show the absolute runtime log-file path."""
+        # Main processing: expose the current log file location for troubleshooting.
+        messagebox.showinfo(
+            title="ログ保存先",
+            message=str(tool_settings.LOG_FILE_PATH.resolve()),
+            parent=self.winfo_toplevel(),
+        )
 
     def bind_window_events(self, master: tk.Tk | tk.Toplevel) -> None:
         """Bind window events to the master window.
@@ -229,6 +267,16 @@ class DescriptionApp(tk.Frame, ColoringThemeIF):
             Exception: If theme application fails
         """
         try:
+            frame_theme = dict(theme.get("Frame", {})) if isinstance(theme, dict) else {}
+            window_theme = dict(theme.get("Window", {})) if isinstance(theme, dict) else {}
+            text_theme = dict(theme.get("text_box", {})) if isinstance(theme, dict) else {}
+            button_theme = dict(theme.get("process_button", theme.get("Button", {}))) if isinstance(theme, dict) else {}
+
+            frame_bg = frame_theme.get("bg", window_theme.get("bg", "#ffffff"))
+            frame_fg = frame_theme.get("fg", "#000000")
+            text_bg = text_theme.get("bg", frame_bg)
+            text_fg = text_theme.get("fg", frame_fg)
+
             # Apply theme to self
             widget_class = self.winfo_class()
             if widget_class in theme:
@@ -236,6 +284,26 @@ class DescriptionApp(tk.Frame, ColoringThemeIF):
                 self.configure(**config)
                 # Theme applied to widget
                 logger.debug(message_manager.get_log_message("L149", widget_class))
+
+            self.configure(bg=frame_bg)
+            self._content_frame.configure(bg=frame_bg)
+            self._button_frame.configure(bg=frame_bg)
+            self.description_text.configure(
+                bg=text_bg,
+                fg=text_fg,
+                insertbackground=text_fg,
+            )
+
+            for button in [self._temp_path_button, self._log_path_button]:
+                if button is None:
+                    continue
+                button.configure(
+                    bg=button_theme.get("bg", frame_bg),
+                    fg=button_theme.get("fg", frame_fg),
+                    activebackground=button_theme.get("activebackground", frame_bg),
+                    activeforeground=button_theme.get("activeforeground", frame_fg),
+                    highlightbackground=button_theme.get("activebackground", frame_bg),
+                )
 
             # Apply theme to child widgets
             for child in self.winfo_children():

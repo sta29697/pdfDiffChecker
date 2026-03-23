@@ -261,14 +261,14 @@
         "fg": "#2b8a5f",
         "activebackground": "#c5f0d6",
         "activeforeground": "#2b8a5f",
-        "relief": "flat"
+        "relief": "raised"
     },
     "pdf_save_button": {
         "bg": "#dff7e8",
         "fg": "#2b8a5f",
         "activebackground": "#c5f0d6",
         "activeforeground": "#2b8a5f",
-        "relief": "flat"
+        "relief": "raised"
     },
     "ext_convert_button": {
         "bg": "#d7ecff",

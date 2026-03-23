@@ -353,7 +353,7 @@ class ImageEditorController:
                 )
                 transformed.save(comp_output_path)
 
-            logger.info(f"Saved transformed images to {output_dir}")
+            logger.info(f"[APP_SAVE] Saved transformed images to {output_dir}")
             return base_output_path, comp_output_path
         except Exception as e:
             logger.error(f"Error saving transformed images: {e}")

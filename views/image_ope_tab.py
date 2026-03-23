@@ -16,9 +16,8 @@ from controllers.color_theme_manager import ColorThemeManager
 from controllers.event_bus import EventBus, EventNames
 from controllers.widgets_tracker import (
     WidgetsTracker,
-    adjust_hex_color,
     ensure_contrast_color,
-    get_hex_color_luminance,
+    resolve_disabled_visual_colors,
 )
 
 from widgets.base_label_class import BaseLabelClass
@@ -414,27 +413,23 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._size_filename_bg = filename_bg
         frame_colors = theme_colors.get("Frame", {})
         label_disabled_colors = theme_colors.get("LabelDisabled", {})
-        block_luminance = get_hex_color_luminance(self._size_block_bg)
-        filename_luminance = get_hex_color_luminance(filename_bg)
-        disabled_bg_amount = 0.24 if block_luminance < 0.5 else -0.14
-        disabled_filename_bg_amount = 0.32 if filename_luminance < 0.5 else -0.22
-        self._size_disabled_bg = adjust_hex_color(self._size_block_bg, disabled_bg_amount)
-        self._size_filename_disabled_bg = adjust_hex_color(filename_bg, disabled_filename_bg_amount)
-        if str(self._size_filename_disabled_bg).strip().lower() == str(filename_bg).strip().lower():
-            self._size_filename_disabled_bg = self._size_disabled_bg
         disabled_fg_candidate = label_disabled_colors.get(
             "fg",
             frame_colors.get("disabledforeground", self._dpi_combo_disabled_fg or "#808080"),
         )
-        neutral_disabled_fg = adjust_hex_color(
-            self._size_disabled_bg,
-            0.58 if block_luminance < 0.5 else -0.52,
+        block_disabled_visuals = resolve_disabled_visual_colors(
+            self._size_block_bg,
+            str(disabled_fg_candidate),
         )
-        self._size_disabled_fg = ensure_contrast_color(
-            neutral_disabled_fg or str(disabled_fg_candidate),
-            self._size_disabled_bg,
-            0.42 if block_luminance < 0.5 else -0.42,
+        filename_disabled_visuals = resolve_disabled_visual_colors(
+            filename_bg,
+            str(disabled_fg_candidate),
+            fallback_bg=block_disabled_visuals.get("disabled_bg", self._size_block_bg),
+            use_emphasis_surface=True,
         )
+        self._size_disabled_bg = block_disabled_visuals.get("disabled_bg", self._size_block_bg)
+        self._size_disabled_fg = block_disabled_visuals.get("disabled_fg", str(disabled_fg_candidate))
+        self._size_filename_disabled_bg = filename_disabled_visuals.get("disabled_bg", self._size_disabled_bg)
 
         return {
             "filename_bg": filename_bg,
@@ -4353,11 +4348,6 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 )
             except Exception:
                 pass
-
-        # --- 8. WidgetsTracker-registered child widgets ---
-        for widget in self.base_widgets.get_widgets():
-            if hasattr(widget, "apply_theme_color"):
-                widget.apply_theme_color(theme_colors)
 
         # Main processing: run one local final pass after child widget theme
         # handlers complete so startup/theme-switch colors are not overwritten.

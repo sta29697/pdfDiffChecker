@@ -247,14 +247,14 @@
         "fg": "#333333",
         "activebackground": "#333333",
         "activeforeground": "#f0f0f0",
-        "relief": "flat"
+        "relief": "raised"
     },
     "pdf_save_button": {
         "bg": "#f0f0f0",
         "fg": "#333333",
         "activebackground": "#333333",
         "activeforeground": "#f0f0f0",
-        "relief": "flat"
+        "relief": "raised"
     },
     "ext_convert_button": {
         "bg": "#f0f0f0",

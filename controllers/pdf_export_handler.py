@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import colorsys
 import tkinter as tk
 from logging import getLogger
 from typing import List, Tuple, Dict, Any, TypeAlias, Final, Optional
 from PIL import Image
 from PIL.Image import Image as PILImage
+import numpy as np
 from configurations.message_manager import get_message_manager
 message_manager = get_message_manager()
 
@@ -21,6 +23,111 @@ PDFMetadata: TypeAlias = Dict[str, Any]
 DEFAULT_WIDTH: Final[int] = 2000
 DEFAULT_HEIGHT: Final[int] = 2000
 DEFAULT_OUTPUT_FILENAME: Final[str] = "final_output.pdf"
+
+
+def _hex_to_rgba(hex_color: Optional[str]) -> tuple[int, int, int, int]:
+    """Convert a hex color string into an RGBA tuple.
+
+    Args:
+        hex_color: Color such as ``"#3366ff"``.
+
+    Returns:
+        RGBA tuple with alpha fixed at ``255``.
+    """
+    normalized = str(hex_color or "").strip()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+    if len(normalized) != 6:
+        return (0, 0, 0, 255)
+    try:
+        return (
+            int(normalized[0:2], 16),
+            int(normalized[2:4], 16),
+            int(normalized[4:6], 16),
+            255,
+        )
+    except ValueError:
+        return (0, 0, 0, 255)
+
+
+def _selected_color_hsv_components(hex_color: Optional[str]) -> tuple[float, float]:
+    """Return HSV hue and saturation derived from the selected color.
+
+    Args:
+        hex_color: Selected palette color.
+
+    Returns:
+        Tuple of hue and saturation in the range ``0.0`` to ``1.0``.
+    """
+    red, green, blue, _alpha = _hex_to_rgba(hex_color)
+    hue, saturation, _value = colorsys.rgb_to_hsv(red / 255.0, green / 255.0, blue / 255.0)
+    return hue, saturation
+
+
+def apply_color_processing_to_image(
+    page_image: PILImage,
+    mode: str,
+    selected_color: Optional[str],
+    threshold: Optional[int] = None,
+) -> PILImage:
+    """Apply main-tab color processing to one image.
+
+    Args:
+        page_image: Source page image.
+        mode: Processing mode name.
+        selected_color: Hex color selected from the palette button.
+        threshold: Optional RGB-total threshold for binary mode.
+
+    Returns:
+        Processed ``RGBA`` image.
+    """
+    rgba_image = page_image.convert("RGBA") if page_image.mode != "RGBA" else page_image.copy()
+    pixel_array = np.asarray(rgba_image, dtype=np.uint8)
+    rgb_total = pixel_array[:, :, 0].astype(np.uint16) + pixel_array[:, :, 1].astype(np.uint16) + pixel_array[:, :, 2].astype(np.uint16)
+    alpha_channel = pixel_array[:, :, 3]
+
+    if mode == "二色化":
+        resolved_threshold = max(0, min(765, int(765 if threshold is None else threshold)))
+        selected_rgba = np.array(_hex_to_rgba(selected_color), dtype=np.uint8)
+        colored_mask = (alpha_channel > 0) & (rgb_total <= resolved_threshold)
+
+        processed = np.zeros_like(pixel_array, dtype=np.uint8)
+        processed[colored_mask, 0] = selected_rgba[0]
+        processed[colored_mask, 1] = selected_rgba[1]
+        processed[colored_mask, 2] = selected_rgba[2]
+        processed[colored_mask, 3] = selected_rgba[3]
+        return Image.fromarray(processed, mode="RGBA")
+
+    grayscale_source = np.asarray(rgba_image.convert("L"), dtype=np.uint8)
+    selected_rgba = np.array(_hex_to_rgba(selected_color), dtype=np.uint8)
+    selected_rgb = selected_rgba[:3].astype(np.float32) / 255.0
+
+    processed = np.zeros_like(pixel_array, dtype=np.uint8)
+
+    # Main processing: preserve white paper as a very light tint and map dark strokes to a dark selected-color shade.
+    if np.max(selected_rgb) <= 1e-6:
+        processed[:, :, 0] = grayscale_source
+        processed[:, :, 1] = grayscale_source
+        processed[:, :, 2] = grayscale_source
+        processed[:, :, 3] = alpha_channel
+        return Image.fromarray(processed, mode="RGBA")
+
+    lightness_channel = grayscale_source.astype(np.float32) / 255.0
+    darkness_channel = 1.0 - lightness_channel
+    light_tint_strength = 0.03
+    darkness_gamma = 0.55
+
+    light_tint_rgb = 1.0 - ((1.0 - selected_rgb) * light_tint_strength)
+    ink_weight = np.power(darkness_channel, darkness_gamma)
+    shaded_rgb = (light_tint_rgb[None, None, :] * (1.0 - ink_weight[:, :, None])) + (
+        selected_rgb[None, None, :] * ink_weight[:, :, None]
+    )
+
+    processed[:, :, 0] = np.clip(shaded_rgb[:, :, 0] * 255.0, 0, 255).astype(np.uint8)
+    processed[:, :, 1] = np.clip(shaded_rgb[:, :, 1] * 255.0, 0, 255).astype(np.uint8)
+    processed[:, :, 2] = np.clip(shaded_rgb[:, :, 2] * 255.0, 0, 255).astype(np.uint8)
+    processed[:, :, 3] = alpha_channel
+    return Image.fromarray(processed, mode="RGBA")
 
 
 class PDFExportError(Exception):
@@ -61,6 +168,13 @@ class PDFExportHandler:
         comp_transform_data: List[TransformData],
         output_folder: str,
         pdf_metadata: PDFMetadata | None = None,
+        color_processing_mode: str = "指定色濃淡",
+        base_selected_color: Optional[str] = None,
+        comparison_selected_color: Optional[str] = None,
+        base_threshold: int = 700,
+        comparison_threshold: int = 700,
+        show_base_layer: bool = True,
+        show_comp_layer: bool = True,
     ) -> None:
         """Initialize the PDF export handler.
 
@@ -71,6 +185,13 @@ class PDFExportHandler:
             comp_transform_data (List[TransformData]): List of comparison image transformation data
             output_folder (str): Path where the PDF will be saved
             pdf_metadata (PDFMetadata): PDF metadata (page size, etc.)
+            color_processing_mode: Active main-tab color processing mode.
+            base_selected_color: Selected color for the base layer.
+            comparison_selected_color: Selected color for the comparison layer.
+            base_threshold: Threshold for the base layer in binary mode.
+            comparison_threshold: Threshold for the comparison layer in binary mode.
+            show_base_layer: Whether the base layer is currently visible.
+            show_comp_layer: Whether the comparison layer is currently visible.
 
         Raises:
             ValueError: If input lists have different lengths
@@ -92,6 +213,13 @@ class PDFExportHandler:
             self.__comp_transform_data = comp_transform_data
             self.__output_folder = output_folder
             self.__pdf_metadata = pdf_metadata or {}
+            self.__color_processing_mode = color_processing_mode
+            self.__base_selected_color = base_selected_color
+            self.__comparison_selected_color = comparison_selected_color
+            self.__base_threshold = int(base_threshold)
+            self.__comparison_threshold = int(comparison_threshold)
+            self.__show_base_layer = bool(show_base_layer)
+            self.__show_comp_layer = bool(show_comp_layer)
 
             logger.info("PDF export handler initialized")
         except Exception as e:
@@ -128,10 +256,16 @@ class PDFExportHandler:
                 blank_img = Image.new("RGBA", (pdf_w, pdf_h), (255, 255, 255, 255))
 
                 # Add base page if it exists
-                if i < len(self.__base_pages):
+                if self.__show_base_layer and i < len(self.__base_pages):
                     r, offx, offy, scale = self.__base_transform_data[i]
                     b_path = self.__base_pages[i]
                     base_img = Image.open(b_path).convert("RGBA")
+                    base_img = apply_color_processing_to_image(
+                        base_img,
+                        self.__color_processing_mode,
+                        self.__base_selected_color,
+                        self.__base_threshold,
+                    )
                     new_w = int(base_img.width * scale)
                     new_h = int(base_img.height * scale)
                     base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
@@ -139,14 +273,24 @@ class PDFExportHandler:
                     blank_img.paste(base_img, (int(offx), int(offy)), base_img)
 
                 # Add comparison page if it exists
-                if i < len(self.__comp_pages):
+                if self.__show_comp_layer and i < len(self.__comp_pages):
                     r, offx, offy, scale = self.__comp_transform_data[i]
                     c_path = self.__comp_pages[i]
                     comp_img = Image.open(c_path).convert("RGBA")
+                    comp_img = apply_color_processing_to_image(
+                        comp_img,
+                        self.__color_processing_mode,
+                        self.__comparison_selected_color,
+                        self.__comparison_threshold,
+                    )
                     new_w = int(comp_img.width * scale)
                     new_h = int(comp_img.height * scale)
                     comp_img = comp_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     comp_img = comp_img.rotate(r, expand=True)
+                    if self.__show_base_layer:
+                        alpha_channel = comp_img.getchannel("A")
+                        softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))
+                        comp_img.putalpha(softened_alpha)
                     blank_img.paste(comp_img, (int(offx), int(offy)), comp_img)
 
                 # Convert to RGB
@@ -165,68 +309,6 @@ class PDFExportHandler:
                 show_balloon_message(parent_widget, message_manager.get_ui_message("U_OVERWRITE_WARN"))
 
             first_page, *rest = sample_pages
-            first_page.save(output_pdf_path, save_all=True, append_images=rest)
-            logger.info(f"Successfully exported PDF to: {output_pdf_path}")
-
-        except Exception as e:
-            logger.error(f"Failed to export PDF: {e}")
-            raise PDFExportError("Failed to export PDF", {"error": str(e)})
-
-        """Export all pages to a single PDF file.
-
-        Raises:
-            PDFExportError: If export fails
-        """
-        try:
-            # Get page size from metadata or use default values
-            pdf_w = int(self.__pdf_metadata.get("page_width", DEFAULT_WIDTH))
-            pdf_h = int(self.__pdf_metadata.get("page_height", DEFAULT_HEIGHT))
-
-            max_pages = max(len(self.__base_pages), len(self.__comp_pages))
-            if max_pages == 0:
-                logger.warning("No pages to export")
-                return
-
-            temp_pages: List[PILImage] = []
-            for i in range(max_pages):
-                # Create a blank image with the specified size
-                blank_img = Image.new("RGBA", (pdf_w, pdf_h), (255, 255, 255, 255))
-
-                # Add base page if it exists
-                if i < len(self.__base_pages):
-                    r, offx, offy, scale = self.__base_transform_data[i]
-                    b_path = self.__base_pages[i]
-                    base_img = Image.open(b_path).convert("RGBA")
-                    new_w = int(base_img.width * scale)
-                    new_h = int(base_img.height * scale)
-                    base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    base_img = base_img.rotate(r, expand=True)
-                    blank_img.paste(base_img, (int(offx), int(offy)), base_img)
-
-                # Add comparison page if it exists
-                if i < len(self.__comp_pages):
-                    r, offx, offy, scale = self.__comp_transform_data[i]
-                    c_path = self.__comp_pages[i]
-                    comp_img = Image.open(c_path).convert("RGBA")
-                    new_w = int(comp_img.width * scale)
-                    new_h = int(comp_img.height * scale)
-                    comp_img = comp_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    comp_img = comp_img.rotate(r, expand=True)
-                    blank_img.paste(comp_img, (int(offx), int(offy)), comp_img)
-
-                # Convert to RGB
-                final_page = blank_img.convert("RGB")
-                temp_pages.append(final_page)
-
-            # Create output directory if it doesn't exist
-            if not os.path.isdir(self.__output_folder):
-                os.makedirs(self.__output_folder, exist_ok=True)
-
-            output_pdf_path = os.path.join(
-                self.__output_folder, DEFAULT_OUTPUT_FILENAME
-            )
-
-            first_page, *rest = temp_pages
             first_page.save(output_pdf_path, save_all=True, append_images=rest)
             logger.info(f"Successfully exported PDF to: {output_pdf_path}")
 

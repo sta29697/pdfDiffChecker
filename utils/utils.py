@@ -48,11 +48,10 @@ def get_resource_path(relative_path: str) -> str:
 
 
 def get_temp_dir() -> str:
-    """Get path to temporary directory within the project folder.
+    """Get path to the active runtime temporary directory.
 
-    This function returns the path to the 'temp' directory in the project folder.
-    It does NOT use system's temporary directory (tempfile.gettempdir()) to avoid
-    file dispersion issues.
+    This function returns the development-local temp directory when running from
+    source, and the Windows temporary storage area when running in production.
 
     Returns:
         str: Path to project's temporary directory
@@ -61,10 +60,7 @@ def get_temp_dir() -> str:
         Exception: If temp directory creation fails
     """
     try:
-        # Use project directory instead of system temp directory
-        from configurations import tool_settings
-        base_dir = str(tool_settings.BASE_DIR)
-        temp_dir = os.path.join(base_dir, "temp")
+        temp_dir = str(tool_settings.TEMP_DIR)
         exists_temp = os.path.exists(temp_dir)
         os.makedirs(temp_dir, exist_ok=True)
         if exists_temp:
@@ -99,29 +95,29 @@ def create_directories(file_name: str | None = None) -> str:
         str: Path to the created temporary directory. If file_name is None, returns the base temp directory.
     """
     try:
-        # Determine project root directory
-        base_dir = str(tool_settings.BASE_DIR)
-        # Log base directory for troubleshooting directory creation
+        # Main processing: use centralized runtime directories for both temp and logs.
+        tool_settings.ensure_runtime_directories()
+        base_dir = str(tool_settings.RUNTIME_STORAGE_ROOT)
         logger.debug(message_manager.get_log_message("L190", base_dir))
-        # Ensure project directories exist under base_dir with detailed logging
-        for directory in ["temp", "logs", "docs"]:
-            path_dir = os.path.join(base_dir, directory)
+
+        for path_dir in [str(tool_settings.TEMP_DIR), str(tool_settings.LOG_DIR)]:
             exists = os.path.exists(path_dir)
             logger.debug(message_manager.get_log_message("L191", path_dir, exists))
-            if not exists:
-                os.makedirs(path_dir)
-                # Log full absolute path for directory creation
-                full_path = os.path.abspath(path_dir)
-                logger.debug(message_manager.get_log_message("L014", full_path))
-            else:
+            if exists:
                 logger.debug(message_manager.get_log_message("L192", path_dir))
+            else:
+                os.makedirs(path_dir, exist_ok=True)
+                logger.debug(message_manager.get_log_message("L014", os.path.abspath(path_dir)))
 
-        # Use project root temp directory and log its usage status
-        temp_dir = os.path.join(base_dir, "temp")
+        docs_dir = os.path.join(str(tool_settings.BASE_DIR), "docs")
+        if not os.path.exists(docs_dir):
+            os.makedirs(docs_dir, exist_ok=True)
+
+        temp_dir = str(tool_settings.TEMP_DIR)
         exists_temp = os.path.exists(temp_dir)
         logger.debug(message_manager.get_log_message("L193", temp_dir, exists_temp))
         if not exists_temp:
-            os.makedirs(temp_dir)
+            os.makedirs(temp_dir, exist_ok=True)
             logger.debug(message_manager.get_log_message("L015", temp_dir))
 
         # If file_name is provided, create a subdirectory for this file

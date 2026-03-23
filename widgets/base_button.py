@@ -57,6 +57,20 @@ class BaseButton(tk.Button, ThemeColorApplicable, ColoringThemeIF):
         # type: ignore[arg-type]
         super().__init__(fr, **all_kwargs)  # type: ignore[arg-type]
         self.__color_key = color_key
+        self.__persistent_visual_config = {
+            key: kwargs[key]
+            for key in [
+                "relief",
+                "bd",
+                "borderwidth",
+                "highlightthickness",
+                "highlightbackground",
+                "highlightcolor",
+            ]
+            if key in kwargs
+        }
+        self._disabled_visual_bg: str | None = None
+        self._disabled_visual_fg: str | None = None
 
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
@@ -83,12 +97,18 @@ class BaseButton(tk.Button, ThemeColorApplicable, ColoringThemeIF):
             button_theme_config = dict(theme_config)
             # Main processing: never override runtime enabled/disabled state.
             button_theme_config.pop("state", None)
-            try:
-                if "disabledbackground" in button_theme_config and "disabledbackground" not in self.configure():
-                    button_theme_config.pop("disabledbackground", None)
-            except Exception:
-                button_theme_config.pop("disabledbackground", None)
+            button_theme_config.pop("disabledbackground", None)
+            button_theme_config.update(self.__persistent_visual_config)
             self.configure(**button_theme_config)  # type: ignore[arg-type]
+            if str(self.cget("state")) == str(tk.DISABLED):
+                disabled_bg = str(self._disabled_visual_bg or self.cget("bg"))
+                disabled_fg = str(self._disabled_visual_fg or self.cget("disabledforeground"))
+                self.configure(
+                    bg=disabled_bg,
+                    fg=disabled_fg,
+                    activebackground=disabled_bg,
+                    activeforeground=disabled_fg,
+                )
             # Get caller information for accurate logging
             caller_file = os.path.basename(__file__) # デフォルトは現在のファイル
             
@@ -129,14 +149,19 @@ class BaseButton(tk.Button, ThemeColorApplicable, ColoringThemeIF):
             filtered_settings = dict(theme_settings)
             # Main processing: never override runtime enabled/disabled state.
             filtered_settings.pop("state", None)
-            try:
-                if "disabledbackground" in filtered_settings and "disabledbackground" not in self.configure():
-                    filtered_settings.pop("disabledbackground", None)
-            except Exception:
-                filtered_settings.pop("disabledbackground", None)
+            filtered_settings.pop("disabledbackground", None)
             self.configure(**filtered_settings)  # type: ignore[arg-type]
+            if str(self.cget("state")) == str(tk.DISABLED):
+                disabled_bg = str(self._disabled_visual_bg or self.cget("bg"))
+                disabled_fg = str(self._disabled_visual_fg or self.cget("disabledforeground"))
+                self.configure(
+                    bg=disabled_bg,
+                    fg=disabled_fg,
+                    activebackground=disabled_bg,
+                    activeforeground=disabled_fg,
+                )
             # Configured button with settings: {settings}
             logger.debug(message_manager.get_log_message("L079", theme_settings))
         except Exception as e:
-            # Failed to configure button: {error}
+            # Failed to configure widget: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
