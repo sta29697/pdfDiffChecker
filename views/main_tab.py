@@ -48,7 +48,7 @@ except Exception:
 logger = getLogger(__name__)
 message_manager = get_message_manager()
 _MAIN_TAB_DEFAULT_DPI = 300
-_MAIN_TAB_DPI_CHOICES = [72, 96, 150, 300, 600]
+_MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
 
 
 class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
@@ -1976,6 +1976,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             Integer DPI value used for PDF rendering.
         """
         # Main processing: preserve manual selections, but treat detected selections as a 300-dpi startup fallback until sources are available.
+        dpi_choices = self._get_configured_dpi_choices()
         raw_mode = str(self.settings.get_setting("setted_dpi_mode", "detected") or "detected").strip().lower()
         if raw_mode == "detected":
             return _MAIN_TAB_DEFAULT_DPI
@@ -1986,10 +1987,39 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except (TypeError, ValueError):
             resolved_dpi = _MAIN_TAB_DEFAULT_DPI
 
-        if resolved_dpi not in _MAIN_TAB_DPI_CHOICES:
+        if resolved_dpi not in dpi_choices:
             return _MAIN_TAB_DEFAULT_DPI
         return max(1, resolved_dpi)
 
+    def _get_configured_dpi_choices(self) -> List[int]:
+        """Return sanitized DPI choices from user settings.
+
+        Returns:
+            List[int]: Ordered DPI choices used by the Main tab combobox.
+        """
+        try:
+            raw_values = self.settings.get_setting_list(
+                "dpi_list",
+                list(_MAIN_TAB_FALLBACK_DPI_CHOICES),
+            )
+        except Exception:
+            raw_values = list(_MAIN_TAB_FALLBACK_DPI_CHOICES)
+
+        resolved_values: List[int] = []
+        for raw_value in raw_values:
+            try:
+                dpi_value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if dpi_value <= 0 or dpi_value in resolved_values:
+                continue
+            resolved_values.append(dpi_value)
+
+        if _MAIN_TAB_DEFAULT_DPI not in resolved_values:
+            resolved_values.append(_MAIN_TAB_DEFAULT_DPI)
+        if not resolved_values:
+            return list(_MAIN_TAB_FALLBACK_DPI_CHOICES)
+        return resolved_values
     def _get_dpi_from_entry(self) -> int:
         """Return a validated DPI value from the current DPI selector.
 
@@ -2192,6 +2222,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Returns:
             Tuple of selected DPI value and selection mode.
         """
+        dpi_choices = self._get_configured_dpi_choices()
         raw_value = str(self._dpi_choice_var.get()).strip()
         detected_choice = (
             self._format_detected_dpi_choice(self._detected_dpi_value)
@@ -2206,7 +2237,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except (TypeError, ValueError):
             resolved_dpi = _MAIN_TAB_DEFAULT_DPI
 
-        if resolved_dpi not in _MAIN_TAB_DPI_CHOICES:
+        if resolved_dpi not in dpi_choices:
             resolved_dpi = _MAIN_TAB_DEFAULT_DPI
         return resolved_dpi, "manual"
 
@@ -2225,7 +2256,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         saved_mode = str(self.settings.get_setting("setted_dpi_mode", "detected") or "detected").strip().lower()
         self._detected_dpi_value = self._resolve_detected_dpi_from_selected_files()
 
-        values = [str(value) for value in _MAIN_TAB_DPI_CHOICES]
+        dpi_choices = self._get_configured_dpi_choices()
+        values = [str(value) for value in dpi_choices]
         detected_choice = None
         if self._detected_dpi_value is not None:
             detected_choice = self._format_detected_dpi_choice(self._detected_dpi_value)
@@ -2244,7 +2276,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             saved_dpi = self._get_selected_dpi()
             if saved_mode == "detected":
                 target_choice = detected_choice or str(_MAIN_TAB_DEFAULT_DPI)
-            elif saved_dpi in _MAIN_TAB_DPI_CHOICES:
+            elif saved_dpi in dpi_choices:
                 target_choice = str(saved_dpi)
             else:
                 target_choice = str(_MAIN_TAB_DEFAULT_DPI)
@@ -4019,7 +4051,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._dpi_combo = BaseValueCombobox(
                 master=self._dpi_row_frame,
                 color_key="dpi_entry",
-                values=[str(value) for value in _MAIN_TAB_DPI_CHOICES],
+                values=[str(value) for value in self._get_configured_dpi_choices()],
                 default_value=str(self.selected_dpi_value),
                 textvariable=self._dpi_choice_var,
                 width=12,
