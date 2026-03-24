@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Union, Any, Final, TypeAlias
 
+from configurations import tool_settings
 from configurations.user_setting_manager import UserSettingManager
 from configurations.message_manager import get_message_manager
 from utils.utils import get_resource_path
@@ -150,31 +151,35 @@ class ImageSwPaths:
             off_img_path=self.__toggle_image_off_path,
         )
 
-    def set_custom_convert_btn_image(self, program_mode: bool) -> SwitchPaths:
+    def set_custom_convert_btn_image(
+        self, program_mode: bool, randomize_idle: bool = False
+    ) -> SwitchPaths:
         """Set image paths for custom convert button.
 
         Args:
             program_mode (bool): Program mode.
+            randomize_idle (bool): Whether the idle artwork may rotate to gag images.
 
         Returns:
             SwitchPaths: Updated instance with set paths
         """
         try:
-            settings = UserSettingManager()
-            __btn_image_no = (
-                random.randrange(1, 50, 1) if settings.get_setting("window_set") else 1
-            )
-
-            # Determine button image name based on random number
-            if __btn_image_no == 5:
-                off_img_name = "apologize_for_the_misfires.png"
-            elif __btn_image_no == 10:
-                off_img_name = "hide_from_angry_person.png"
-            elif __btn_image_no == 15:
-                off_img_name = "shield_arrows.png"
-            else:
-                off_img_name = "hennshinn_pose.png"
-
+            off_img_name = "hennshinn_pose.png"
+            if randomize_idle:
+                settings = UserSettingManager()
+                window_set_enabled = bool(getattr(tool_settings, "window_set", True))
+                if settings.has_active_setting("window_set"):
+                    window_set_enabled = bool(
+                        settings.get_setting("window_set", window_set_enabled)
+                    )
+                if window_set_enabled:
+                    random_value = random.random()
+                    if random_value < 0.20:
+                        off_img_name = "apologize_for_the_misfires.png"
+                    elif random_value < 0.40:
+                        off_img_name = "hide_from_angry_person.png"
+                    elif random_value < 0.60:
+                        off_img_name = "shield_arrows.png"
             on_img_name = "hennshinn_pose_flash.png"
 
             # Get image paths using utility function

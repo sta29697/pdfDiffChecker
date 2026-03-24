@@ -16,9 +16,8 @@ from controllers.color_theme_manager import ColorThemeManager
 from controllers.event_bus import EventBus, EventNames
 from controllers.widgets_tracker import (
     WidgetsTracker,
-    adjust_hex_color,
     ensure_contrast_color,
-    get_hex_color_luminance,
+    resolve_disabled_visual_colors,
 )
 
 from widgets.base_label_class import BaseLabelClass
@@ -35,6 +34,7 @@ from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
+_IMAGE_OPE_DEFAULT_DPI = 300
 
 # Supported image extensions for file dialogs
 _IMAGE_EXTENSIONS = (
@@ -65,7 +65,7 @@ _PILLOW_SAVE_FORMATS: Dict[str, str] = {
 }
 
 # DPI preset values
-_DPI_CHOICES: List[str] = ["72", "96", "150", "300", "600"]
+_DPI_CHOICES: List[str] = ["72", "96", "144", "150", "300", "600", "720", "1200", "2400", "3600", "4000"]
 
 # Paper size base definitions: name -> (short_mm, long_mm)
 _PAPER_SIZE_BASE: Dict[str, tuple[float, float]] = {
@@ -240,7 +240,58 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 self._output_folder_path_entry.path_var.set(saved_output)
                 self.output_path.set(saved_output)
         except Exception as exc:
-            logger.warning(f"Shared path sync failed in image tab: {exc}")
+            logger.warning(f"Shared path sync failed in image operation tab: {exc}")
+
+    def _get_configured_dpi_choices(self) -> List[str]:
+        """Return sanitized DPI choices from user settings.
+
+        Returns:
+            List[str]: Ordered string DPI choices used by U006 comboboxes.
+        """
+        try:
+            raw_values = UserSettingManager().get_setting_list(
+                "dpi_list",
+                list(_DPI_CHOICES),
+            )
+        except Exception:
+            raw_values = list(_DPI_CHOICES)
+
+        resolved_values: List[int] = []
+        for raw_value in raw_values:
+            try:
+                dpi_value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if dpi_value <= 0 or dpi_value in resolved_values:
+                continue
+            resolved_values.append(dpi_value)
+
+        if _IMAGE_OPE_DEFAULT_DPI not in resolved_values:
+            resolved_values.append(_IMAGE_OPE_DEFAULT_DPI)
+        if not resolved_values:
+            return list(_DPI_CHOICES)
+        return [str(value) for value in resolved_values]
+
+    def _get_initial_user_dpi_choice(self) -> str:
+        """Resolve the startup DPI choice while preserving the 300dpi baseline.
+
+        Returns:
+            str: DPI value shown initially in U006 controls.
+        """
+        try:
+            settings = UserSettingManager()
+            raw_mode = str(settings.get_setting("setted_dpi_mode", "detected") or "detected").strip().lower()
+            if raw_mode != "manual":
+                return str(_IMAGE_OPE_DEFAULT_DPI)
+            raw_dpi = int(settings.get_setting("setted_dpi", _IMAGE_OPE_DEFAULT_DPI))
+        except Exception:
+            return str(_IMAGE_OPE_DEFAULT_DPI)
+
+        configured_choices = self._get_configured_dpi_choices()
+        resolved_dpi = str(raw_dpi)
+        if resolved_dpi not in configured_choices:
+            return str(_IMAGE_OPE_DEFAULT_DPI)
+        return resolved_dpi
 
     @staticmethod
     def _classify_input_dialog_filetype(selected_pattern: str) -> str:
@@ -414,27 +465,23 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._size_filename_bg = filename_bg
         frame_colors = theme_colors.get("Frame", {})
         label_disabled_colors = theme_colors.get("LabelDisabled", {})
-        block_luminance = get_hex_color_luminance(self._size_block_bg)
-        filename_luminance = get_hex_color_luminance(filename_bg)
-        disabled_bg_amount = 0.24 if block_luminance < 0.5 else -0.14
-        disabled_filename_bg_amount = 0.32 if filename_luminance < 0.5 else -0.22
-        self._size_disabled_bg = adjust_hex_color(self._size_block_bg, disabled_bg_amount)
-        self._size_filename_disabled_bg = adjust_hex_color(filename_bg, disabled_filename_bg_amount)
-        if str(self._size_filename_disabled_bg).strip().lower() == str(filename_bg).strip().lower():
-            self._size_filename_disabled_bg = self._size_disabled_bg
         disabled_fg_candidate = label_disabled_colors.get(
             "fg",
             frame_colors.get("disabledforeground", self._dpi_combo_disabled_fg or "#808080"),
         )
-        neutral_disabled_fg = adjust_hex_color(
-            self._size_disabled_bg,
-            0.58 if block_luminance < 0.5 else -0.52,
+        block_disabled_visuals = resolve_disabled_visual_colors(
+            self._size_block_bg,
+            str(disabled_fg_candidate),
         )
-        self._size_disabled_fg = ensure_contrast_color(
-            neutral_disabled_fg or str(disabled_fg_candidate),
-            self._size_disabled_bg,
-            0.42 if block_luminance < 0.5 else -0.42,
+        filename_disabled_visuals = resolve_disabled_visual_colors(
+            filename_bg,
+            str(disabled_fg_candidate),
+            fallback_bg=block_disabled_visuals.get("disabled_bg", self._size_block_bg),
+            use_emphasis_surface=True,
         )
+        self._size_disabled_bg = block_disabled_visuals.get("disabled_bg", self._size_block_bg)
+        self._size_disabled_fg = block_disabled_visuals.get("disabled_fg", str(disabled_fg_candidate))
+        self._size_filename_disabled_bg = filename_disabled_visuals.get("disabled_bg", self._size_disabled_bg)
 
         return {
             "filename_bg": filename_bg,
@@ -1134,11 +1181,11 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             anchor="w",
         )
         self._ext_pdf_dpi_label.pack(side="left", padx=(0, 2))
-        self._ext_pdf_dpi_var = tk.StringVar(value=str(int(self._pdf_raster_dpi_default)))
+        self._ext_pdf_dpi_var = tk.StringVar(value=self._get_initial_user_dpi_choice())
         self._ext_pdf_dpi_combo = ttk.Combobox(
             self._ext_pdf_dpi_row,
             textvariable=self._ext_pdf_dpi_var,
-            values=_DPI_CHOICES,
+            values=self._get_configured_dpi_choices(),
             width=6,
         )
         self._ext_pdf_dpi_combo.pack(side="left", padx=(0, 15))
@@ -1264,10 +1311,10 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         )
         self._dpi_label.pack(side="left", padx=(0, 2))
         self._dpi_label_default_fg = self._dpi_label.cget("fg")
-        self._dpi_var = tk.StringVar(value="300")
+        self._dpi_var = tk.StringVar(value=self._get_initial_user_dpi_choice())
         self._dpi_combo = ttk.Combobox(
             self._options_row, textvariable=self._dpi_var,
-            values=_DPI_CHOICES, width=6,
+            values=self._get_configured_dpi_choices(), width=6,
         )
         self._dpi_combo.pack(side="left", padx=(0, 15))
         self._dpi_combo_default_style = self._dpi_combo.cget("style")
@@ -4353,11 +4400,6 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 )
             except Exception:
                 pass
-
-        # --- 8. WidgetsTracker-registered child widgets ---
-        for widget in self.base_widgets.get_widgets():
-            if hasattr(widget, "apply_theme_color"):
-                widget.apply_theme_color(theme_colors)
 
         # Main processing: run one local final pass after child widget theme
         # handlers complete so startup/theme-switch colors are not overwritten.

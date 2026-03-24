@@ -209,14 +209,14 @@
         "fg": "#43c0cd",
         "activebackground": "#43c0cd",
         "activeforeground": "#27283a",
-        "relief": "flat"
+        "relief": "raised"
     },
     "pdf_save_button": {
         "bg": "#27283a",
         "fg": "#43c0cd",
         "activebackground": "#43c0cd",
         "activeforeground": "#27283a",
-        "relief": "flat"
+        "relief": "raised"
     },
     "create_image_color_select_button": {
         "disabledforeground": "#27283a",

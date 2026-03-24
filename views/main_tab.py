@@ -1,31 +1,54 @@
 from __future__ import annotations
+from io import BytesIO
 from logging import getLogger
+import shutil
+import threading
+import time
+from pathlib import Path
 import tkinter as tk
-from typing import Optional, Any, List, Dict
+from tkinter import messagebox
+from typing import Optional, Any, List, Dict, Literal
+from PIL import Image, ImageTk, ImageFile
+from PIL.Image import Resampling
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
-from utils.utils import get_resource_path, resolve_initial_dir
+from utils.utils import get_resource_path, resolve_initial_dir, get_temp_dir, show_balloon_message
 
 from configurations.message_manager import get_message_manager
+from configurations import tool_settings
+from models.class_dictionary import FilePathInfo
+from controllers.drag_and_drop_file import DragAndDropHandler
+from controllers.file2png_by_page import Pdf2PngByPages
+from controllers.pdf_export_handler import PDFExportHandler, apply_color_processing_to_image
 from widgets.base_button import BaseButton
-from widgets.base_button_image_change_toggle_button import BaseButtonImageChangeToggleButton
 from widgets.base_label_class import BaseLabelClass
 from widgets.base_path_select_button import BasePathSelectButton
-from widgets.base_file_analyze_button import BaseFileAnalyzeButton
 from widgets.base_image_color_change_button import BaseImageColorChangeButton
+from widgets.base_sub_graph_window_button import CreateSubGraphWindowButton
 from widgets.color_theme_change_button import ColorThemeChangeButton  # type: ignore
 from widgets.progress_window import ProgressWindow
 from widgets.language_select_combobox import LanguageSelectCombo
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_tab_widgets import BaseTabWidgets
+from widgets.page_control_frame import PageControlFrame
 
 from configurations.user_setting_manager import UserSettingManager
 from controllers.image_sw_paths import ImageSwPaths
+from controllers.mouse_event_handler import MouseEventHandler
+from controllers.widgets_tracker import WidgetsTracker, adjust_hex_color, ensure_contrast_color, get_hex_color_luminance, resolve_disabled_visual_colors
 from widgets.base_path_entry import BasePathEntry
 from widgets.base_entry_class import BaseEntryClass
+from widgets.base_value_combobox import BaseValueCombobox
 from controllers.color_theme_manager import ColorThemeManager
+
+try:
+    from pypdf import PdfReader
+except Exception:
+    PdfReader = None
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
+_MAIN_TAB_DEFAULT_DPI = 300
+_MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
 
 
 class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
@@ -66,11 +89,84 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         # Init main tab class
         logger.debug(message_manager.get_log_message("L243"))
         super().__init__(master)
+        WidgetsTracker().add_widgets(self)
         self.settings = settings
         self.master = master
         self.file_operation_status: bool = True
-        self.selected_dpi_value: int = int(self.settings.get_setting("setted_dpi", "default"))
+        self.selected_dpi_value: int = self._get_selected_dpi()
         self.base_widgets = BaseTabWidgets(self)
+        self.status_var = tk.StringVar(value="")
+        self.base_path = tk.StringVar(value=message_manager.get_ui_message("U053"))
+        self.comparison_path = tk.StringVar(value=message_manager.get_ui_message("U053"))
+        self.output_path = tk.StringVar(value=message_manager.get_ui_message("U054"))
+        saved_threshold_default = int(self.settings.get_setting("separat_color_threshold", 700))
+        self._base_threshold_value_var = tk.IntVar(
+            value=int(self.settings.get_setting("base_separat_color_threshold", saved_threshold_default))
+        )
+        self._comparison_threshold_value_var = tk.IntVar(
+            value=int(self.settings.get_setting("comparison_separat_color_threshold", saved_threshold_default))
+        )
+        self.visualized_image = tk.StringVar(value="base")
+        self.current_page_index = 0
+        self._preferred_preview_scale = self._get_saved_preview_scale()
+        self._show_base_layer_var = tk.BooleanVar(value=True)
+        self._show_comp_layer_var = tk.BooleanVar(value=True)
+        self._show_reference_grid_var = tk.BooleanVar(value=False)
+        self.page_count = 0
+        self.base_pages: List[str] = []
+        self.comp_pages: List[str] = []
+        self.base_transform_data: List[tuple[float, float, float, float]] = []
+        self.comp_transform_data: List[tuple[float, float, float, float]] = []
+        self._base_export_transform_overrides: List[Dict[str, float]] = []
+        self._comp_export_transform_overrides: List[Dict[str, float]] = []
+        self.page_control_frame: Optional[PageControlFrame] = None
+        self.mouse_handler: Optional[MouseEventHandler] = None
+        self.photo_image: Optional[tk.PhotoImage] = None
+        self._base_photo_image: Optional[ImageTk.PhotoImage] = None
+        self._comp_photo_image: Optional[ImageTk.PhotoImage] = None
+        self._base_canvas_image_id: Optional[int] = None
+        self._comp_canvas_image_id: Optional[int] = None
+        self._automatic_execute_button: Optional[tk.Button] = None
+        self._custom_execute_button: Optional[tk.Button] = None
+        self._base_file_analyze_btn: Optional[CreateSubGraphWindowButton] = None
+        self._comparison_file_analyze_btn: Optional[CreateSubGraphWindowButton] = None
+        self._automatic_button_images: Dict[str, ImageTk.PhotoImage] = {}
+        self._custom_button_images: Dict[str, ImageTk.PhotoImage] = {}
+        self._visual_adjustments_enabled = False
+        self._copy_protected = False
+        self._conversion_dpi = self._get_selected_dpi()
+        self._batch_edit_selected = True
+        self._selected_color_processing_mode = self._normalize_color_processing_mode(
+            str(self.settings.get_setting("color_processing_mode", "指定色濃淡") or "指定色濃淡")
+        )
+        self._color_processing_mode_var = tk.StringVar(
+            value=self._get_color_processing_mode_display_text(self._selected_color_processing_mode)
+        )
+        self._base_selected_color_hex: Optional[str] = None
+        self._comparison_selected_color_hex: Optional[str] = None
+        self.base_page_paths: List[Path] = []
+        self.comp_page_paths: List[Path] = []
+        self._base_page_records: List[Dict[str, Any]] = []
+        self._comp_page_records: List[Dict[str, Any]] = []
+        self._base_workspace_dir: Optional[Path] = None
+        self._comp_workspace_dir: Optional[Path] = None
+        self.base_file_info: Optional[FilePathInfo] = None
+        self.comp_file_info: Optional[FilePathInfo] = None
+        self.base_pdf_metadata: Dict[str, Any] = {}
+        self.comp_pdf_metadata: Dict[str, Any] = {}
+        self.base_pdf_converter: Optional[Pdf2PngByPages] = None
+        self.comp_pdf_converter: Optional[Pdf2PngByPages] = None
+        self._dpi_combo: Optional[BaseValueCombobox] = None
+        self._dpi_choice_var = tk.StringVar(value=str(self.selected_dpi_value))
+        self._detected_dpi_value: Optional[int] = None
+        self._preview_source_image_cache: Dict[tuple[str, str, int, int], Image.Image] = {}
+        self._preview_processed_image_cache: Dict[tuple[str, str, int, int, str, str, int], Image.Image] = {}
+        self._preview_render_generation = 0
+        self._background_preview_render_thread: Optional[threading.Thread] = None
+        self._base_preview_render_lock = threading.Lock()
+        self._comp_preview_render_lock = threading.Lock()
+        self._last_translation_aux_update_time = 0.0
+        self._translation_aux_update_interval_seconds = 1.0 / 30.0
 
         # Button images
         self.auto_conv_btn_img: Optional[ImageSwPaths] = None
@@ -79,20 +175,3483 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self.move_prev_page_btn_img: Optional[ImageSwPaths] = None
         self.move_next_page_btn_img: Optional[ImageSwPaths] = None
         self.move_end_page_btn_img: Optional[ImageSwPaths] = None
+        self._current_custom_button_state = "off"
+        self._action_button_square_size = 120
+        self._action_button_active_delay_ms = 420
 
         # Setup UI components
         self._setup_frames()
         self._setup_widgets()
+        self._setup_drag_and_drop()
+        self.after_idle(self._sync_shared_paths_from_settings)
+        self.after_idle(self._apply_current_theme_after_build)
         # Completed main tab init
         logger.debug(message_manager.get_log_message("L244"))
 
     def _config_widget(self, theme_settings: Dict[str, Any]) -> None:
-        """Configure widget-specific theme settings."""
-        pass
+        """Configure widget-specific theme settings.
+
+        Args:
+            theme_settings: Theme settings for the main comparison canvas.
+        """
+        if hasattr(self, "canvas"):
+            self.canvas.configure(
+                background=theme_settings.get("background", theme_settings.get("bg", "#ffffff")),
+                highlightbackground=theme_settings.get("highlightbackground", "#e0e0e0"),
+                highlightcolor=theme_settings.get("highlightcolor", "#e0e0e0"),
+            )
 
     def apply_theme_color(self, theme_data: Dict[str, Any]) -> None:
-        """Apply theme to this tab and its widgets."""
-        pass
+        """Apply theme to this tab and its widgets.
+
+        Args:
+            theme_data: Theme data obtained from the current theme manager.
+        """
+        window_settings = theme_data.get("Window", {})
+        window_bg = window_settings.get("bg", "#ffffff")
+        frame_settings = theme_data.get("Frame", {})
+        frame_bg = frame_settings.get("bg", window_bg)
+        frame_fg = frame_settings.get("fg", "#000000")
+
+        self.configure(bg=frame_bg)
+        for attr_name in [
+            "frame_main0",
+            "frame_main1",
+            "frame_main2",
+            "frame_main3",
+            "_row4_comment_frame",
+            "_row4_auto_column_frame",
+            "_row4_arrow_frame",
+            "_row4_action_frame",
+            "_row4_custom_column_frame",
+            "_row4_custom_frame",
+            "_dpi_row_frame",
+            "_layer_toggle_frame",
+            "_row4_arrow_guidance_frame",
+            "_row4_custom_guidance_frame",
+            "_shortcut_guide_frame",
+        ]:
+            frame = getattr(self, attr_name, None)
+            if frame is not None:
+                frame.configure(
+                    bg=frame_bg,
+                    relief=tk.FLAT,
+                    borderwidth=0,
+                    highlightthickness=0,
+                )
+
+        process_button_theme = dict(theme_data.get("process_button", {}))
+        elevated_process_style = self._build_elevated_button_style(
+            process_button_theme,
+            frame_bg,
+            frame_fg,
+        )
+
+        notebook_settings = theme_data.get("Notebook", {})
+        canvas_theme = theme_data.get("canvas", {})
+        canvas_background = notebook_settings.get("tab_bg", notebook_settings.get("bg", frame_bg))
+        self._config_widget(
+            {
+                "background": canvas_theme.get("background", canvas_background),
+                "highlightbackground": canvas_theme.get("highlightbackground", frame_bg),
+                "highlightcolor": canvas_theme.get("highlightcolor", frame_fg),
+            }
+        )
+
+        if process_button_theme:
+            for action_button in [
+                getattr(self, "_automatic_execute_button", None),
+                getattr(self, "_custom_execute_button", None),
+            ]:
+                if action_button is not None:
+                    action_button.configure(**elevated_process_style)
+            self._refresh_action_button_image_cache()
+
+        self._apply_path_entry_activity_style(theme_data)
+        self._apply_layer_toggle_theme(theme_data)
+
+        comment_panel_theme = dict(theme_data.get("create_fb_threshold_set_label", {}))
+        comment_panel_bg = str(comment_panel_theme.get("bg", frame_bg))
+        comment_panel_fg = str(comment_panel_theme.get("fg", frame_fg))
+        comment_frame = getattr(self, "_row4_comment_frame", None)
+        if comment_frame is not None:
+            try:
+                comment_frame.configure(bg=comment_panel_bg)
+            except Exception:
+                pass
+
+        comment_label = getattr(self, "_row4_comment_text_label", None)
+        if comment_label is not None:
+            try:
+                comment_label.configure(bg=comment_panel_bg, fg=comment_panel_fg)
+            except Exception:
+                pass
+
+        for attr_name in [
+            "_row4_arrow_guidance_frame",
+            "_row4_custom_guidance_frame",
+        ]:
+            guidance_frame = getattr(self, attr_name, None)
+            if guidance_frame is not None:
+                try:
+                    guidance_frame.configure(bg=comment_panel_bg)
+                except Exception:
+                    pass
+
+        shortcut_guide_label = getattr(self, "_shortcut_guide_label", None)
+        if shortcut_guide_label is not None:
+            try:
+                shortcut_guide_label.configure(bg=frame_bg, fg=frame_fg)
+            except Exception:
+                pass
+
+        for attr_name in [
+            "_row4_arrow_guidance_label",
+            "_row4_custom_guidance_label",
+        ]:
+            guidance_label = getattr(self, attr_name, None)
+            if guidance_label is not None:
+                try:
+                    guidance_label.configure(bg=comment_panel_bg, fg=comment_panel_fg)
+                except Exception:
+                    pass
+
+        for attr_name in [
+            "_row4_action_frame",
+            "_color_mode_row_frame",
+            "_dpi_row_frame",
+        ]:
+            frame = getattr(self, attr_name, None)
+            if frame is not None:
+                try:
+                    frame.configure(bg=frame_bg)
+                except Exception:
+                    pass
+
+        threshold_summary_frame = getattr(self, "_threshold_summary_frame", None)
+        if threshold_summary_frame is not None:
+            try:
+                threshold_summary_frame.configure(bg=comment_panel_bg)
+            except Exception:
+                pass
+
+        for attr_name in [
+            "_color_mode_label",
+            "_threshold_summary_label",
+            "_base_threshold_inline_label",
+            "_comparison_threshold_inline_label",
+            "_threshold_separator_label",
+        ]:
+            label = getattr(self, attr_name, None)
+            if label is not None:
+                try:
+                    label.configure(bg=comment_panel_bg, fg=comment_panel_fg)
+                except Exception:
+                    pass
+
+        if self.page_control_frame is not None:
+            try:
+                self.page_control_frame.apply_theme_color(theme_data)
+            except Exception:
+                pass
+
+        if hasattr(self, "canvas"):
+            try:
+                self._draw_canvas_footer_guide()
+                self._draw_reference_grid(self.canvas.bbox("pdf_image"), raise_above_images=self._has_loaded_workspace_pages())
+            except Exception:
+                pass
+
+        self._refresh_interaction_state(theme_data)
+
+    def _apply_current_theme_after_build(self) -> None:
+        """Apply the current theme after all child widgets are created."""
+        self._refresh_localized_main_tab_text()
+        self.apply_theme_color(ColorThemeManager.get_instance().get_current_theme())
+
+    def _apply_path_entry_activity_style(self, theme_data: Optional[Dict[str, Any]] = None) -> None:
+        """Apply theme-aware active or inactive styling to path entries.
+
+        Args:
+            theme_data: Optional current theme snapshot.
+        """
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        label_disabled_theme = dict(current_theme.get("LabelDisabled", {}))
+
+        def _configure_entry(entry_attr: str, color_key: str, is_active: bool) -> None:
+            entry_widget = getattr(self, entry_attr, None)
+            if entry_widget is None or not hasattr(entry_widget, "path_entry"):
+                return
+
+            path_entry = entry_widget.path_entry
+            entry_theme = dict(current_theme.get(color_key, current_theme.get("create_path_entry", {})))
+            entry_bg = str(entry_theme.get("bg", frame_theme.get("bg", "#ffffff")))
+            entry_fg = str(entry_theme.get("fg", frame_theme.get("fg", "#000000")))
+            highlight_bg = str(entry_theme.get("highlightbackground", entry_bg))
+            highlight_fg = str(entry_theme.get("highlightcolor", entry_fg))
+
+            try:
+                if is_active:
+                    path_entry.configure(
+                        state="normal",
+                        bg=entry_bg,
+                        fg=entry_fg,
+                        insertbackground=entry_theme.get("insertbackground", entry_fg),
+                        highlightbackground=highlight_bg,
+                        highlightcolor=highlight_fg,
+                        disabledbackground=entry_bg,
+                        disabledforeground=entry_fg,
+                        readonlybackground=entry_bg,
+                    )
+                    return
+
+                luminance = get_hex_color_luminance(entry_bg)
+                inactive_bg = adjust_hex_color(entry_bg, 0.32 if luminance < 0.5 else -0.22)
+                if str(inactive_bg).strip().lower() == str(entry_bg).strip().lower():
+                    inactive_bg = adjust_hex_color(
+                        str(frame_theme.get("bg", entry_bg)),
+                        0.24 if get_hex_color_luminance(str(frame_theme.get("bg", entry_bg))) < 0.5 else -0.14,
+                    )
+                inactive_fg_candidate = str(
+                    label_disabled_theme.get(
+                        "fg",
+                        frame_theme.get("disabledforeground", entry_fg),
+                    )
+                )
+                neutral_inactive_fg = adjust_hex_color(
+                    inactive_bg,
+                    0.58 if get_hex_color_luminance(inactive_bg) < 0.5 else -0.52,
+                )
+                inactive_fg = ensure_contrast_color(
+                    neutral_inactive_fg or inactive_fg_candidate,
+                    inactive_bg,
+                    0.42,
+                )
+                path_entry.configure(
+                    state="readonly",
+                    bg=inactive_bg,
+                    fg=inactive_fg,
+                    insertbackground=inactive_fg,
+                    highlightbackground=str(frame_theme.get("bg", inactive_bg)),
+                    highlightcolor=inactive_fg,
+                    disabledbackground=inactive_bg,
+                    disabledforeground=inactive_fg,
+                    readonlybackground=inactive_bg,
+                )
+            except Exception:
+                pass
+
+        _configure_entry("_base_file_path_entry", "base_file_path_entry", self._path_points_to_file(self.base_path.get()))
+        _configure_entry("_comparison_file_path_entry", "comparison_file_path_entry", self._path_points_to_file(self.comparison_path.get()))
+        _configure_entry("_output_folder_path_entry", "output_folder_path_entry", True)
+
+    def _build_elevated_button_style(
+        self,
+        button_theme: Dict[str, Any],
+        frame_bg: str,
+        frame_fg: str,
+    ) -> Dict[str, Any]:
+        """Build a button style that matches the sub-graph analyze button affordance.
+
+        Args:
+            button_theme: Theme settings for the target button.
+            frame_bg: Background color of the surrounding frame.
+            frame_fg: Default foreground color for the surrounding frame.
+
+        Returns:
+            Dict[str, Any]: Tkinter button configuration for a raised surface.
+        """
+        button_bg = str(button_theme.get("bg", frame_bg))
+        active_bg = str(button_theme.get("activebackground", button_bg))
+        border_color = active_bg if active_bg else button_bg
+
+        if button_bg.startswith("#") and button_bg.strip().lower() == str(frame_bg).strip().lower():
+            button_bg = adjust_hex_color(button_bg, 0.06)
+
+        return {
+            "bg": button_bg,
+            "fg": button_theme.get("fg", frame_fg),
+            "activebackground": active_bg,
+            "activeforeground": button_theme.get("activeforeground", button_theme.get("fg", frame_fg)),
+            "relief": tk.RAISED,
+            "bd": 2,
+            "highlightthickness": 1,
+            "highlightbackground": border_color,
+            "highlightcolor": border_color,
+        }
+
+    def _resolve_main_button_theme(self, theme_data: Dict[str, Any], theme_key: str) -> Dict[str, Any]:
+        """Resolve a button theme with the same fallback behavior as the reference button.
+
+        Args:
+            theme_data: Current theme snapshot.
+            theme_key: Theme key for the target button.
+
+        Returns:
+            Resolved theme dictionary containing at least stable foreground/background values.
+        """
+        button_theme = dict(theme_data.get(theme_key, {}))
+        if "bg" not in button_theme or "fg" not in button_theme:
+            fallback_theme = dict(theme_data.get("process_button", theme_data.get("Button", {})))
+            fallback_theme.update(button_theme)
+            button_theme = fallback_theme
+        return button_theme
+
+    def _apply_main_button_state(
+        self,
+        button: Optional[tk.Button],
+        *,
+        enabled: bool,
+        theme_key: str,
+        theme_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply enabled or disabled visuals to a main-tab button.
+
+        Args:
+            button: Target button widget.
+            enabled: Whether the button should be interactive.
+            theme_key: Theme key for the target button.
+            theme_data: Optional current theme snapshot.
+        """
+        if button is None:
+            return
+
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        frame_bg = str(frame_theme.get("bg", "#ffffff"))
+        frame_fg = str(frame_theme.get("fg", "#000000"))
+        label_disabled_theme = dict(current_theme.get("LabelDisabled", {}))
+        button_theme = self._resolve_main_button_theme(current_theme, theme_key)
+        elevated_style = self._build_elevated_button_style(button_theme, frame_bg, frame_fg)
+        disabled_visuals = resolve_disabled_visual_colors(
+            str(button_theme.get("bg", frame_bg)),
+            str(label_disabled_theme.get("fg", frame_theme.get("disabledforeground", button_theme.get("fg", frame_fg)))),
+            fallback_bg=frame_bg,
+            use_emphasis_surface=True,
+        )
+        disabled_bg = str(disabled_visuals.get("disabled_bg", frame_bg))
+        disabled_fg = str(disabled_visuals.get("disabled_fg", frame_fg))
+
+        try:
+            if enabled:
+                if hasattr(button, "_disabled_visual_bg"):
+                    setattr(button, "_disabled_visual_bg", disabled_bg)
+                if hasattr(button, "_disabled_visual_fg"):
+                    setattr(button, "_disabled_visual_fg", disabled_fg)
+                button.configure(
+                    state=tk.NORMAL,
+                    disabledforeground=disabled_fg,
+                    **elevated_style,
+                )
+                return
+
+            if hasattr(button, "_disabled_visual_bg"):
+                setattr(button, "_disabled_visual_bg", disabled_bg)
+            if hasattr(button, "_disabled_visual_fg"):
+                setattr(button, "_disabled_visual_fg", disabled_fg)
+            button.configure(
+                state=tk.DISABLED,
+                bg=disabled_bg,
+                fg=disabled_fg,
+                activebackground=disabled_bg,
+                activeforeground=disabled_fg,
+                disabledforeground=disabled_fg,
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
+                highlightbackground=frame_bg,
+                highlightcolor=frame_bg,
+            )
+        except Exception:
+            pass
+
+    def _apply_main_entry_state(
+        self,
+        entry: Optional[tk.Entry],
+        *,
+        enabled: bool,
+        theme_key: str,
+        theme_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply enabled or disabled visuals to a main-tab entry widget.
+
+        Args:
+            entry: Target entry widget.
+            enabled: Whether the entry should accept input.
+            theme_key: Theme key for the target entry.
+            theme_data: Optional current theme snapshot.
+        """
+        if entry is None:
+            return
+
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        entry_theme = dict(current_theme.get(theme_key, current_theme.get("dpi_entry", {})))
+        entry_bg = str(entry_theme.get("bg", frame_theme.get("bg", "#ffffff")))
+        entry_fg = str(entry_theme.get("fg", frame_theme.get("fg", "#000000")))
+        disabled_visuals = resolve_disabled_visual_colors(
+            entry_bg,
+            str(current_theme.get("LabelDisabled", {}).get("fg", frame_theme.get("disabledforeground", entry_fg))),
+            fallback_bg=str(frame_theme.get("bg", entry_bg)),
+            use_emphasis_surface=True,
+        )
+        disabled_bg = str(disabled_visuals.get("disabled_bg", entry_bg))
+        disabled_fg = str(disabled_visuals.get("disabled_fg", entry_fg))
+
+        try:
+            entry.configure(
+                state=tk.NORMAL if enabled else tk.DISABLED,
+                bg=entry_bg if enabled else disabled_bg,
+                fg=entry_fg if enabled else disabled_fg,
+                insertbackground=entry_fg if enabled else disabled_fg,
+                disabledbackground=disabled_bg,
+                disabledforeground=disabled_fg,
+                readonlybackground=disabled_bg,
+            )
+        except Exception:
+            pass
+
+    def _apply_main_combobox_state(
+        self,
+        combobox: Optional[BaseValueCombobox],
+        *,
+        enabled: bool,
+    ) -> None:
+        """Apply enabled or disabled state to a readonly combobox.
+
+        Args:
+            combobox: Target combobox widget.
+            enabled: Whether the combobox should accept selection changes.
+        """
+        if combobox is None:
+            return
+
+        try:
+            combobox.configure(state="readonly" if enabled else "disabled")
+        except Exception:
+            pass
+
+    def _should_enable_batch_edit(self) -> bool:
+        """Return whether batch edit should be available for the current workspace.
+
+        Returns:
+            ``True`` when either side has multiple pages and editing is allowed.
+        """
+        return (not self._copy_protected) and (
+            len(self.base_page_paths) > 1 or len(self.comp_page_paths) > 1
+        )
+
+    def _sync_batch_edit_state(self) -> None:
+        """Apply batch edit availability and restore the stored check state."""
+        if self.page_control_frame is None:
+            return
+
+        batch_edit_enabled = self._should_enable_batch_edit()
+        self.page_control_frame.set_batch_edit_enabled(batch_edit_enabled)
+        if batch_edit_enabled:
+            self.page_control_frame.set_batch_edit_checked(self._batch_edit_selected)
+
+    def _propagate_current_transform_to_all_pages(self, *, visible_only: bool) -> None:
+        """Copy the current page transform to every page when batch edit is active.
+
+        Args:
+            visible_only: Whether propagation should be limited to visible layers.
+        """
+        if self.page_control_frame is None or not self.page_control_frame.is_batch_edit_checked():
+            return
+
+        layer_targets = [
+            (self.base_transform_data, bool(self._show_base_layer_var.get()) or not visible_only),
+            (self.comp_transform_data, bool(self._show_comp_layer_var.get()) or not visible_only),
+        ]
+        for transform_data, should_apply in layer_targets:
+            if not should_apply or not transform_data or self.current_page_index >= len(transform_data):
+                continue
+            current_transform = transform_data[self.current_page_index]
+            for index in range(len(transform_data)):
+                if index != self.current_page_index:
+                    transform_data[index] = current_transform
+
+    def _get_visible_layer_state(self) -> dict[int, bool]:
+        """Return the currently visible layer state for the workspace.
+
+        Returns:
+            Visibility dictionary keyed by layer ID.
+        """
+        visible_layers: dict[int, bool] = {}
+        if self.base_page_paths and bool(self._show_base_layer_var.get()):
+            visible_layers[0] = True
+        if self.comp_page_paths and bool(self._show_comp_layer_var.get()):
+            visible_layers[1] = True
+        return visible_layers
+
+    def _refresh_current_page_view(self) -> None:
+        """Refresh the page-control and canvas view for the current page."""
+        self._apply_preferred_preview_scale_to_page(self.current_page_index)
+        if self.mouse_handler is not None:
+            visible_layers = self._get_visible_layer_state()
+            self.mouse_handler.update_state(
+                current_page_index=self.current_page_index,
+                visible_layers=visible_layers,
+            )
+            if hasattr(self.mouse_handler, "refresh_overlay_positions"):
+                self.mouse_handler.refresh_overlay_positions()
+
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+            return
+
+        if self.page_control_frame is not None:
+            self.page_control_frame.update_page_label(
+                self.page_count - 1 if self.page_count == 0 else self.current_page_index,
+                self.page_count,
+            )
+            rotation, tx, ty, scale = self._get_active_transform()
+            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+        self._render_comparison_placeholder()
+
+    def _update_canvas_translation_preview(self) -> None:
+        """Update only canvas image coordinates during drag translation.
+
+        This avoids rebuilding PIL images on every mouse move while still keeping
+        the visible page position and transform panel in sync.
+        """
+        if not self._has_loaded_workspace_pages():
+            return
+        if not (0 <= self.current_page_index < self.page_count):
+            return
+
+        if self._base_canvas_image_id is not None and self.current_page_index < len(self.base_transform_data):
+            _rotation, translate_x, translate_y, _scale = self.base_transform_data[self.current_page_index]
+            try:
+                self.canvas.coords(self._base_canvas_image_id, int(translate_x), int(translate_y))
+            except Exception:
+                pass
+
+        if self._comp_canvas_image_id is not None and self.current_page_index < len(self.comp_transform_data):
+            _rotation, translate_x, translate_y, _scale = self.comp_transform_data[self.current_page_index]
+            try:
+                self.canvas.coords(self._comp_canvas_image_id, int(translate_x), int(translate_y))
+            except Exception:
+                pass
+
+        current_time = time.monotonic()
+        should_refresh_auxiliary = (
+            current_time - self._last_translation_aux_update_time
+        ) >= self._translation_aux_update_interval_seconds
+        if not should_refresh_auxiliary:
+            return
+
+        self._last_translation_aux_update_time = current_time
+
+        try:
+            self.canvas.config(scrollregion=self.canvas.bbox("pdf_image"))
+        except Exception:
+            pass
+
+        self._reposition_canvas_footer_guide()
+
+        if self.mouse_handler is not None and hasattr(self.mouse_handler, "refresh_overlay_positions"):
+            self.mouse_handler.refresh_overlay_positions()
+
+        if self.page_control_frame is not None:
+            rotation, tx, ty, scale = self._get_active_transform()
+            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+
+    def _on_batch_edit_toggle(self, checked: bool) -> None:
+        """Store the user's batch edit preference.
+
+        Args:
+            checked: Latest checkbox state from the page control frame.
+        """
+        self._batch_edit_selected = bool(checked)
+
+    def _get_saved_preview_scale(self) -> float:
+        """Return the persisted preview scale used for new page displays.
+
+        Returns:
+            Preview scale factor.
+        """
+        raw_scale = self.settings.get_setting("preview_scale", 1.0)
+        try:
+            resolved_scale = float(raw_scale)
+        except (TypeError, ValueError):
+            resolved_scale = 1.0
+        return max(0.05, min(10.0, resolved_scale))
+
+    def _persist_preview_scale(self, scale_value: float) -> None:
+        """Persist the preferred preview scale when it changes.
+
+        Args:
+            scale_value: Preview scale factor to save.
+        """
+        resolved_scale = max(0.05, min(10.0, float(scale_value)))
+        if abs(resolved_scale - self._preferred_preview_scale) < 1e-6:
+            return
+        self._preferred_preview_scale = resolved_scale
+        self.settings.update_setting("preview_scale", resolved_scale)
+
+    def _apply_preferred_preview_scale_to_page(self, page_index: int) -> None:
+        """Apply the persisted preview scale to the target page transforms.
+
+        Args:
+            page_index: Zero-based page index.
+        """
+        for transform_data in (self.base_transform_data, self.comp_transform_data):
+            if not transform_data or not (0 <= page_index < len(transform_data)):
+                continue
+            rotation, tx, ty, _scale = transform_data[page_index]
+            transform_data[page_index] = (rotation, tx, ty, self._preferred_preview_scale)
+
+    def _update_preferred_preview_scale_from_current_page(self) -> None:
+        """Refresh the persisted preview scale from the currently displayed page."""
+        _rotation, _tx, _ty, scale = self._get_active_transform()
+        self._persist_preview_scale(scale)
+
+    @staticmethod
+    def _normalize_color_processing_mode(raw_mode: str) -> str:
+        """Normalize stored color-processing values to canonical internal names.
+
+        Args:
+            raw_mode: Raw persisted or displayed mode text.
+
+        Returns:
+            Canonical internal mode name.
+        """
+        normalized = str(raw_mode or "").strip().lower()
+        if normalized in {"二色化", "binarization", "binary", "two-tone"}:
+            return "二色化"
+        if normalized in {
+            "指定色濃淡",
+            "color shading",
+            "selected color shading",
+            "tinted monochrome",
+            "グレースケール化",
+            "grayscale",
+        }:
+            return "指定色濃淡"
+        return "指定色濃淡"
+
+    def _get_color_processing_mode_display_text(self, canonical_mode: str) -> str:
+        """Return the localized combobox label for a canonical color mode.
+
+        Args:
+            canonical_mode: Internal canonical color mode.
+
+        Returns:
+            Localized display text.
+        """
+        if self._normalize_color_processing_mode(canonical_mode) == "二色化":
+            return message_manager.get_ui_message("U139")
+        return message_manager.get_ui_message("U138")
+
+    def _get_color_processing_mode_display_values(self) -> List[str]:
+        """Return localized combobox choices for color processing.
+
+        Returns:
+            List of localized display labels.
+        """
+        return [
+            message_manager.get_ui_message("U138"),
+            message_manager.get_ui_message("U139"),
+        ]
+
+    def _resolve_color_processing_mode_from_display(self, display_value: str) -> str:
+        """Resolve a localized combobox label to the canonical internal mode.
+
+        Args:
+            display_value: Localized combobox text.
+
+        Returns:
+            Canonical internal mode name.
+        """
+        normalized = self._normalize_color_processing_mode(display_value)
+        if normalized == "二色化":
+            return "二色化"
+        if str(display_value).strip() == message_manager.get_ui_message("U139"):
+            return "二色化"
+        return "指定色濃淡"
+
+    def _refresh_localized_main_tab_text(self) -> None:
+        """Refresh language-dependent labels inside the main comparison controls."""
+        if getattr(self, "_color_mode_label", None) is not None:
+            self._color_mode_label.configure(text=message_manager.get_ui_message("U136"))
+        if getattr(self, "_threshold_summary_label", None) is not None:
+            self._threshold_summary_label.configure(text=message_manager.get_ui_message("U142"))
+        if getattr(self, "_base_threshold_inline_label", None) is not None:
+            self._base_threshold_inline_label.configure(text=message_manager.get_ui_message("U143"))
+        if getattr(self, "_threshold_separator_label", None) is not None:
+            self._threshold_separator_label.configure(text=message_manager.get_ui_message("U144"))
+        if getattr(self, "_row4_arrow_guidance_label", None) is not None:
+            self._row4_arrow_guidance_label.configure(text=message_manager.get_ui_message("U146"))
+        if getattr(self, "_row4_custom_guidance_label", None) is not None:
+            self._row4_custom_guidance_label.configure(text=message_manager.get_ui_message("U147"))
+        if getattr(self, "_show_base_layer_check", None) is not None:
+            self._show_base_layer_check.configure(text=message_manager.get_ui_message("U140"))
+        if getattr(self, "_show_comp_layer_check", None) is not None:
+            self._show_comp_layer_check.configure(text=message_manager.get_ui_message("U141"))
+        if getattr(self, "_show_reference_grid_check", None) is not None:
+            self._show_reference_grid_check.configure(text=message_manager.get_ui_message("U149"))
+        if getattr(self, "_shortcut_guide_label", None) is not None:
+            self._shortcut_guide_label.configure(text=message_manager.get_ui_message("U150"))
+        if getattr(self, "_custom_rotation_guide_button", None) is not None:
+            self._custom_rotation_guide_button.configure(text=message_manager.get_ui_message("U151"))
+        if getattr(self, "_color_processing_mode_combo", None) is not None:
+            self._color_processing_mode_combo.configure(values=self._get_color_processing_mode_display_values())
+            self._color_processing_mode_var.set(
+                self._get_color_processing_mode_display_text(self._selected_color_processing_mode)
+            )
+
+    def _attach_action_button_tooltips(self) -> None:
+        """Attach localized hover descriptions to the image action buttons."""
+        return
+
+    def _show_custom_rotation_guide(self) -> None:
+        """Show a detailed custom rotation guide dialog."""
+        # Main processing: show the longer rotation instructions only on demand.
+        messagebox.showinfo(
+            title=message_manager.get_ui_message("U151"),
+            message=message_manager.get_ui_message("U152"),
+            parent=self.winfo_toplevel(),
+        )
+
+    def _refresh_action_button_image_cache(self) -> None:
+        """Rebuild image-button artwork for the current theme colors.
+
+        Theme switches must recreate the composited square artwork so transparent
+        PNGs inherit the active button background instead of a stale cached color.
+        """
+        self._automatic_button_images = self._build_action_button_images("automatic")
+        self._custom_button_images = self._build_action_button_images(
+            "custom",
+            force_default_idle=self._current_custom_button_state != "on",
+        )
+
+    def _apply_layer_toggle_theme(self, theme_data: Optional[Dict[str, Any]] = None) -> None:
+        """Apply theme colors to the base/comparison layer visibility checkboxes.
+
+        Args:
+            theme_data: Optional current theme snapshot.
+        """
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        frame_bg = str(frame_theme.get("bg", "#ffffff"))
+        frame_fg = str(frame_theme.get("fg", "#000000"))
+        disabled_visuals = resolve_disabled_visual_colors(
+            frame_bg,
+            str(frame_theme.get("disabledforeground", frame_fg)),
+            fallback_bg=frame_bg,
+        )
+        disabled_bg = str(disabled_visuals.get("disabled_bg", frame_bg))
+        disabled_fg = str(disabled_visuals.get("disabled_fg", frame_fg))
+
+        layer_toggle_frame = getattr(self, "_layer_toggle_frame", None)
+        if layer_toggle_frame is not None:
+            try:
+                layer_toggle_frame.configure(bg=frame_bg)
+            except Exception:
+                pass
+
+        for checkbox_attr in ["_show_base_layer_check", "_show_comp_layer_check", "_show_reference_grid_check"]:
+            checkbox = getattr(self, checkbox_attr, None)
+            if checkbox is None:
+                continue
+            try:
+                is_enabled = str(checkbox.cget("state")) != str(tk.DISABLED)
+                checkbox.configure(
+                    bg=frame_bg if is_enabled else disabled_bg,
+                    fg=frame_fg if is_enabled else disabled_fg,
+                    selectcolor=frame_bg if is_enabled else disabled_bg,
+                    activebackground=frame_bg if is_enabled else disabled_bg,
+                    activeforeground=frame_fg if is_enabled else disabled_fg,
+                    disabledforeground=disabled_fg,
+                    highlightbackground=frame_bg,
+                    highlightcolor=frame_bg,
+                )
+            except Exception:
+                pass
+
+    def _apply_layer_toggle_state(
+        self,
+        *,
+        enabled: bool,
+        theme_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply enabled or disabled state to the layer visibility checkboxes.
+
+        Args:
+            enabled: Whether the checkboxes should be interactive.
+            theme_data: Optional current theme snapshot.
+        """
+        for checkbox_attr in ["_show_base_layer_check", "_show_comp_layer_check", "_show_reference_grid_check"]:
+            checkbox = getattr(self, checkbox_attr, None)
+            if checkbox is None:
+                continue
+            try:
+                checkbox.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+            except Exception:
+                pass
+        self._apply_layer_toggle_theme(theme_data)
+
+    def _sync_visualized_image_state(self) -> None:
+        """Synchronize the visible-layer StringVar with the checkbox selection state."""
+        base_visible = bool(self._show_base_layer_var.get())
+        comp_visible = bool(self._show_comp_layer_var.get())
+        if base_visible and comp_visible:
+            self.visualized_image.set("both")
+        elif base_visible:
+            self.visualized_image.set("base")
+        elif comp_visible:
+            self.visualized_image.set("comparison")
+        else:
+            self.visualized_image.set("none")
+
+    def _on_layer_visibility_changed(self) -> None:
+        """Refresh the canvas when the base/comparison visibility checkbox changes."""
+        self._sync_visualized_image_state()
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+        else:
+            self._render_comparison_placeholder()
+
+    def _get_reference_grid_color(self) -> str:
+        """Return the preview reference-grid color.
+
+        Returns:
+            Hex color string used for the preview guide lines.
+        """
+        current_theme = ColorThemeManager.get_instance().get_current_theme()
+        canvas_theme = dict(current_theme.get("canvas", {}))
+        frame_theme = dict(current_theme.get("Frame", {}))
+        return str(canvas_theme.get("reference_grid", frame_theme.get("disabledforeground", "#bfc3cf")))
+
+    def _get_canvas_visible_origin(self) -> tuple[float, float]:
+        """Return the current visible origin of the preview canvas.
+
+        Returns:
+            Tuple of visible ``(x, y)`` canvas coordinates.
+        """
+        if not hasattr(self, "canvas"):
+            return (0.0, 0.0)
+        try:
+            return (float(self.canvas.canvasx(0)), float(self.canvas.canvasy(0)))
+        except Exception:
+            return (0.0, 0.0)
+
+    def _reposition_canvas_footer_guide(self) -> None:
+        """Reposition the footer guide overlay so it stays fixed in the viewport.
+
+        The footer guide should remain at the bottom of the visible canvas area,
+        even when the preview image is panned.
+        """
+        if not hasattr(self, "canvas"):
+            return
+        bg_items = self.canvas.find_withtag("canvas_footer_overlay_bg")
+        text_items = self.canvas.find_withtag("canvas_footer_overlay_text")
+        if not bg_items or not text_items:
+            return
+
+        x0, y0 = self._get_canvas_visible_origin()
+        canvas_width = max(self.canvas.winfo_width(), 720)
+        canvas_height = max(self.canvas.winfo_height(), 420)
+        overlay_top = y0 + max(0, canvas_height - 56)
+        overlay_bottom = y0 + max(max(0, canvas_height - 56) + 24, canvas_height - 4)
+
+        # Main processing: keep the footer guide anchored to the visible bottom edge.
+        self.canvas.coords(
+            bg_items[0],
+            x0 + 12,
+            overlay_top,
+            x0 + max(24, canvas_width - 12),
+            overlay_bottom,
+        )
+        self.canvas.coords(
+            text_items[0],
+            x0 + 18,
+            y0 + canvas_height - 12,
+        )
+        self.canvas.itemconfigure(text_items[0], width=max(canvas_width - 36, 260))
+        try:
+            self.canvas.tag_raise("canvas_footer_overlay_bg")
+            self.canvas.tag_raise("canvas_footer_overlay_text")
+        except Exception:
+            pass
+
+    def _draw_canvas_footer_guide(self) -> None:
+        """Draw the shortcut guide text inside the bottom area of the canvas."""
+        if not hasattr(self, "canvas"):
+            return
+
+        current_theme = ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        canvas_width = max(self.canvas.winfo_width(), 720)
+        canvas_height = max(self.canvas.winfo_height(), 420)
+        guide_fg = str(frame_theme.get("fg", "#000000"))
+        overlay_bg = str(self.canvas.cget("bg"))
+        x0, y0 = self._get_canvas_visible_origin()
+        overlay_top = y0 + max(0, canvas_height - 56)
+        overlay_bottom = y0 + max(max(0, canvas_height - 56) + 24, canvas_height - 4)
+
+        self.canvas.delete("canvas_footer_overlay_bg")
+        self.canvas.delete("canvas_footer_overlay_text")
+        self.canvas.create_rectangle(
+            x0 + 12,
+            overlay_top,
+            x0 + max(24, canvas_width - 12),
+            overlay_bottom,
+            fill=overlay_bg,
+            outline="",
+            tags=("workspace", "canvas_footer_overlay_bg"),
+        )
+        self.canvas.create_text(
+            x0 + 18,
+            y0 + canvas_height - 12,
+            anchor="sw",
+            text=message_manager.get_ui_message("U150"),
+            fill=guide_fg,
+            justify="left",
+            width=max(canvas_width - 36, 260),
+            font=("Helvetica", 9),
+            tags=("workspace", "canvas_footer_overlay_text", "canvas_footer_guide"),
+        )
+        try:
+            self.canvas.tag_raise("canvas_footer_overlay_bg")
+            self.canvas.tag_raise("canvas_footer_overlay_text")
+        except Exception:
+            pass
+
+    def _draw_reference_grid(
+        self,
+        bbox: Optional[tuple[int, int, int, int]] = None,
+        *,
+        raise_above_images: bool,
+    ) -> None:
+        """Draw a light guide-line grid on the preview canvas.
+
+        Args:
+            bbox: Optional target rectangle in canvas coordinates.
+            raise_above_images: Whether the grid should be raised above image items.
+        """
+        if not hasattr(self, "canvas"):
+            return
+
+        # Main processing: rebuild the lightweight guide-line layer from scratch.
+        self.canvas.delete("reference_grid")
+        if not bool(self._show_reference_grid_var.get()):
+            return
+
+        canvas_width = max(self.canvas.winfo_width(), 720)
+        canvas_height = max(self.canvas.winfo_height(), 420)
+
+        if bbox is None:
+            bbox = (0, 0, canvas_width, canvas_height)
+
+        x1, y1, x2, y2 = [int(value) for value in bbox]
+        if x2 - x1 < 24 or y2 - y1 < 24:
+            return
+
+        grid_color = self._get_reference_grid_color()
+        x1 = 0
+        y1 = 0
+        x2 = canvas_width
+        y2 = canvas_height
+        spacing = 24
+
+        # Main processing: render the guide as a light intersection-dot grid for a visually finer result.
+        for x in range(x1, x2 + 1, spacing):
+            for y in range(y1, y2 + 1, spacing):
+                self.canvas.create_line(
+                    x,
+                    y,
+                    x + 1,
+                    y,
+                    fill=grid_color,
+                    width=1,
+                    capstyle=tk.ROUND,
+                    tags=("reference_grid",),
+                )
+
+        if raise_above_images:
+            try:
+                self.canvas.tag_raise("reference_grid")
+            except Exception:
+                pass
+        try:
+            self.canvas.tag_raise("canvas_footer_overlay_bg")
+            self.canvas.tag_raise("canvas_footer_overlay_text")
+        except Exception:
+            pass
+
+    def _apply_image_button_state(
+        self,
+        image_kind: str,
+        *,
+        enabled: bool,
+        theme_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply enabled or disabled state to a themed image action button.
+
+        Args:
+            image_kind: Either ``automatic`` or ``custom``.
+            enabled: Whether the button should be interactive.
+            theme_data: Optional current theme snapshot.
+        """
+        button = self._automatic_execute_button if image_kind == "automatic" else self._custom_execute_button
+        if button is None:
+            return
+
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        label_disabled_theme = dict(current_theme.get("LabelDisabled", {}))
+        button_theme = self._resolve_main_button_theme(current_theme, "process_button")
+        disabled_visuals = resolve_disabled_visual_colors(
+            str(button_theme.get("bg", frame_theme.get("bg", "#ffffff"))),
+            str(label_disabled_theme.get("fg", frame_theme.get("disabledforeground", button_theme.get("fg", frame_theme.get("fg", "#000000"))))),
+            fallback_bg=str(frame_theme.get("bg", button_theme.get("bg", "#ffffff"))),
+            use_emphasis_surface=True,
+        )
+        disabled_bg = str(disabled_visuals.get("disabled_bg", frame_theme.get("bg", "#ffffff")))
+        disabled_fg = str(disabled_visuals.get("disabled_fg", frame_theme.get("fg", "#000000")))
+
+        if not enabled:
+            button.configure(
+                state=tk.DISABLED,
+                image="",
+                text="",
+                bg=disabled_bg,
+                fg=disabled_fg,
+                activebackground=disabled_bg,
+                activeforeground=disabled_fg,
+                relief=tk.FLAT,
+                bd=0,
+                highlightthickness=0,
+            )
+            button.image = None
+            return
+
+        button.configure(
+            state=tk.NORMAL,
+            bg=str(button_theme.get("bg", frame_theme.get("bg", "#ffffff"))),
+            fg=str(button_theme.get("fg", frame_theme.get("fg", "#000000"))),
+            activebackground=str(button_theme.get("activebackground", button_theme.get("bg", frame_theme.get("bg", "#ffffff")))),
+            activeforeground=str(button_theme.get("activeforeground", button_theme.get("fg", frame_theme.get("fg", "#000000")))),
+            relief=tk.RAISED,
+            bd=2,
+            highlightthickness=1,
+            highlightbackground=str(button_theme.get("activebackground", button_theme.get("bg", frame_theme.get("bg", "#ffffff")))),
+            highlightcolor=str(button_theme.get("activebackground", button_theme.get("bg", frame_theme.get("bg", "#ffffff")))),
+        )
+        self._apply_action_button_visual(image_kind, False)
+
+    def _refresh_interaction_state(self, theme_data: Optional[Dict[str, Any]] = None) -> None:
+        """Refresh enabled and disabled states for the pink and yellow-green controls.
+
+        Args:
+            theme_data: Optional current theme snapshot.
+        """
+        current_theme = theme_data or ColorThemeManager.get_instance().get_current_theme()
+        base_ready = self._path_points_to_file(self.base_path.get())
+        comparison_ready = self._path_points_to_file(self.comparison_path.get())
+        any_input_ready = base_ready or comparison_ready
+        workspace_ready = self._has_loaded_workspace_pages() and not self._copy_protected
+
+        self._apply_main_button_state(
+            getattr(self, "_base_file_analyze_btn", None),
+            enabled=base_ready,
+            theme_key="create_sub_graph_window_button",
+            theme_data=current_theme,
+        )
+        self._apply_main_button_state(
+            getattr(self, "_comparison_file_analyze_btn", None),
+            enabled=comparison_ready,
+            theme_key="create_sub_graph_window_button",
+            theme_data=current_theme,
+        )
+        self._apply_main_combobox_state(
+            getattr(self, "_dpi_combo", None),
+            enabled=any_input_ready,
+        )
+        self._apply_main_combobox_state(
+            getattr(self, "_color_processing_mode_combo", None),
+            enabled=any_input_ready,
+        )
+        self._apply_main_entry_state(
+            getattr(self, "_base_threshold_entry", None),
+            enabled=any_input_ready,
+            theme_key="create_fb_threshold_entry",
+            theme_data=current_theme,
+        )
+        self._apply_main_entry_state(
+            getattr(self, "_comparison_threshold_entry", None),
+            enabled=any_input_ready,
+            theme_key="create_fb_threshold_entry",
+            theme_data=current_theme,
+        )
+        self._apply_main_button_state(
+            getattr(self, "_threshold_apply_button", None),
+            enabled=any_input_ready,
+            theme_key="process_button",
+            theme_data=current_theme,
+        )
+        self._apply_image_button_state("automatic", enabled=any_input_ready, theme_data=current_theme)
+        self._apply_image_button_state("custom", enabled=any_input_ready, theme_data=current_theme)
+        self._apply_layer_toggle_state(enabled=workspace_ready, theme_data=current_theme)
+
+        if self.page_control_frame is not None:
+            try:
+                self.page_control_frame.set_workspace_controls_enabled(workspace_ready)
+                self.page_control_frame.set_edit_buttons_enabled(workspace_ready)
+                self._sync_batch_edit_state()
+            except Exception:
+                pass
+
+    def _load_action_button_image(
+        self,
+        image_path: object,
+        fallback_text: str,
+        target_height: int = 34,
+        fill_ratio: float = 0.94,
+    ) -> Optional[ImageTk.PhotoImage]:
+        """Load and resize an action button image for the main tab.
+
+        Args:
+            image_path: Candidate image path resolved by ``ImageSwPaths``.
+            fallback_text: Human-readable label used only for logging context.
+            target_height: Desired rendered image height in pixels.
+            fill_ratio: Relative amount of the square button occupied by the artwork.
+
+        Returns:
+            Optional[ImageTk.PhotoImage]: Loaded image reference when available.
+        """
+        try:
+            if image_path is None:
+                return None
+
+            resolved_path = Path(str(image_path))
+            if not resolved_path.exists():
+                return None
+
+            # Main processing: normalize action button artwork to a stable display height.
+            with Image.open(resolved_path) as pil_image:
+                prepared = pil_image.convert("RGBA")
+                button_width = max(self._action_button_square_size, 88)
+                button_height = max(self._action_button_square_size, target_height, 88)
+                usable_width = max(1, int(button_width * max(0.1, min(fill_ratio, 1.0))))
+                usable_height = max(1, button_height - 8)
+                scale = min(
+                    usable_width / float(max(1, prepared.width)),
+                    usable_height / float(max(1, prepared.height)),
+                )
+                target_width = max(1, int(prepared.width * scale))
+                scaled_height = max(1, int(prepared.height * scale))
+                resized = prepared.resize((target_width, scaled_height), Resampling.LANCZOS)
+                current_theme = ColorThemeManager.get_instance().get_current_theme()
+                button_theme = current_theme.get("process_button", {})
+                fallback_bg = button_theme.get("bg", current_theme.get("Frame", {}).get("bg", "#1d1d29"))
+                bg_rgb = tuple(int(fallback_bg.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) if isinstance(fallback_bg, str) and len(fallback_bg) == 7 else (29, 29, 41)
+                canvas = Image.new("RGBA", (button_width, button_height), (*bg_rgb, 255))
+                offset_x = (button_width - target_width) // 2
+                offset_y = (button_height - scaled_height) // 2
+                canvas.alpha_composite(resized, (offset_x, offset_y))
+                return ImageTk.PhotoImage(canvas)
+        except Exception as exc:
+            logger.warning(f"Failed to load main tab action button image ({fallback_text}): {exc}")
+            return None
+
+    def _build_action_button_images(
+        self,
+        image_kind: str,
+        force_default_idle: bool = False,
+        randomize_custom_idle: bool = False,
+    ) -> Dict[str, ImageTk.PhotoImage]:
+        """Build the active and inactive images for a main-tab action button.
+
+        Args:
+            image_kind: Either ``automatic`` or ``custom``.
+            force_default_idle: Whether the custom button must use the default idle image.
+            randomize_custom_idle: Whether the custom idle artwork should rotate to gag images.
+
+        Returns:
+            Dict[str, ImageTk.PhotoImage]: Loaded ``on``/``off`` image dictionary.
+        """
+        if image_kind == "automatic":
+            switch_paths = ImageSwPaths().set_automatic_convert_btn_image(
+                program_mode=tool_settings.is_production_mode
+            )
+        else:
+            switch_paths = ImageSwPaths().set_custom_convert_btn_image(
+                program_mode=tool_settings.is_production_mode,
+                randomize_idle=randomize_custom_idle and not force_default_idle,
+            )
+            if force_default_idle:
+                switch_paths.off_img_path = get_resource_path("images/hennshinn_pose.png")
+
+        loaded_images: Dict[str, ImageTk.PhotoImage] = {}
+        on_fill_ratio = 0.98 if image_kind == "custom" else 0.96
+        off_fill_ratio = 0.98 if image_kind == "custom" else 0.96
+        on_image = self._load_action_button_image(
+            switch_paths.on_img_path,
+            f"{image_kind}-on",
+            target_height=72,
+            fill_ratio=on_fill_ratio,
+        )
+        off_image = self._load_action_button_image(
+            switch_paths.off_img_path,
+            f"{image_kind}-off",
+            target_height=72,
+            fill_ratio=off_fill_ratio,
+        )
+        if on_image is not None:
+            loaded_images["on"] = on_image
+        if off_image is not None:
+            loaded_images["off"] = off_image
+        return loaded_images
+
+    def _apply_action_button_visual(self, image_kind: str, active: bool, refresh_random: bool = False) -> None:
+        """Apply the current image state to one of the restored action buttons.
+
+        Args:
+            image_kind: Either ``automatic`` or ``custom``.
+            active: Whether the button should show its active artwork.
+            refresh_random: Whether the random custom artwork should be refreshed first.
+        """
+        button = self._automatic_execute_button if image_kind == "automatic" else self._custom_execute_button
+        if button is None:
+            return
+
+        if image_kind == "automatic":
+            if not self._automatic_button_images:
+                self._automatic_button_images = self._build_action_button_images("automatic")
+            image_map = self._automatic_button_images
+            fallback_text = message_manager.get_ui_message("U145")
+        else:
+            if refresh_random:
+                self._custom_button_images = self._build_action_button_images(
+                    "custom",
+                    randomize_custom_idle=True,
+                )
+            elif not self._custom_button_images:
+                self._custom_button_images = self._build_action_button_images("custom", force_default_idle=True)
+            image_map = self._custom_button_images
+            fallback_text = message_manager.get_ui_message("U023")
+
+        requested_key = "on" if active else "off"
+        requested_image = image_map.get(requested_key) or image_map.get("off") or image_map.get("on")
+        if requested_image is not None:
+            button.configure(
+                image=requested_image,
+                text="",
+                relief=tk.SUNKEN if active else tk.RAISED,
+                bd=4 if active else 3,
+            )
+            button.image = requested_image
+        else:
+            button.configure(image="", text=fallback_text)
+
+        if image_kind == "custom":
+            self._current_custom_button_state = requested_key
+
+    def _restore_action_buttons_after_execute(self) -> None:
+        """Restore the image buttons after an execute operation completes.
+
+        The custom button intentionally refreshes its inactive artwork again so the
+        remembered random-image gimmick is visible after each execute action.
+        """
+        self._apply_action_button_visual("automatic", False)
+        self._apply_action_button_visual("custom", False, refresh_random=True)
+
+    def _on_automatic_image_button_click(self) -> None:
+        """Handle the restored automatic image button click event."""
+        self._apply_action_button_visual("automatic", True)
+        self.update_idletasks()
+        self.after(self._action_button_active_delay_ms, self._run_automatic_image_button_action)
+
+    def _on_custom_image_button_click(self) -> None:
+        """Handle the restored custom image button click event."""
+        self._apply_action_button_visual("custom", True)
+        self.update_idletasks()
+        self.after(self._action_button_active_delay_ms, self._run_custom_image_button_action)
+
+    def _run_automatic_image_button_action(self) -> None:
+        """Run the automatic image-button action after showing the active gimmick."""
+        try:
+            self._on_execute_click()
+        finally:
+            self.after(260, self._restore_action_buttons_after_execute)
+
+    def _run_custom_image_button_action(self) -> None:
+        """Run the custom image-button action after showing the active gimmick."""
+        try:
+            self._on_process_click()
+        finally:
+            self.after(320, lambda: self._apply_action_button_visual("custom", False))
+
+    def _normalize_histogram_counts(self, histogram_data: List[Any]) -> List[int]:
+        """Normalize saved histogram payloads into a single 256-bin graph.
+
+        Args:
+            histogram_data: Raw histogram payload list collected by the converter.
+
+        Returns:
+            List[int]: Aggregated histogram counts.
+        """
+        aggregated = [0] * 766
+        for page_histogram in histogram_data:
+            if not isinstance(page_histogram, list):
+                continue
+            if len(page_histogram) >= 766 and len(page_histogram) < 768:
+                for idx in range(766):
+                    aggregated[idx] += int(page_histogram[idx])
+                continue
+            if len(page_histogram) >= 768:
+                for idx in range(256):
+                    aggregated[idx] += int(page_histogram[idx])
+                    aggregated[idx] += int(page_histogram[idx + 256])
+                    aggregated[idx] += int(page_histogram[idx + 512])
+            elif len(page_histogram) >= 256:
+                for idx in range(256):
+                    aggregated[idx] += int(page_histogram[idx])
+        return aggregated
+
+    def _prepare_analysis_histogram(self, name_flag: str) -> List[int]:
+        """Render analysis data for one side and return aggregated histogram counts.
+
+        Args:
+            name_flag: Either ``base`` or ``comp``.
+
+        Returns:
+            List[int]: Aggregated 256-bin histogram counts.
+        """
+        path_value = self.base_path.get() if name_flag == "base" else self.comparison_path.get()
+        if not self._path_points_to_file(path_value):
+            raise ValueError("PDF path is not valid for histogram analysis.")
+
+        converter, file_info = self._get_or_create_converter(path_value, name_flag)
+        file_info.file_histogram_data = []
+        converter.process_with_progress_window(self.frame_main3, dpi=self._get_dpi_from_entry())
+        return self._normalize_histogram_counts(file_info.file_histogram_data or [])
+
+    def _refresh_graph_threshold_lines(self) -> None:
+        """Refresh threshold markers in open graph windows."""
+        graph_threshold_pairs = [
+            (getattr(self, "_base_file_analyze_btn", None), int(self._base_threshold_value_var.get())),
+            (getattr(self, "_comparison_file_analyze_btn", None), int(self._comparison_threshold_value_var.get())),
+        ]
+        for graph_button, threshold_value in graph_threshold_pairs:
+            if graph_button is None:
+                continue
+            try:
+                graph_button.set_threshold_value(threshold_value)
+                graph_button.update_graph()
+            except Exception:
+                pass
+
+    def _on_threshold_apply_click(self) -> None:
+        """Apply threshold changes and refresh the lower preview when available.
+
+        This handler validates the threshold inputs, persists them to settings,
+        refreshes graph guides, and redraws the currently loaded lower preview page.
+        """
+        try:
+            base_threshold_value = int(self._base_threshold_value_var.get())
+            comparison_threshold_value = int(self._comparison_threshold_value_var.get())
+        except ValueError:
+            self._show_status_feedback("閾値は整数で入力してください。", False)
+            return
+
+        if base_threshold_value < 0 or base_threshold_value > 765:
+            self._show_status_feedback("閾値は 0 から 765 の範囲で入力してください。", False)
+            return
+
+        if comparison_threshold_value < 0 or comparison_threshold_value > 765:
+            self._show_status_feedback("閾値は 0 から 765 の範囲で入力してください。", False)
+            return
+
+        self.settings.update_setting("separat_color_threshold", base_threshold_value)
+        self.settings.update_setting("base_separat_color_threshold", base_threshold_value)
+        self.settings.update_setting("comparison_separat_color_threshold", comparison_threshold_value)
+        self.settings.save_settings()
+        self._refresh_graph_threshold_lines()
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+            self._show_status_feedback(
+                f"閾値変更結果を下の表示へ反映しました。元: {base_threshold_value} ／ 比較: {comparison_threshold_value}",
+                True,
+            )
+            return
+        if self._path_points_to_file(self.base_path.get()) or self._path_points_to_file(self.comparison_path.get()):
+            self._refresh_workspace_state()
+            if self._has_loaded_workspace_pages():
+                self._show_status_feedback(
+                    f"閾値変更結果を下の表示へ反映しました。元: {base_threshold_value} ／ 比較: {comparison_threshold_value}",
+                    True,
+                )
+                return
+        self._show_status_feedback(
+            f"閾値を保存しました。プレビュー読込後に反映されます。元: {base_threshold_value} ／ 比較: {comparison_threshold_value}",
+            True,
+        )
+
+    def _get_selected_layer_color(self, name_flag: str) -> Optional[str]:
+        """Return the currently selected color for the requested side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Selected hex color string.
+        """
+        if name_flag == "base":
+            button = getattr(self, "_base_image_color_change_btn", None)
+            cached_color = self._base_selected_color_hex
+        else:
+            button = getattr(self, "_comparison_image_color_change_btn", None)
+            cached_color = self._comparison_selected_color_hex
+
+        if cached_color:
+            return cached_color
+        if button is None or not hasattr(button, "get_selected_color_hex"):
+            return None
+        try:
+            return button.get_selected_color_hex()
+        except Exception:
+            return None
+
+    def _get_threshold_for_side(self, name_flag: str) -> int:
+        """Return the current threshold value for one side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Threshold value in the range ``0`` to ``765``.
+        """
+        raw_value = self._base_threshold_value_var.get() if name_flag == "base" else self._comparison_threshold_value_var.get()
+        try:
+            return max(0, min(765, int(raw_value)))
+        except Exception:
+            return 700
+
+    def _apply_color_processing_for_side(self, page_image: Image.Image, name_flag: str) -> Image.Image:
+        """Apply the active color processing mode to one side image.
+
+        Args:
+            page_image: Source page image.
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Processed RGBA image.
+        """
+        return apply_color_processing_to_image(
+            page_image,
+            self._selected_color_processing_mode,
+            self._get_selected_layer_color(name_flag),
+            self._get_threshold_for_side(name_flag),
+        )
+
+    def _on_color_processing_mode_changed(self, event: Optional[tk.Event] = None) -> None:
+        """Refresh the workspace preview after changing the color mode.
+
+        Args:
+            event: Optional Tk event.
+        """
+        _ = event
+        self._selected_color_processing_mode = self._resolve_color_processing_mode_from_display(
+            self._color_processing_mode_var.get()
+        )
+        self._color_processing_mode_var.set(
+            self._get_color_processing_mode_display_text(self._selected_color_processing_mode)
+        )
+        self.settings.update_setting("color_processing_mode", self._selected_color_processing_mode)
+        self.settings.save_settings()
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+
+    def _refresh_preview_after_color_change(self) -> None:
+        """Redraw the current page after palette changes when a workspace exists."""
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+
+    def _open_base_analysis_graph(self) -> None:
+        """Prepare histogram data and open the base analysis graph window.
+
+        Raises:
+            Exception: If the base analysis flow fails.
+        """
+        if self._base_file_analyze_btn is not None and self._base_file_analyze_btn._graph_status:
+            self._base_file_analyze_btn.close_graph_window()
+            return
+
+        self._on_base_analyze_click()
+        if self._base_file_analyze_btn is not None:
+            self._base_file_analyze_btn.open_graph_window()
+
+    def _open_comparison_analysis_graph(self) -> None:
+        """Prepare histogram data and open the comparison analysis graph window.
+
+        Raises:
+            Exception: If the comparison analysis flow fails.
+        """
+        if self._comparison_file_analyze_btn is not None and self._comparison_file_analyze_btn._graph_status:
+            self._comparison_file_analyze_btn.close_graph_window()
+            return
+
+        self._on_comparison_analyze_click()
+        if self._comparison_file_analyze_btn is not None:
+            self._comparison_file_analyze_btn.open_graph_window()
+
+    def _get_initial_dir_from_setting(self, setting_key: str, current_value: Optional[str] = None) -> str:
+        """Return an initial directory for file and folder dialogs.
+
+        Args:
+            setting_key: User setting key for the target path.
+            current_value: Current entry value that should be preferred when valid.
+
+        Returns:
+            A directory path suitable for ``initialdir``.
+        """
+        candidate_values: List[str] = []
+        if isinstance(current_value, str) and current_value:
+            candidate_values.append(current_value)
+
+        try:
+            saved_value = self.settings.get_setting(setting_key)
+        except Exception:
+            saved_value = None
+
+        if isinstance(saved_value, str) and saved_value:
+            candidate_values.append(saved_value)
+
+        for candidate_value in candidate_values:
+            try:
+                path = Path(candidate_value)
+                if path.exists() and path.is_dir():
+                    return str(path)
+                if path.parent.exists() and path.parent.is_dir():
+                    return str(path.parent)
+            except Exception:
+                continue
+
+        return str(Path.cwd())
+
+    def _set_path_entry_display(self, entry_widget: BasePathEntry, display_value: str) -> None:
+        """Update a path entry display without persisting the temporary startup text.
+
+        Args:
+            entry_widget: Path entry widget to update.
+            display_value: Display text shown in the entry field.
+        """
+        previous_suppress = bool(getattr(entry_widget, "_suppress_callback", False))
+        setattr(entry_widget, "_suppress_callback", True)
+        try:
+            entry_widget.path_var.set(display_value)
+        finally:
+            setattr(entry_widget, "_suppress_callback", previous_suppress)
+
+    def _get_startup_display_path(self, saved_value: str) -> str:
+        """Return the startup entry text for a persisted path.
+
+        Args:
+            saved_value: Persisted file or folder path.
+
+        Returns:
+            str: Folder path used for startup display.
+        """
+        try:
+            saved_path = Path(saved_value)
+            if saved_path.exists() and saved_path.is_file():
+                return str(saved_path.parent)
+        except Exception:
+            pass
+        return saved_value
+
+    def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
+        """Synchronize persisted paths into the main tab inputs.
+
+        Args:
+            event: Tkinter visibility event.
+        """
+        _ = event
+        placeholder_file = message_manager.get_ui_message("U053")
+        placeholder_output = message_manager.get_ui_message("U054")
+
+        try:
+            saved_base = self.settings.get_setting("base_file_path")
+            if isinstance(saved_base, str) and saved_base and saved_base != placeholder_file:
+                saved_base_path = Path(saved_base)
+                if saved_base_path.exists() and saved_base_path.is_file():
+                    display_base = self._get_startup_display_path(saved_base)
+                    if self._base_file_path_entry.path_var.get() != display_base:
+                        self._set_path_entry_display(self._base_file_path_entry, display_base)
+                    self.base_path.set("")
+
+            saved_comparison = self.settings.get_setting("comparison_file_path")
+            if isinstance(saved_comparison, str) and saved_comparison and saved_comparison != placeholder_file:
+                saved_comparison_path = Path(saved_comparison)
+                if saved_comparison_path.exists() and saved_comparison_path.is_file():
+                    display_comparison = self._get_startup_display_path(saved_comparison)
+                    if self._comparison_file_path_entry.path_var.get() != display_comparison:
+                        self._set_path_entry_display(self._comparison_file_path_entry, display_comparison)
+                    self.comparison_path.set("")
+
+            saved_output = self.settings.get_setting("output_folder_path")
+            if isinstance(saved_output, str) and saved_output and saved_output != placeholder_output:
+                saved_output_path = Path(saved_output)
+                if saved_output_path.exists() and saved_output_path.is_dir():
+                    if self._output_folder_path_entry.path_var.get() != saved_output:
+                        self._output_folder_path_entry.path_var.set(saved_output)
+                        self.output_path.set(saved_output)
+            self._refresh_workspace_state()
+        except Exception as exc:
+            logger.warning(f"Shared path sync failed in main tab: {exc}")
+
+    def _setup_drag_and_drop(self) -> None:
+        """Setup drag and drop for input and output path entries."""
+        try:
+            DragAndDropHandler.register_drop_target(
+                self._base_file_path_entry,
+                self._on_drop_base_file,
+                [".pdf"],
+                self._show_status_feedback,
+            )
+            DragAndDropHandler.register_drop_target(
+                self._comparison_file_path_entry,
+                self._on_drop_comparison_file,
+                [".pdf"],
+                self._show_status_feedback,
+            )
+            DragAndDropHandler.register_drop_target(
+                self._output_folder_path_entry,
+                self._on_drop_output_folder,
+                feedback_callback=self._show_status_feedback,
+                allow_directories=True,
+            )
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L206", str(e)))
+
+    def _on_drop_base_file(self, file_path: str) -> None:
+        """Handle base PDF drop.
+
+        Args:
+            file_path: Dropped file path.
+        """
+        self._base_file_path_entry.path_var.set(file_path)
+        self.base_path.set(file_path)
+        self.status_var.set("ベースPDFを下のプレビュー用に選択しました。")
+        self._refresh_workspace_state()
+
+    def _on_drop_comparison_file(self, file_path: str) -> None:
+        """Handle comparison PDF drop.
+
+        Args:
+            file_path: Dropped file path.
+        """
+        self._comparison_file_path_entry.path_var.set(file_path)
+        self.comparison_path.set(file_path)
+        self.status_var.set("比較PDFを下のプレビュー用に選択しました。")
+        self._refresh_workspace_state()
+
+    def _on_drop_output_folder(self, folder_path: str) -> None:
+        """Handle output folder drop.
+
+        Args:
+            folder_path: Dropped folder path.
+        """
+        self._output_folder_path_entry.path_var.set(folder_path)
+        self.output_path.set(folder_path)
+        self.status_var.set("Output folder updated for future comparison export.")
+        if not self._has_loaded_workspace_pages():
+            self._render_comparison_placeholder()
+
+    def _show_status_feedback(self, message: str, is_success: bool) -> None:
+        """Store drag-and-drop feedback and mirror it to the logger.
+
+        Args:
+            message: Feedback message.
+            is_success: Whether the operation succeeded.
+        """
+        self.status_var.set(message)
+        if is_success:
+            logger.info(message)
+        else:
+            logger.warning(message)
+        if self._has_loaded_workspace_pages():
+            return
+        self._render_comparison_placeholder()
+
+    def _clear_loaded_workspace_data(self) -> None:
+        """Clear converted page data and active converter references."""
+        self._preview_render_generation += 1
+        self._background_preview_render_thread = None
+        self._clear_workspace_temp_artifacts()
+        self._batch_edit_selected = True
+        self.base_page_paths = []
+        self.comp_page_paths = []
+        self._base_page_records = []
+        self._comp_page_records = []
+        self._base_workspace_dir = None
+        self._comp_workspace_dir = None
+        self.base_pages = []
+        self.comp_pages = []
+        self.base_transform_data = []
+        self.comp_transform_data = []
+        self._base_export_transform_overrides = []
+        self._comp_export_transform_overrides = []
+        self.page_count = 0
+        self.current_page_index = 0
+        self._copy_protected = False
+        self._visual_adjustments_enabled = False
+        self.base_file_info = None
+        self.comp_file_info = None
+        self.base_pdf_metadata = {}
+        self.comp_pdf_metadata = {}
+        self.base_pdf_converter = None
+        self.comp_pdf_converter = None
+        self._base_photo_image = None
+        self._comp_photo_image = None
+        self._base_canvas_image_id = None
+        self._comp_canvas_image_id = None
+        self._preview_source_image_cache.clear()
+        self._preview_processed_image_cache.clear()
+
+    def _remove_temp_directory(self, target_dir: Optional[Path]) -> None:
+        """Delete one generated temp directory when it is safe to remove.
+
+        Args:
+            target_dir: Candidate directory under the application temp root.
+        """
+        if target_dir is None:
+            return
+
+        try:
+            candidate_dir = Path(target_dir)
+            if not candidate_dir.exists() or not candidate_dir.is_dir():
+                return
+
+            temp_root = Path(get_temp_dir()).resolve()
+            candidate_resolved = candidate_dir.resolve()
+            candidate_resolved.relative_to(temp_root)
+            if candidate_resolved == temp_root:
+                return
+
+            shutil.rmtree(candidate_resolved, ignore_errors=True)
+        except Exception:
+            return
+
+    def _clear_workspace_temp_artifacts(self) -> None:
+        """Delete generated workspace and converter temp directories for the current sources."""
+        candidate_dirs: List[Path] = []
+        for workspace_dir in (self._base_workspace_dir, self._comp_workspace_dir):
+            if workspace_dir is not None:
+                candidate_dirs.append(workspace_dir)
+
+        for converter in (getattr(self, "base_pdf_converter", None), getattr(self, "comp_pdf_converter", None)):
+            if converter is None:
+                continue
+            converter_temp_dir = getattr(converter, "_temp_dir", None)
+            if converter_temp_dir:
+                candidate_dirs.append(Path(str(converter_temp_dir)))
+
+        seen_dirs: set[str] = set()
+        for candidate_dir in candidate_dirs:
+            candidate_key = str(candidate_dir)
+            if candidate_key in seen_dirs:
+                continue
+            seen_dirs.add(candidate_key)
+            self._remove_temp_directory(candidate_dir)
+
+    def _has_loaded_workspace_pages(self) -> bool:
+        """Return whether converted workspace pages are available.
+
+        Returns:
+            ``True`` when at least one rendered page image exists.
+        """
+        return bool(self.base_page_paths or self.comp_page_paths)
+
+    def _get_selected_dpi(self) -> int:
+        """Return a safe DPI value from user settings.
+
+        Returns:
+            Integer DPI value used for PDF rendering.
+        """
+        # Main processing: preserve manual selections, but treat detected selections as a 300-dpi startup fallback until sources are available.
+        dpi_choices = self._get_configured_dpi_choices()
+        raw_mode = str(self.settings.get_setting("setted_dpi_mode", "detected") or "detected").strip().lower()
+        if raw_mode == "detected":
+            return _MAIN_TAB_DEFAULT_DPI
+
+        raw_dpi = self.settings.get_setting("setted_dpi", _MAIN_TAB_DEFAULT_DPI)
+        try:
+            resolved_dpi = int(raw_dpi)
+        except (TypeError, ValueError):
+            resolved_dpi = _MAIN_TAB_DEFAULT_DPI
+
+        if resolved_dpi not in dpi_choices:
+            return _MAIN_TAB_DEFAULT_DPI
+        return max(1, resolved_dpi)
+
+    def _get_configured_dpi_choices(self) -> List[int]:
+        """Return sanitized DPI choices from user settings.
+
+        Returns:
+            List[int]: Ordered DPI choices used by the Main tab combobox.
+        """
+        try:
+            raw_values = self.settings.get_setting_list(
+                "dpi_list",
+                list(_MAIN_TAB_FALLBACK_DPI_CHOICES),
+            )
+        except Exception:
+            raw_values = list(_MAIN_TAB_FALLBACK_DPI_CHOICES)
+
+        resolved_values: List[int] = []
+        for raw_value in raw_values:
+            try:
+                dpi_value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if dpi_value <= 0 or dpi_value in resolved_values:
+                continue
+            resolved_values.append(dpi_value)
+
+        if _MAIN_TAB_DEFAULT_DPI not in resolved_values:
+            resolved_values.append(_MAIN_TAB_DEFAULT_DPI)
+        if not resolved_values:
+            return list(_MAIN_TAB_FALLBACK_DPI_CHOICES)
+        return resolved_values
+
+    def _get_dpi_from_entry(self) -> int:
+        """Return a validated DPI value from the current DPI selector.
+
+        Returns:
+            Integer DPI value.
+
+        Raises:
+            ValueError: If the selector contains an invalid DPI value.
+        """
+        resolved_dpi, _ = self._get_selected_dpi_from_control()
+        if resolved_dpi <= 0:
+            raise ValueError("DPI setting must be greater than zero.")
+        return resolved_dpi
+
+    def _persist_selected_dpi(self, dpi_value: int, dpi_mode: Literal["manual", "detected"]) -> None:
+        """Persist the DPI setting and refresh in-memory fields.
+
+        Args:
+            dpi_value: DPI value to store.
+            dpi_mode: DPI source mode chosen by the user.
+        """
+        self.selected_dpi_value = int(dpi_value)
+        self._conversion_dpi = int(dpi_value)
+        self.settings.update_setting("setted_dpi", int(dpi_value))
+        self.settings.update_setting("setted_dpi_mode", str(dpi_mode))
+        self.settings.save_settings()
+
+    def _format_detected_dpi_choice(self, dpi_value: int) -> str:
+        """Return the display label for the detected-DPI combobox item.
+
+        Args:
+            dpi_value: Detected DPI value.
+
+        Returns:
+            Combobox label text.
+        """
+        return f"{message_manager.get_ui_message('U148')} ({int(dpi_value)})"
+
+    @staticmethod
+    def _extract_pdf_document_metadata_dpi(metadata: Any) -> Optional[tuple[int, int]]:
+        """Extract direct DPI metadata from a PDF document info object.
+
+        Args:
+            metadata: Metadata object returned by ``pypdf.PdfReader.metadata``.
+
+        Returns:
+            Tuple of detected ``(dpi_x, dpi_y)`` when available.
+        """
+        if metadata is None:
+            return None
+
+        def _read_positive_number(*keys: str) -> Optional[float]:
+            """Read the first positive numeric metadata value.
+
+            Args:
+                *keys: Candidate metadata keys.
+
+            Returns:
+                Positive numeric value when found.
+            """
+            for key in keys:
+                try:
+                    value = metadata.get(key)
+                except Exception:
+                    value = None
+                if value in (None, ""):
+                    continue
+                try:
+                    parsed = float(str(value).strip())
+                except Exception:
+                    continue
+                if parsed > 0:
+                    return parsed
+            return None
+
+        dpi_x = _read_positive_number("/XResolution")
+        dpi_y = _read_positive_number("/YResolution")
+        dpi_common = _read_positive_number("/DPI")
+
+        if dpi_x is None and dpi_common is not None:
+            dpi_x = dpi_common
+        if dpi_y is None and dpi_common is not None:
+            dpi_y = dpi_common
+        if dpi_x is None or dpi_y is None:
+            return None
+
+        try:
+            resolution_unit_raw = metadata.get("/ResolutionUnit")
+        except Exception:
+            resolution_unit_raw = None
+        resolution_unit = str(resolution_unit_raw).strip().lower() if resolution_unit_raw is not None else ""
+        if resolution_unit and resolution_unit not in {"inch", "in", "dpi"}:
+            return None
+
+        return int(round(dpi_x)), int(round(dpi_y))
+
+    @staticmethod
+    def _extract_pdf_image_metadata_dpi(page: Any) -> Optional[tuple[int, int]]:
+        """Extract direct DPI metadata from embedded images on the first PDF page.
+
+        Args:
+            page: First page object from ``pypdf.PdfReader.pages``.
+
+        Returns:
+            Tuple of detected ``(dpi_x, dpi_y)`` when available.
+        """
+        try:
+            resources = page.get("/Resources")
+            if resources is None or "/XObject" not in resources:
+                return None
+            xobjects = resources["/XObject"].get_object()
+        except Exception:
+            return None
+
+        best_area = 0
+        best_pair: Optional[tuple[int, int]] = None
+
+        for xobj_ref in xobjects.values():
+            try:
+                xobj = xobj_ref.get_object()
+            except Exception:
+                continue
+            if xobj.get("/Subtype") != "/Image":
+                continue
+
+            try:
+                img_width = int(xobj.get("/Width", 0) or 0)
+                img_height = int(xobj.get("/Height", 0) or 0)
+                image_bytes = xobj.get_data()
+                if not image_bytes:
+                    continue
+            except Exception:
+                continue
+
+            try:
+                with Image.open(BytesIO(image_bytes)) as embedded_img:
+                    dpi_info = embedded_img.info.get("dpi") if hasattr(embedded_img, "info") else None
+            except Exception:
+                continue
+
+            if not (isinstance(dpi_info, tuple) and len(dpi_info) >= 2):
+                continue
+
+            try:
+                dpi_x = int(round(float(dpi_info[0])))
+                dpi_y = int(round(float(dpi_info[1])))
+            except Exception:
+                continue
+
+            if dpi_x <= 0 or dpi_y <= 0:
+                continue
+
+            area = img_width * img_height
+            if area > best_area:
+                best_area = area
+                best_pair = (dpi_x, dpi_y)
+
+        return best_pair
+
+    def _resolve_pdf_direct_metadata_dpi(self, pdf_path: str) -> Optional[int]:
+        """Resolve direct metadata DPI from one PDF file.
+
+        Args:
+            pdf_path: Source PDF path.
+
+        Returns:
+            Averaged DPI value when direct metadata exists, otherwise ``None``.
+        """
+        if PdfReader is None or not self._path_points_to_file(pdf_path):
+            return None
+
+        try:
+            reader = PdfReader(str(pdf_path), strict=False)
+            metadata_pair = self._extract_pdf_document_metadata_dpi(reader.metadata)
+            if metadata_pair is None and len(reader.pages) > 0:
+                metadata_pair = self._extract_pdf_image_metadata_dpi(reader.pages[0])
+        except Exception:
+            return None
+
+        if metadata_pair is None:
+            return None
+
+        resolved_dpi = int(round((float(metadata_pair[0]) + float(metadata_pair[1])) / 2.0))
+        return resolved_dpi if resolved_dpi > 0 else None
+
+    def _resolve_detected_dpi_from_selected_files(self) -> Optional[int]:
+        """Resolve the preferred detected DPI from the selected base/comparison PDFs.
+
+        Returns:
+            Base-file detected DPI when available, otherwise comparison-file DPI.
+        """
+        base_detected = self._resolve_pdf_direct_metadata_dpi(self.base_path.get())
+        if base_detected is not None:
+            return base_detected
+        return self._resolve_pdf_direct_metadata_dpi(self.comparison_path.get())
+
+    def _get_selected_dpi_from_control(self) -> tuple[int, Literal["manual", "detected"]]:
+        """Resolve the effective DPI and source mode from the combobox.
+
+        Returns:
+            Tuple of selected DPI value and selection mode.
+        """
+        dpi_choices = self._get_configured_dpi_choices()
+        raw_value = str(self._dpi_choice_var.get()).strip()
+        detected_choice = (
+            self._format_detected_dpi_choice(self._detected_dpi_value)
+            if self._detected_dpi_value is not None
+            else ""
+        )
+        if raw_value and detected_choice and raw_value == detected_choice:
+            return int(self._detected_dpi_value), "detected"
+
+        try:
+            resolved_dpi = int(raw_value)
+        except (TypeError, ValueError):
+            resolved_dpi = _MAIN_TAB_DEFAULT_DPI
+
+        if resolved_dpi not in dpi_choices:
+            resolved_dpi = _MAIN_TAB_DEFAULT_DPI
+        return resolved_dpi, "manual"
+
+    def _sync_dpi_combo_choices(self, preserve_current: bool = True) -> None:
+        """Refresh the DPI combobox choices from current file selections.
+
+        Args:
+            preserve_current: Whether the current combobox intent should be kept.
+        """
+        previous_detected_choice = (
+            self._format_detected_dpi_choice(self._detected_dpi_value)
+            if self._detected_dpi_value is not None
+            else ""
+        )
+        current_choice = str(self._dpi_choice_var.get()).strip()
+        saved_mode = str(self.settings.get_setting("setted_dpi_mode", "detected") or "detected").strip().lower()
+        self._detected_dpi_value = self._resolve_detected_dpi_from_selected_files()
+
+        dpi_choices = self._get_configured_dpi_choices()
+        values = [str(value) for value in dpi_choices]
+        detected_choice = None
+        if self._detected_dpi_value is not None:
+            detected_choice = self._format_detected_dpi_choice(self._detected_dpi_value)
+            values.append(detected_choice)
+
+        target_choice = ""
+        if preserve_current and current_choice:
+            if current_choice == previous_detected_choice:
+                target_choice = detected_choice or str(_MAIN_TAB_DEFAULT_DPI)
+            elif current_choice == str(_MAIN_TAB_DEFAULT_DPI) and detected_choice is not None and saved_mode == "detected":
+                target_choice = detected_choice
+            elif current_choice in values:
+                target_choice = current_choice
+
+        if not target_choice:
+            saved_dpi = self._get_selected_dpi()
+            if saved_mode == "detected":
+                target_choice = detected_choice or str(_MAIN_TAB_DEFAULT_DPI)
+            elif saved_dpi in dpi_choices:
+                target_choice = str(saved_dpi)
+            else:
+                target_choice = str(_MAIN_TAB_DEFAULT_DPI)
+
+        if self._dpi_combo is not None:
+            self._dpi_combo.configure(values=values)
+        self._dpi_choice_var.set(target_choice)
+
+        resolved_dpi, _ = self._get_selected_dpi_from_control()
+        self.selected_dpi_value = resolved_dpi
+        self._conversion_dpi = resolved_dpi
+
+    def _path_points_to_file(self, path_value: str) -> bool:
+        """Return whether the given path points to an existing file.
+
+        Args:
+            path_value: Candidate path string.
+
+        Returns:
+            ``True`` when the path exists and is a file.
+        """
+        try:
+            if not path_value:
+                return False
+            return Path(path_value).exists() and Path(path_value).is_file()
+        except Exception:
+            return False
+
+    def _ensure_transform_slots(self, target_length: int) -> None:
+        """Resize transform arrays to match the current page count.
+
+        Args:
+            target_length: Required transform list length.
+        """
+        default_transform = (0.0, 0.0, 0.0, self._preferred_preview_scale)
+        while len(self.base_transform_data) < len(self.base_pages):
+            self.base_transform_data.append(default_transform)
+        while len(self.comp_transform_data) < len(self.comp_pages):
+            self.comp_transform_data.append(default_transform)
+        while len(self._base_export_transform_overrides) < len(self.base_pages):
+            self._base_export_transform_overrides.append({})
+        while len(self._comp_export_transform_overrides) < len(self.comp_pages):
+            self._comp_export_transform_overrides.append({})
+        self.base_transform_data = self.base_transform_data[: len(self.base_pages)]
+        self.comp_transform_data = self.comp_transform_data[: len(self.comp_pages)]
+        self._base_export_transform_overrides = self._base_export_transform_overrides[: len(self.base_pages)]
+        self._comp_export_transform_overrides = self._comp_export_transform_overrides[: len(self.comp_pages)]
+        if target_length <= 0:
+            self.base_transform_data = []
+            self.comp_transform_data = []
+            self._base_export_transform_overrides = []
+            self._comp_export_transform_overrides = []
+
+    def _apply_export_transform_overrides_for_current_page(
+        self,
+        tx: float,
+        ty: float,
+        scale: float,
+        changed_fields: set[str],
+    ) -> None:
+        """Store explicit export overrides for the active page.
+
+        Args:
+            tx: Current X translation.
+            ty: Current Y translation.
+            scale: Current preview scale.
+            changed_fields: Explicitly edited transform field names.
+        """
+        export_fields = {field_name for field_name in changed_fields if field_name in {"tx", "ty", "scale"}}
+        if not export_fields:
+            return
+
+        # Main processing: only entry-confirmed XY and scale values should affect saved output.
+        for override_list in (self._base_export_transform_overrides, self._comp_export_transform_overrides):
+            if not (0 <= self.current_page_index < len(override_list)):
+                continue
+            updated_override = dict(override_list[self.current_page_index])
+            if "tx" in export_fields:
+                updated_override["tx"] = float(tx)
+            if "ty" in export_fields:
+                updated_override["ty"] = float(ty)
+            if "scale" in export_fields:
+                updated_override["scale"] = max(0.01, float(scale))
+            override_list[self.current_page_index] = updated_override
+
+    def _propagate_export_overrides_to_all_pages(self, changed_fields: set[str]) -> None:
+        """Propagate explicit export overrides when batch edit is enabled.
+
+        Args:
+            changed_fields: Explicitly edited transform field names.
+        """
+        export_fields = {field_name for field_name in changed_fields if field_name in {"tx", "ty", "scale"}}
+        if not export_fields:
+            return
+        if self.page_control_frame is None or not self.page_control_frame.is_batch_edit_checked():
+            return
+
+        # Main processing: keep saved-output overrides aligned with batch-applied transform entry edits.
+        for override_list in (self._base_export_transform_overrides, self._comp_export_transform_overrides):
+            if not override_list or not (0 <= self.current_page_index < len(override_list)):
+                continue
+            current_override = dict(override_list[self.current_page_index])
+            for index in range(len(override_list)):
+                if index == self.current_page_index:
+                    continue
+                next_override = dict(override_list[index])
+                for field_name in export_fields:
+                    if field_name in current_override:
+                        next_override[field_name] = current_override[field_name]
+                override_list[index] = next_override
+
+    def _build_export_transform_data(
+        self,
+        preview_transform_data: List[tuple[float, float, float, float]],
+        export_override_data: List[Dict[str, float]],
+    ) -> List[tuple[float, float, float, float]]:
+        """Build export transforms from preview rotations and explicit export offsets.
+
+        Args:
+            preview_transform_data: Current preview transforms.
+            export_override_data: Explicit export-only XY overrides.
+
+        Returns:
+            Export transform tuples.
+        """
+        resolved_export_transforms: List[tuple[float, float, float, float]] = []
+        for page_index, (rotation, _tx, _ty, _scale) in enumerate(preview_transform_data):
+            export_override = export_override_data[page_index] if page_index < len(export_override_data) else {}
+            resolved_export_transforms.append(
+                (
+                    float(rotation),
+                    float(export_override.get("tx", 0.0)),
+                    float(export_override.get("ty", 0.0)),
+                    1.0,
+                )
+            )
+        return resolved_export_transforms
+
+    def _get_or_create_converter(
+        self, pdf_path: str, name_flag: str
+    ) -> tuple[Pdf2PngByPages, FilePathInfo]:
+        """Create or reuse a PDF converter for the requested side.
+
+        Args:
+            pdf_path: Source PDF path.
+            name_flag: Side identifier, either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Tuple of converter and file information.
+        """
+        existing_converter = self.base_pdf_converter if name_flag == "base" else self.comp_pdf_converter
+        existing_info = self.base_file_info if name_flag == "base" else self.comp_file_info
+        requested_path = Path(pdf_path)
+
+        if (
+            existing_converter is not None
+            and existing_info is not None
+            and existing_info.file_path == requested_path
+        ):
+            return existing_converter, existing_info
+
+        file_info = FilePathInfo(
+            file_path=requested_path,
+            file_page_count=0,
+            file_meta_info={},
+            file_histogram_data=[],
+        )
+        converter = Pdf2PngByPages(
+            pdf_obj=file_info,
+            program_mode=tool_settings.is_production_mode,
+            name_flag=name_flag,
+        )
+
+        if name_flag == "base":
+            self.base_pdf_converter = converter
+            self.base_file_info = file_info
+            self.base_pdf_metadata = dict(file_info.file_meta_info)
+        else:
+            self.comp_pdf_converter = converter
+            self.comp_file_info = file_info
+            self.comp_pdf_metadata = dict(file_info.file_meta_info)
+
+        return converter, file_info
+
+    def _sanitize_workspace_stem(self, source_name: str) -> str:
+        """Return a filesystem-safe stem for temp workspace directories and files.
+
+        Args:
+            source_name: Original filename stem.
+
+        Returns:
+            Sanitized stem string.
+        """
+        safe_name = "".join(ch for ch in str(source_name) if ch.isalnum() or ch in "._- ()")
+        safe_name = safe_name.strip().replace(" ", "_")
+        return safe_name or "file"
+
+    def _create_unique_directory_path(self, parent_dir: Path, base_name: str) -> Path:
+        """Create and return a unique directory path under the target parent directory.
+
+        Args:
+            parent_dir: Parent directory.
+            base_name: Desired directory name.
+
+        Returns:
+            Newly created unique directory path.
+        """
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        candidate_dir = parent_dir / base_name
+        if not candidate_dir.exists():
+            candidate_dir.mkdir(parents=True, exist_ok=False)
+            return candidate_dir
+
+        suffix_index = 1
+        while True:
+            numbered_dir = parent_dir / f"{base_name}（{suffix_index}）"
+            if not numbered_dir.exists():
+                numbered_dir.mkdir(parents=True, exist_ok=False)
+                return numbered_dir
+            suffix_index += 1
+
+    def _create_unique_file_path(self, parent_dir: Path, base_name: str, extension: str) -> Path:
+        """Return a unique file path under the target parent directory.
+
+        Args:
+            parent_dir: Parent directory.
+            base_name: Desired filename stem.
+            extension: Desired extension including dot.
+
+        Returns:
+            Unique file path that does not exist yet.
+        """
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        candidate_file = parent_dir / f"{base_name}{extension}"
+        if not candidate_file.exists():
+            return candidate_file
+
+        suffix_index = 1
+        while True:
+            numbered_file = parent_dir / f"{base_name}（{suffix_index}）{extension}"
+            if not numbered_file.exists():
+                return numbered_file
+            suffix_index += 1
+
+    def _create_workspace_temp_dir(self, pdf_path: str, name_flag: str) -> Path:
+        """Create a unique temp directory for one side of the comparison workspace.
+
+        Args:
+            pdf_path: Source PDF path.
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Newly created unique workspace directory.
+        """
+        temp_root = Path(get_temp_dir())
+        source_stem = self._sanitize_workspace_stem(Path(pdf_path).stem)
+        workspace_dir_name = f"{source_stem}_{name_flag}"
+        return self._create_unique_directory_path(temp_root, workspace_dir_name)
+
+    def _build_page_record(self, page_path: Path, source_page_number: Optional[int], is_blank: bool) -> Dict[str, Any]:
+        """Build in-memory page metadata for one workspace page.
+
+        Args:
+            page_path: Stored PNG path.
+            source_page_number: Original PDF page number, or ``None`` for inserted blanks.
+            is_blank: Whether this page was generated as a blank page.
+
+        Returns:
+            Dictionary describing the workspace page.
+        """
+        return {
+            "path": page_path,
+            "filename": page_path.name,
+            "source_page_number": source_page_number,
+            "is_blank": is_blank,
+        }
+
+    def _copy_workspace_pages_to_temp(
+        self,
+        source_page_paths: List[Path],
+        pdf_path: str,
+        name_flag: str,
+        workspace_dir: Optional[Path] = None,
+    ) -> tuple[List[Path], List[Dict[str, Any]], Path]:
+        """Build workspace page records from already converted PNG files.
+
+        Args:
+            source_page_paths: Converted PNG paths from the converter cache.
+            pdf_path: Source PDF path.
+            name_flag: Either ``"base"`` or ``"comp"``.
+            workspace_dir: Optional existing directory holding the converted pages.
+
+        Returns:
+            Tuple of page paths, page records, and the active workspace directory.
+        """
+        resolved_workspace_dir = workspace_dir
+        if resolved_workspace_dir is None:
+            if source_page_paths:
+                resolved_workspace_dir = Path(source_page_paths[0]).parent
+            else:
+                resolved_workspace_dir = self._create_workspace_temp_dir(pdf_path, name_flag)
+
+        workspace_page_paths: List[Path] = []
+        page_records: List[Dict[str, Any]] = []
+
+        for page_index, source_page_path in enumerate(source_page_paths, start=1):
+            workspace_page_paths.append(source_page_path)
+            page_records.append(self._build_page_record(source_page_path, page_index, False))
+
+        return workspace_page_paths, page_records, resolved_workspace_dir
+
+    def _sync_workspace_page_lists(self) -> None:
+        """Synchronize public page/path lists from the current workspace records."""
+        self.base_page_paths = [Path(record["path"]) for record in self._base_page_records]
+        self.comp_page_paths = [Path(record["path"]) for record in self._comp_page_records]
+        self.base_pages = [str(path) for path in self.base_page_paths]
+        self.comp_pages = [str(path) for path in self.comp_page_paths]
+        self.page_count = max(len(self.base_page_paths), len(self.comp_page_paths))
+
+    def _get_workspace_record_list(self, name_flag: str) -> List[Dict[str, Any]]:
+        """Return the mutable record list for the requested side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Mutable page-record list for the requested side.
+        """
+        return self._base_page_records if name_flag == "base" else self._comp_page_records
+
+    def _get_workspace_directory(self, name_flag: str) -> Optional[Path]:
+        """Return the workspace temp directory for the requested side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Workspace directory path when available.
+        """
+        return self._base_workspace_dir if name_flag == "base" else self._comp_workspace_dir
+
+    def _create_blank_workspace_page(self, workspace_dir: Path, page_size: tuple[int, int]) -> Path:
+        """Create a blank PNG page inside the target workspace directory.
+
+        Args:
+            workspace_dir: Directory used for the workspace side.
+            page_size: Page size ``(width, height)``.
+
+        Returns:
+            Saved blank PNG path.
+        """
+        blank_path = self._create_unique_file_path(workspace_dir, "blank_page", ".png")
+        blank_image = Image.new("RGBA", page_size, (255, 255, 255, 255))
+        blank_image.save(blank_path, format="PNG")
+        return blank_path
+
+    def _get_current_workspace_page_size(self) -> tuple[int, int]:
+        """Return the current workspace page size using the displayed source images.
+
+        Returns:
+            Page size tuple ``(width, height)``.
+        """
+        candidate_paths: List[Path] = []
+        if 0 <= self.current_page_index < len(self.base_page_paths):
+            candidate_paths.append(self.base_page_paths[self.current_page_index])
+        if 0 <= self.current_page_index < len(self.comp_page_paths):
+            candidate_paths.append(self.comp_page_paths[self.current_page_index])
+        candidate_paths.extend(self.base_page_paths[:1])
+        candidate_paths.extend(self.comp_page_paths[:1])
+
+        for candidate_path in candidate_paths:
+            try:
+                if candidate_path.exists():
+                    with Image.open(candidate_path) as candidate_image:
+                        return (candidate_image.width, candidate_image.height)
+            except Exception:
+                continue
+        return (595, 842)
+
+    def _build_default_modified_pdf_path(self) -> Path:
+        """Return a unique output path for the edited PDF export.
+
+        Returns:
+            Unique PDF output path.
+
+        Raises:
+            ValueError: If the output folder is not valid.
+        """
+        output_dir = Path(str(self.output_path.get()).strip())
+        if not output_dir.exists() or not output_dir.is_dir():
+            raise ValueError("出力フォルダを選択してください。")
+
+        source_candidates = [
+            Path(str(self.base_path.get()).strip()),
+            Path(str(self.comparison_path.get()).strip()),
+        ]
+        selected_stem = "output"
+        for source_candidate in source_candidates:
+            if source_candidate.suffix:
+                selected_stem = source_candidate.stem
+                break
+
+        base_stem = self._sanitize_workspace_stem(selected_stem)
+        return self._create_unique_file_path(output_dir, f"{base_stem}_modified", ".pdf")
+
+    def _collect_png_page_paths(self, temp_dir: str, name_flag: str, page_count: int) -> List[Path]:
+        """Collect converted PNG page paths from a converter output directory.
+
+        Args:
+            temp_dir: Directory where the converter wrote PNG files.
+            name_flag: ``"base"`` or ``"comp"``.
+            page_count: Expected page count.
+
+        Returns:
+            Existing PNG path list in page order.
+        """
+        page_paths: List[Path] = []
+        temp_dir_path = Path(str(temp_dir))
+        for page_num in range(1, page_count + 1):
+            candidate = temp_dir_path / f"{name_flag}_{page_num:04d}.png"
+            if candidate.exists():
+                page_paths.append(candidate)
+        return page_paths
+
+    def _build_expected_png_page_paths(self, temp_dir: str, name_flag: str, page_count: int) -> List[Path]:
+        """Build the expected PNG path list for every page in one converter temp dir.
+
+        Args:
+            temp_dir: Directory where the converter writes PNG files.
+            name_flag: ``"base"`` or ``"comp"``.
+            page_count: Total page count.
+
+        Returns:
+            List[Path]: Expected PNG paths in page order.
+        """
+        temp_dir_path = Path(str(temp_dir))
+        return [temp_dir_path / f"{name_flag}_{page_num:04d}.png" for page_num in range(1, page_count + 1)]
+
+    def _analyze_pdf_path(self, pdf_path: str, name_flag: str) -> Dict[str, Any]:
+        """Analyze one selected PDF and return a compact summary.
+
+        Args:
+            pdf_path: Source PDF path.
+            name_flag: ``"base"`` or ``"comp"``.
+
+        Returns:
+            Summary containing file path, page count, and protection flags.
+        """
+        converter, file_info = self._get_or_create_converter(pdf_path, name_flag)
+        metadata = dict(file_info.file_meta_info)
+        summary = {
+            "path": str(file_info.file_path),
+            "page_count": int(file_info.file_page_count),
+            "copy_protected": bool(metadata.get("CopyProtected", metadata.get("Encrypted", False))),
+            "temp_dir": str(converter._temp_dir),
+        }
+        if name_flag == "base":
+            self.base_pdf_metadata = metadata
+        else:
+            self.comp_pdf_metadata = metadata
+        return summary
+
+    def _convert_pdf_for_workspace(
+        self,
+        pdf_path: str,
+        name_flag: str,
+        show_progress: bool = True,
+        start_page: Optional[int] = None,
+        end_page: Optional[int] = None,
+        collect_all_pages: bool = False,
+    ) -> List[Path]:
+        """Convert a PDF to page PNGs and return the collected output paths.
+
+        Args:
+            pdf_path: Source PDF path.
+            name_flag: ``"base"`` or ``"comp"``.
+            show_progress: Whether to show the progress dialog while converting.
+            start_page: Optional first page to render.
+            end_page: Optional last page to render.
+            collect_all_pages: Whether to return the full expected path list.
+
+        Returns:
+            Converted page path list.
+        """
+        converter, file_info = self._get_or_create_converter(pdf_path, name_flag)
+        self._conversion_dpi = self._get_dpi_from_entry()
+        render_kwargs: Dict[str, Any] = {"dpi": self._conversion_dpi}
+        if start_page is not None:
+            render_kwargs["start_page"] = int(start_page)
+        if end_page is not None:
+            render_kwargs["end_page"] = int(end_page)
+        if show_progress:
+            converter.process_with_progress_window(self.frame_main3, **render_kwargs)
+        else:
+            converter.convert_to_grayscale_pngs(**render_kwargs)
+        if collect_all_pages:
+            page_paths = self._build_expected_png_page_paths(
+                temp_dir=str(converter._temp_dir),
+                name_flag=name_flag,
+                page_count=int(file_info.file_page_count),
+            )
+        else:
+            page_paths = self._collect_png_page_paths(
+                temp_dir=str(converter._temp_dir),
+                name_flag=name_flag,
+                page_count=int(file_info.file_page_count),
+            )
+        copied_page_paths, page_records, workspace_dir = self._copy_workspace_pages_to_temp(
+            page_paths,
+            pdf_path,
+            name_flag,
+            workspace_dir=Path(str(converter._temp_dir)),
+        )
+        if name_flag == "base":
+            self.base_pdf_metadata = dict(file_info.file_meta_info)
+            self._base_page_records = page_records
+            self._base_workspace_dir = workspace_dir
+        else:
+            self.comp_pdf_metadata = dict(file_info.file_meta_info)
+            self._comp_page_records = page_records
+            self._comp_workspace_dir = workspace_dir
+        return copied_page_paths
+
+    def _get_preview_render_lock(self, name_flag: str) -> threading.Lock:
+        """Return the render lock used for one side preview generation.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            threading.Lock: Side-specific render lock.
+        """
+        return self._base_preview_render_lock if name_flag == "base" else self._comp_preview_render_lock
+
+    def _render_preview_page_range(self, pdf_path: str, name_flag: str, dpi_value: int, start_page: int, end_page: int) -> None:
+        """Render one page range for preview use without touching Tk widgets.
+
+        Args:
+            pdf_path: Source PDF path.
+            name_flag: Either ``"base"`` or ``"comp"``.
+            dpi_value: DPI used for preview rendering.
+            start_page: Inclusive first page.
+            end_page: Inclusive last page.
+        """
+        render_lock = self._get_preview_render_lock(name_flag)
+        with render_lock:
+            converter, _file_info = self._get_or_create_converter(pdf_path, name_flag)
+            # Main processing: render only the requested page range for fast preview availability.
+            converter.convert_to_grayscale_pngs(
+                dpi=int(dpi_value),
+                start_page=int(start_page),
+                end_page=int(end_page),
+            )
+
+    def _start_background_preview_render(self, tasks: List[tuple[str, str, int, int]], dpi_value: int, generation: int) -> None:
+        """Render remaining preview pages in a background worker.
+
+        Args:
+            tasks: Tuples of ``(pdf_path, name_flag, start_page, end_page)``.
+            dpi_value: DPI used for rendering.
+            generation: Snapshot of the current preview generation.
+        """
+        if not tasks:
+            self._background_preview_render_thread = None
+            return
+
+        def _worker() -> None:
+            """Background worker for incremental preview rendering."""
+            # Main processing: render one page at a time so stale jobs can stop quickly.
+            for pdf_path, name_flag, start_page, end_page in tasks:
+                for page_num in range(start_page, end_page + 1):
+                    if generation != self._preview_render_generation:
+                        return
+                    try:
+                        self._render_preview_page_range(pdf_path, name_flag, dpi_value, page_num, page_num)
+                    except Exception as exc:
+                        logger.warning(f"Background preview render failed ({name_flag} page {page_num}): {exc}")
+
+        worker_thread = threading.Thread(target=_worker, name="MainTabPreviewRender", daemon=True)
+        self._background_preview_render_thread = worker_thread
+        worker_thread.start()
+
+    def _page_has_rendered_preview(self, page_index: int) -> bool:
+        """Return whether at least one side already has a rendered image for the page.
+
+        Args:
+            page_index: Zero-based page index.
+
+        Returns:
+            bool: ``True`` when the page PNG exists for either side.
+        """
+        base_path = self._get_display_page_path(self.base_page_paths, page_index)
+        comp_path = self._get_display_page_path(self.comp_page_paths, page_index)
+        return bool((base_path is not None and base_path.exists()) or (comp_path is not None and comp_path.exists()))
+
+    def _ensure_preview_page_available(self, page_index: int) -> None:
+        """Synchronously render the requested page when background work is not done yet.
+
+        Args:
+            page_index: Zero-based page index.
+        """
+        if page_index < 0 or self._page_has_rendered_preview(page_index):
+            return
+
+        target_page_number = page_index + 1
+        resolved_dpi = self._get_dpi_from_entry()
+
+        # Main processing: render only the requested page as an on-demand fallback.
+        if self._path_points_to_file(self.base_path.get()) and page_index < len(self.base_page_paths):
+            base_path = self.base_page_paths[page_index]
+            if not base_path.exists():
+                self._render_preview_page_range(self.base_path.get(), "base", resolved_dpi, target_page_number, target_page_number)
+        if self._path_points_to_file(self.comparison_path.get()) and page_index < len(self.comp_page_paths):
+            comp_path = self.comp_page_paths[page_index]
+            if not comp_path.exists():
+                self._render_preview_page_range(self.comparison_path.get(), "comp", resolved_dpi, target_page_number, target_page_number)
+
+    def _refresh_operation_restriction_state(self) -> None:
+        """Refresh whether transform operations should be enabled."""
+        # Main processing: disable transform editing when either source is copy protected.
+        base_protected = bool(self.base_pdf_metadata.get("CopyProtected", self.base_pdf_metadata.get("Encrypted", False)))
+        comp_protected = bool(self.comp_pdf_metadata.get("CopyProtected", self.comp_pdf_metadata.get("Encrypted", False)))
+        self._copy_protected = base_protected or comp_protected
+        self._visual_adjustments_enabled = self._has_loaded_workspace_pages() and not self._copy_protected
+
+        if self.page_control_frame is not None:
+            try:
+                self.page_control_frame.set_edit_buttons_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
+            except Exception:
+                pass
+
+        if self.mouse_handler is not None:
+            try:
+                self.mouse_handler.set_operations_enabled(self._visual_adjustments_enabled)
+            except Exception:
+                pass
+
+    def _apply_transform_to_image(
+        self,
+        pil_image: Image.Image,
+        transform: tuple[float, float, float, float],
+    ) -> Image.Image:
+        """Apply rotation and scale to a rendered page image.
+
+        Args:
+            pil_image: Source page image.
+            transform: Transform tuple ``(rotation, tx, ty, scale)``.
+
+        Returns:
+            Transformed PIL image.
+        """
+        rotation, _translate_x, _translate_y, scale = transform
+        dpi_normalization = float(_MAIN_TAB_DEFAULT_DPI) / float(max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI)))
+        effective_scale = max(0.01, float(scale) * dpi_normalization)
+        transformed_image = pil_image
+        if rotation != 0:
+            transformed_image = transformed_image.rotate(rotation, resample=Resampling.BICUBIC, expand=True)
+        if abs(effective_scale - 1.0) > 1e-6:
+            new_width = int(transformed_image.width * effective_scale)
+            new_height = int(transformed_image.height * effective_scale)
+            if new_width > 0 and new_height > 0:
+                transformed_image = transformed_image.resize((new_width, new_height), Resampling.LANCZOS)
+        return transformed_image
+
+    def _get_display_page_path(self, page_paths: List[Path], page_index: int) -> Optional[Path]:
+        """Return the page PNG path for the requested index when available.
+
+        Args:
+            page_paths: Converted page list.
+            page_index: Zero-based page index.
+
+        Returns:
+            Matching page path or ``None``.
+        """
+        if 0 <= page_index < len(page_paths):
+            return page_paths[page_index]
+        return None
+
+    @staticmethod
+    def _get_preview_image_signature(page_path: Path) -> tuple[str, int, int]:
+        """Return a stable signature for one rendered preview PNG.
+
+        Args:
+            page_path: Target PNG path.
+
+        Returns:
+            Tuple containing path string, modification time, and file size.
+        """
+        stat_result = page_path.stat()
+        return (str(page_path), int(stat_result.st_mtime_ns), int(stat_result.st_size))
+
+    def _get_cached_source_preview_image(self, page_path: Path) -> Image.Image:
+        """Load one workspace PNG once and reuse it across redraws.
+
+        Args:
+            page_path: Target PNG path.
+
+        Returns:
+            Cached RGBA image copy.
+        """
+        path_str, modified_time_ns, file_size = self._get_preview_image_signature(page_path)
+        cache_key = (path_str, modified_time_ns, file_size, 0)
+
+        # Main processing: reuse the immutable source image for repeated redraws.
+        cached_image = self._preview_source_image_cache.get(cache_key)
+        if cached_image is None:
+            with Image.open(page_path) as loaded_image:
+                cached_image = loaded_image.convert("RGBA")
+            self._preview_source_image_cache = {
+                key: value
+                for key, value in self._preview_source_image_cache.items()
+                if key[0] != path_str
+            }
+            self._preview_source_image_cache[cache_key] = cached_image
+        return cached_image.copy()
+
+    def _get_cached_processed_preview_image(self, page_path: Path, name_flag: str) -> Image.Image:
+        """Return a cached color-processed page image for preview redraws.
+
+        Args:
+            page_path: Target PNG path.
+            name_flag: Either ``"base"`` or ``"comp"``.
+
+        Returns:
+            Cached processed image copy.
+        """
+        path_str, modified_time_ns, file_size = self._get_preview_image_signature(page_path)
+        selected_color = str(self._get_selected_layer_color(name_flag) or "")
+        threshold_value = int(self._get_threshold_for_side(name_flag))
+        cache_key = (
+            name_flag,
+            path_str,
+            modified_time_ns,
+            file_size,
+            self._selected_color_processing_mode,
+            selected_color,
+            threshold_value,
+        )
+
+        # Main processing: cache the expensive color processing result separately.
+        cached_image = self._preview_processed_image_cache.get(cache_key)
+        if cached_image is None:
+            source_image = self._get_cached_source_preview_image(page_path)
+            cached_image = self._apply_color_processing_for_side(source_image, name_flag)
+            self._preview_processed_image_cache = {
+                key: value
+                for key, value in self._preview_processed_image_cache.items()
+                if not (key[0] == name_flag and key[1] == path_str)
+            }
+            self._preview_processed_image_cache[cache_key] = cached_image
+        return cached_image.copy()
+
+    def _display_page(self, page_index: int) -> None:
+        """Display one page of the converted comparison workspace.
+
+        Args:
+            page_index: Zero-based page index.
+        """
+        self._apply_preferred_preview_scale_to_page(page_index)
+        if not self._has_loaded_workspace_pages():
+            self._render_comparison_placeholder()
+            return
+        if not (0 <= page_index < self.page_count):
+            self._show_status_feedback("Requested page is out of range.", False)
+            return
+
+        try:
+            self.canvas.delete("workspace")
+            self.canvas.delete("pdf_image")
+        except Exception:
+            self.canvas.delete("all")
+        self._base_canvas_image_id = None
+        self._comp_canvas_image_id = None
+
+        base_path = self._get_display_page_path(self.base_page_paths, page_index)
+        comp_path = self._get_display_page_path(self.comp_page_paths, page_index)
+        base_image: Optional[Image.Image] = None
+        comp_image: Optional[Image.Image] = None
+        show_base_layer = bool(self._show_base_layer_var.get())
+        show_comp_layer = bool(self._show_comp_layer_var.get())
+
+        if base_path is not None and base_path.exists():
+            base_image = self._get_cached_processed_preview_image(base_path, "base")
+        if comp_path is not None and comp_path.exists():
+            comp_image = self._get_cached_processed_preview_image(comp_path, "comp")
+
+        if base_image is None and comp_image is None:
+            self._show_status_feedback("Rendered page images could not be found.", False)
+            return
+
+        reference_image = base_image if base_image is not None else comp_image
+        if reference_image is not None:
+            self._original_page_width = reference_image.width
+            self._original_page_height = reference_image.height
+            if self.mouse_handler is not None and hasattr(self.mouse_handler, "set_original_image_size"):
+                try:
+                    self.mouse_handler.set_original_image_size(reference_image.width, reference_image.height)
+                except Exception:
+                    pass
+
+        if base_image is not None and page_index < len(self.base_transform_data):
+            base_image = self._apply_transform_to_image(base_image, self.base_transform_data[page_index])
+        if comp_image is not None and page_index < len(self.comp_transform_data):
+            comp_image = self._apply_transform_to_image(comp_image, self.comp_transform_data[page_index])
+
+        self._base_photo_image = None
+        self._comp_photo_image = None
+
+        if base_image is not None and show_base_layer:
+            _, translate_x, translate_y, _ = self.base_transform_data[page_index]
+            self._base_photo_image = ImageTk.PhotoImage(base_image)
+            self._base_canvas_image_id = self.canvas.create_image(
+                int(translate_x),
+                int(translate_y),
+                anchor="nw",
+                image=self._base_photo_image,
+                tags=("pdf_image", "base_image"),
+            )
+
+        if comp_image is not None and show_comp_layer:
+            # Main processing: only soften the comparison layer while both layers are shown.
+            if comp_image.mode != "RGBA":
+                comp_image = comp_image.convert("RGBA")
+            overlay_image = comp_image.copy()
+            if show_base_layer:
+                alpha_channel = overlay_image.getchannel("A")
+                softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))
+                overlay_image.putalpha(softened_alpha)
+            _, translate_x, translate_y, _ = self.comp_transform_data[page_index]
+            self._comp_photo_image = ImageTk.PhotoImage(overlay_image)
+            self._comp_canvas_image_id = self.canvas.create_image(
+                int(translate_x),
+                int(translate_y),
+                anchor="nw",
+                image=self._comp_photo_image,
+                tags=("pdf_image", "comp_image"),
+            )
+
+        reference_bbox = self.canvas.bbox("pdf_image")
+        self._draw_reference_grid(reference_bbox, raise_above_images=True)
+
+        if not show_base_layer and not show_comp_layer:
+            self.canvas.create_text(
+                max(self.canvas.winfo_width() // 2, 200),
+                max(self.canvas.winfo_height() // 2, 120),
+                text="Base/Comparison layers are both hidden.",
+                fill=ColorThemeManager.get_instance().get_current_theme().get("Frame", {}).get("fg", "#000000"),
+                font=("", 11, "bold"),
+                tags=("workspace",),
+            )
+
+        self._draw_canvas_footer_guide()
+
+        try:
+            self.canvas.config(scrollregion=self.canvas.bbox("pdf_image"))
+        except Exception:
+            self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+        previous_page_index = getattr(self, "current_page_index", None)
+        self.current_page_index = page_index
+
+        visible_layers = self._get_visible_layer_state()
+
+        self._sync_visualized_image_state()
+
+        if self.mouse_handler is not None:
+            self.mouse_handler.update_state(
+                current_page_index=page_index,
+                visible_layers=visible_layers,
+            )
+            if hasattr(self.mouse_handler, "refresh_overlay_positions"):
+                self.mouse_handler.refresh_overlay_positions()
+
+        if self.page_control_frame is not None:
+            if previous_page_index != page_index:
+                self.page_control_frame.update_page_label(page_index, self.page_count)
+            rotation, tx, ty, scale = self._get_active_transform()
+            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+
+        try:
+            self.canvas.focus_set()
+        except Exception:
+            pass
+
+    def _get_active_transform(self) -> tuple[float, float, float, float]:
+        """Return the transform currently shown in the placeholder canvas.
+
+        Returns:
+            Transform tuple ``(rotation, tx, ty, scale)``.
+        """
+        if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
+            return self.base_transform_data[self.current_page_index]
+        if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
+            return self.comp_transform_data[self.current_page_index]
+        return (0.0, 0.0, 0.0, 1.0)
+
+    def _refresh_workspace_state(self) -> None:
+        """Refresh comparison workspace state from the selected paths."""
+        # Main processing: reset to the pre-conversion state whenever the selected source paths change.
+        self._clear_loaded_workspace_data()
+        self._sync_dpi_combo_choices(preserve_current=True)
+        base_selected = self._path_points_to_file(self.base_path.get())
+        comparison_selected = self._path_points_to_file(self.comparison_path.get())
+
+        if not base_selected and not comparison_selected:
+            self.base_pages = []
+            self.comp_pages = []
+            self.page_count = 0
+            self.current_page_index = 0
+            self._create_page_control_frame(0)
+            self._apply_path_entry_activity_style()
+            self._setup_mouse_events(0)
+            self._render_comparison_placeholder()
+            self._refresh_interaction_state()
+            return
+
+        try:
+            self._preview_render_generation += 1
+            current_generation = self._preview_render_generation
+            resolved_dpi = self._get_dpi_from_entry()
+            background_tasks: List[tuple[str, str, int, int]] = []
+
+            self.base_page_paths = []
+            self.comp_page_paths = []
+
+            if base_selected:
+                self.base_page_paths = self._convert_pdf_for_workspace(
+                    self.base_path.get(),
+                    "base",
+                    show_progress=False,
+                    start_page=1,
+                    end_page=1,
+                    collect_all_pages=True,
+                )
+                if self.base_file_info is not None and int(self.base_file_info.file_page_count) > 1:
+                    background_tasks.append((self.base_path.get(), "base", 2, int(self.base_file_info.file_page_count)))
+
+            if comparison_selected:
+                self.comp_page_paths = self._convert_pdf_for_workspace(
+                    self.comparison_path.get(),
+                    "comp",
+                    show_progress=False,
+                    start_page=1,
+                    end_page=1,
+                    collect_all_pages=True,
+                )
+                if self.comp_file_info is not None and int(self.comp_file_info.file_page_count) > 1:
+                    background_tasks.append((self.comparison_path.get(), "comp", 2, int(self.comp_file_info.file_page_count)))
+
+            self._sync_workspace_page_lists()
+            self.current_page_index = 0
+            self._ensure_transform_slots(self.page_count)
+            self._create_page_control_frame(self.page_count)
+            self._apply_path_entry_activity_style()
+            self._refresh_operation_restriction_state()
+            self._setup_mouse_events(self.page_count)
+            if self._has_loaded_workspace_pages():
+                self._display_page(self.current_page_index)
+            else:
+                self._render_comparison_placeholder()
+            self._refresh_interaction_state()
+            self._start_background_preview_render(background_tasks, resolved_dpi, current_generation)
+        except Exception as exc:
+            logger.error(message_manager.get_log_message("L080", str(exc)))
+            self._show_status_feedback(f"プレビューの更新に失敗しました: {exc}", False)
+            self._clear_loaded_workspace_data()
+            self._create_page_control_frame(0)
+            self._apply_path_entry_activity_style()
+            self._setup_mouse_events(0)
+            self._render_comparison_placeholder()
+            self._refresh_interaction_state()
+
+    def _render_comparison_placeholder(self) -> None:
+        """Render the current minimal comparison workspace on the canvas."""
+        if not hasattr(self, "canvas"):
+            return
+
+        # Main processing: show selected input state before real page conversion is executed.
+        self.canvas.delete("all")
+        canvas_width = max(self.canvas.winfo_width(), 720)
+        canvas_height = max(self.canvas.winfo_height(), 420)
+        active_theme = ColorThemeManager.get_instance().get_current_theme()
+        notebook_theme = active_theme.get("Notebook", {})
+        frame_theme = active_theme.get("Frame", {})
+        canvas_bg = notebook_theme.get("tab_bg", notebook_theme.get("bg", frame_theme.get("bg", "#ffffff")))
+        text_fg = frame_theme.get("fg", "#000000")
+        accent_fg = active_theme.get("process_button", {}).get("fg", text_fg)
+        border_fg = active_theme.get("canvas", {}).get("highlightbackground", "#6c6c6c")
+
+        self.canvas.configure(bg=canvas_bg)
+        self.canvas.create_rectangle(
+            16,
+            16,
+            canvas_width - 16,
+            canvas_height - 16,
+            outline=border_fg,
+            width=2,
+            tags=("workspace",),
+        )
+
+        self._draw_reference_grid((16, 16, canvas_width - 16, canvas_height - 16), raise_above_images=False)
+
+        title_text = "下のプレビュー"
+        self.canvas.create_text(
+            32,
+            36,
+            anchor="nw",
+            text=title_text,
+            fill=accent_fg,
+            font=("", 12, "bold"),
+            tags=("workspace",),
+        )
+
+        page_display = self.current_page_index + 1 if self.page_count > 0 else 0
+        rotation, tx, ty, scale = self._get_active_transform()
+        body_lines = [
+            f"元PDF: {self.base_path.get()}",
+            f"比較PDF: {self.comparison_path.get()}",
+            f"出力フォルダ: {self.output_path.get()}",
+            f"ページ: {page_display} / {self.page_count}",
+            f"変形: 回転={rotation:.1f}, X={tx:.1f}, Y={ty:.1f}, 拡大率={scale:.3f}",
+        ]
+        if self.status_var.get():
+            body_lines.append("")
+            body_lines.append(f"状態: {self.status_var.get()}")
+
+        self.canvas.create_text(
+            32,
+            74,
+            anchor="nw",
+            text="\n".join(body_lines),
+            fill=text_fg,
+            width=max(canvas_width - 72, 320),
+            font=("", 10),
+            tags=("workspace",),
+        )
+        self._draw_canvas_footer_guide()
+
+    def _create_page_control_frame(self, page_count: int) -> None:
+        """Create or recreate the page control frame for the current workspace.
+
+        Args:
+            page_count: Number of pages currently available in the workspace.
+        """
+        # Main processing: recreate the page control so callbacks and list references stay aligned.
+        if self.page_control_frame is not None:
+            try:
+                self.page_control_frame.destroy()
+            except Exception:
+                pass
+            self.page_control_frame = None
+
+        self.page_control_frame = PageControlFrame(
+            parent=self.frame_main3,
+            color_key="page_control",
+            base_pages=self.base_pages,
+            comp_pages=self.comp_pages,
+            base_transform_data=self.base_transform_data,
+            comp_transform_data=self.comp_transform_data,
+            visualized_image=self.visualized_image,
+            page_amount_limit=max(1, page_count),
+            on_prev_page=self._on_prev_page,
+            on_next_page=self._on_next_page,
+            on_insert_blank=self._on_insert_blank_page,
+            on_delete_page=self._on_delete_page,
+            on_export=self._on_pdf_save_click,
+            on_page_entry=self._on_page_entry,
+            on_transform_value_change=self._on_transform_value_input,
+            initial_batch_edit_checked=self._batch_edit_selected,
+            on_batch_edit_toggle=self._on_batch_edit_toggle,
+        )
+        self.page_control_frame.grid(row=0, column=1, padx=(10, 12), pady=12)
+        self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
+        self.page_control_frame.set_workspace_controls_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
+        self.page_control_frame.set_edit_buttons_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
+        self._sync_batch_edit_state()
+
+    def _setup_mouse_events(self, page_count: int) -> None:
+        """Set up mouse handling for the minimal comparison workspace.
+
+        Args:
+            page_count: Number of pages currently available.
+        """
+        # Main processing: only enable transform shortcuts when a placeholder page is present.
+        self.canvas.unbind("<Button-1>")
+        self.canvas.unbind("<B1-Motion>")
+        self.canvas.unbind("<ButtonRelease-1>")
+        self.canvas.unbind("<Button-3>")
+        self.canvas.unbind("<MouseWheel>")
+        self.canvas.unbind("<Button-4>")
+        self.canvas.unbind("<Button-5>")
+
+        if page_count <= 0:
+            self.mouse_handler = None
+            return
+
+        layer_transform_data: dict[int, list[tuple[float, float, float, float]]] = {}
+        visible_layers: dict[int, bool] = {}
+        if self.base_transform_data:
+            layer_transform_data[0] = self.base_transform_data
+            visible_layers[0] = True
+        if self.comp_transform_data:
+            layer_transform_data[1] = self.comp_transform_data
+            visible_layers[1] = True
+
+        self.mouse_handler = MouseEventHandler(
+            layer_transform_data=layer_transform_data,
+            current_page_index=self.current_page_index,
+            visible_layers=visible_layers,
+            on_transform_update=self._on_transform_update,
+            on_live_translation_update=self._update_canvas_translation_preview,
+            operations_enabled=self._visual_adjustments_enabled,
+        )
+        self.mouse_handler.attach_to_canvas(self.canvas)
+        self.mouse_handler.update_state(
+            current_page_index=self.current_page_index,
+            visible_layers=visible_layers,
+        )
+
+        self.canvas.bind(
+            "<Button-1>",
+            lambda e: (self.canvas.focus_set() or (self.mouse_handler.on_mouse_down(e) if self.mouse_handler else None)),
+        )
+        self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
+        self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
+        self.canvas.bind("<Button-3>", lambda e: self.mouse_handler.on_right_click(e) if self.mouse_handler and hasattr(self.mouse_handler, "on_right_click") else None)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+
+    def _on_mouse_wheel(self, event: Any) -> None:
+        """Forward mouse wheel events to the current mouse handler.
+
+        Args:
+            event: Mouse wheel event object.
+        """
+        if self.mouse_handler is None:
+            return
+        self.mouse_handler.on_mouse_wheel(event)
+
+    def _on_prev_page(self) -> None:
+        """Move to the previous placeholder page when available."""
+        if self.page_count <= 0:
+            self._show_status_feedback("下のプレビューはまだ準備できていません。", False)
+            return
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            self._ensure_preview_page_available(self.current_page_index)
+            self._refresh_current_page_view()
+
+    def _on_next_page(self) -> None:
+        """Move to the next placeholder page when available."""
+        if self.page_count <= 0:
+            self._show_status_feedback("下のプレビューはまだ準備できていません。", False)
+            return
+        if self.current_page_index < self.page_count - 1:
+            self.current_page_index += 1
+            self._ensure_preview_page_available(self.current_page_index)
+            self._refresh_current_page_view()
+
+    def _on_page_entry(self, event: tk.Event) -> None:
+        """Jump to the requested page number in the minimal workspace.
+
+        Args:
+            event: Page-entry event.
+        """
+        _ = event
+        if self.page_count <= 0 or self.page_control_frame is None:
+            self._show_status_feedback("下のプレビューはまだ準備できていません。", False)
+            return
+
+        requested_page = int(self.page_control_frame.page_var.get()) - 1
+        if requested_page < 0 or requested_page >= self.page_count:
+            self._show_status_feedback("Requested page is out of range.", False)
+            return
+        self.current_page_index = requested_page
+        self._ensure_preview_page_available(self.current_page_index)
+        self._refresh_current_page_view()
+
+    def _on_transform_value_input(
+        self,
+        rotation: float,
+        tx: float,
+        ty: float,
+        scale: float,
+        changed_fields: Optional[set[str]] = None,
+    ) -> None:
+        """Apply the transform values entered in the page control frame.
+
+        Args:
+            rotation: Rotation angle.
+            tx: X translation.
+            ty: Y translation.
+            scale: Scale factor.
+            changed_fields: Entry fields explicitly confirmed by the user.
+        """
+        if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
+            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+        if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
+            self.comp_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+        self._persist_preview_scale(scale)
+        explicit_fields = set(changed_fields or set())
+        self._apply_export_transform_overrides_for_current_page(tx, ty, scale, explicit_fields)
+        self._propagate_current_transform_to_all_pages(visible_only=False)
+        self._propagate_export_overrides_to_all_pages(explicit_fields)
+        self._refresh_current_page_view()
+
+    def _on_transform_update(self) -> None:
+        """Refresh page control and placeholder display after a transform update."""
+        self._update_preferred_preview_scale_from_current_page()
+        self._propagate_current_transform_to_all_pages(visible_only=True)
+        self._refresh_current_page_view()
+
+    def _renumber_workspace_records(self, records: List[Dict[str, Any]]) -> None:
+        """Refresh stored filename metadata to match the current workspace order.
+
+        Args:
+            records: Mutable record list for one workspace side.
+        """
+        for display_index, record in enumerate(records, start=1):
+            record["display_page_number"] = display_index
+            record["filename"] = Path(str(record["path"])).name
+
+    def _insert_blank_record_for_side(self, name_flag: str, insert_position: int, page_size: tuple[int, int]) -> bool:
+        """Insert one blank workspace page for the requested side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+            insert_position: Zero-based insertion index.
+            page_size: Blank page size.
+
+        Returns:
+            ``True`` when a blank page was inserted.
+        """
+        records = self._get_workspace_record_list(name_flag)
+        workspace_dir = self._get_workspace_directory(name_flag)
+        if workspace_dir is None and not records:
+            return False
+        if workspace_dir is None:
+            return False
+
+        blank_path = self._create_blank_workspace_page(workspace_dir, page_size)
+        records.insert(insert_position, self._build_page_record(blank_path, None, True))
+        self._renumber_workspace_records(records)
+        return True
+
+    def _remove_record_for_side(self, name_flag: str, delete_index: int) -> bool:
+        """Remove one workspace page record for the requested side.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+            delete_index: Zero-based page index.
+
+        Returns:
+            ``True`` when a page record was removed.
+        """
+        records = self._get_workspace_record_list(name_flag)
+        if not (0 <= delete_index < len(records)):
+            return False
+
+        removed_record = records.pop(delete_index)
+        removed_path = Path(str(removed_record.get("path", "")))
+        try:
+            if removed_path.exists() and removed_path.is_file():
+                removed_path.unlink()
+        except Exception:
+            pass
+        self._renumber_workspace_records(records)
+        return True
+
+    def _on_insert_blank_page(self) -> None:
+        """Insert a blank page into the current comparison workspace."""
+        if self._copy_protected:
+            return
+        if not self._has_loaded_workspace_pages():
+            self._show_status_feedback("先に弓矢ボタンでワークスペースを作成してください。", False)
+            return
+
+        insert_position = self.current_page_index + 1
+        page_size = self._get_current_workspace_page_size()
+        inserted_any = False
+
+        # Main processing: keep both sides aligned by inserting blanks into each active workspace side.
+        inserted_any = self._insert_blank_record_for_side("base", insert_position, page_size) or inserted_any
+        inserted_any = self._insert_blank_record_for_side("comp", insert_position, page_size) or inserted_any
+        if not inserted_any:
+            self._show_status_feedback("空白ページの追加先がありません。", False)
+            return
+
+        self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
+        self.comp_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
+        self._base_export_transform_overrides.insert(insert_position, {})
+        self._comp_export_transform_overrides.insert(insert_position, {})
+        self._sync_workspace_page_lists()
+        self._ensure_transform_slots(self.page_count)
+        self._create_page_control_frame(self.page_count)
+        self._refresh_operation_restriction_state()
+        self._display_page(insert_position)
+        self._refresh_interaction_state()
+        self._show_status_feedback(f"空白ページを {insert_position + 1} ページ目に追加しました。", True)
+
+    def _on_delete_page(self) -> None:
+        """Delete the current page from the comparison workspace."""
+        if self._copy_protected:
+            return
+        if not self._has_loaded_workspace_pages():
+            self._show_status_feedback("削除対象のページがありません。", False)
+            return
+        if self.page_count <= 1:
+            self._show_status_feedback("最後の 1 ページは削除できません。", False)
+            return
+
+        delete_index = self.current_page_index
+        removed_any = False
+
+        # Main processing: delete the same workspace index from both sides to keep page alignment stable.
+        removed_any = self._remove_record_for_side("base", delete_index) or removed_any
+        removed_any = self._remove_record_for_side("comp", delete_index) or removed_any
+        if not removed_any:
+            self._show_status_feedback("削除対象のページが見つかりません。", False)
+            return
+
+        if delete_index < len(self.base_transform_data):
+            self.base_transform_data.pop(delete_index)
+        if delete_index < len(self.comp_transform_data):
+            self.comp_transform_data.pop(delete_index)
+        if delete_index < len(self._base_export_transform_overrides):
+            self._base_export_transform_overrides.pop(delete_index)
+        if delete_index < len(self._comp_export_transform_overrides):
+            self._comp_export_transform_overrides.pop(delete_index)
+
+        self._sync_workspace_page_lists()
+        self._ensure_transform_slots(self.page_count)
+        self.current_page_index = min(delete_index, max(0, self.page_count - 1))
+        self._create_page_control_frame(self.page_count)
+        self._refresh_operation_restriction_state()
+        self._display_page(self.current_page_index)
+        self._refresh_interaction_state()
+        self._show_status_feedback(f"{delete_index + 1} ページ目を削除しました。", True)
+
+    def _on_save_workspace_pdf(self) -> Path:
+        """Save the current edited workspace as one PDF file and return its path.
+
+        Returns:
+            Saved PDF path.
+        """
+        if not self._has_loaded_workspace_pages():
+            raise ValueError("保存対象のワークスペースがありません。")
+
+        output_pdf_path = self._build_default_modified_pdf_path()
+        pdf_metadata = self._build_export_metadata()
+        handler = PDFExportHandler(
+            base_pages=[str(path) for path in self.base_page_paths],
+            comp_pages=[str(path) for path in self.comp_page_paths],
+            base_transform_data=self._build_export_transform_data(
+                self.base_transform_data,
+                self._base_export_transform_overrides,
+            ),
+            comp_transform_data=self._build_export_transform_data(
+                self.comp_transform_data,
+                self._comp_export_transform_overrides,
+            ),
+            output_folder=str(output_pdf_path.parent),
+            pdf_metadata=pdf_metadata,
+            color_processing_mode=self._selected_color_processing_mode,
+            base_selected_color=self._get_selected_layer_color("base"),
+            comparison_selected_color=self._get_selected_layer_color("comp"),
+            base_threshold=self._get_threshold_for_side("base"),
+            comparison_threshold=self._get_threshold_for_side("comp"),
+            show_base_layer=bool(self._show_base_layer_var.get()),
+            show_comp_layer=bool(self._show_comp_layer_var.get()),
+        )
+        handler.export_to_pdf(output_pdf_path.name, self)
+        return output_pdf_path
 
     def _setup_frames(self) -> None:
         """Setup the main frame layout.
@@ -114,26 +3673,41 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         logger.debug(message_manager.get_log_message("L245"))
         try:
             # Configure grid weights for main frame
-            self.grid_rowconfigure(0, weight=1)
+            self.grid_rowconfigure(0, weight=0)
+            self.grid_rowconfigure(1, weight=0)
+            self.grid_rowconfigure(2, weight=0)
+            self.grid_rowconfigure(3, weight=1)
             self.grid_columnconfigure(0, weight=1)
 
             # Setup main frames
-            # Set Frame0 height even smaller for more compact layout
-            self.frame_main0 = tk.Frame(self, relief=tk.RIDGE, borderwidth=1, height=25)
-            self.frame_main0.grid(row=0, column=0, padx=2, pady=0, sticky="new")
+            # Main processing: keep the header compact without forcing an undersized fixed height.
+            self.frame_main0 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
+            self.frame_main0.grid(row=0, column=0, padx=2, pady=(2, 1), sticky="ew", ipady=3)
             # Configure frame_main0 to right-align its contents
             self.frame_main0.columnconfigure(0, weight=1)  # Make first column expandable
             self.frame_main0.columnconfigure(1, weight=0)  # Keep second column fixed size
-            self.frame_main0.grid_propagate(False)  # Fix the height
+            self.frame_main0.grid_rowconfigure(0, minsize=40)
 
-            self.frame_main1 = tk.Frame(self, relief=tk.RIDGE, borderwidth=2)
+            self.frame_main1 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
             self.frame_main1.grid(row=1, column=0, padx=5, pady=1, sticky="nsew")
+            self.frame_main1.grid_columnconfigure(1, weight=1)
+            self.frame_main1.grid_columnconfigure(2, weight=0)
+            self.frame_main1.grid_columnconfigure(3, weight=0)
 
-            self.frame_main2 = tk.Frame(self, relief=tk.RIDGE, borderwidth=2)
+            self.frame_main2 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
             self.frame_main2.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+            self.frame_main2.grid_columnconfigure(0, weight=0, minsize=240)
+            self.frame_main2.grid_columnconfigure(1, weight=0, minsize=168)
+            self.frame_main2.grid_columnconfigure(2, weight=0, minsize=248)
+            self.frame_main2.grid_columnconfigure(3, weight=0, minsize=168)
+            self.frame_main2.grid_columnconfigure(4, weight=1)
+            self.frame_main2.grid_rowconfigure(0, minsize=max(160, self._action_button_square_size + 28))
 
-            self.frame_main3 = tk.Frame(self, relief=tk.RIDGE, borderwidth=2)
+            self.frame_main3 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
             self.frame_main3.grid(row=3, column=0, padx=5, pady=5, sticky="nsew")
+            self.frame_main3.grid_rowconfigure(0, weight=1)
+            self.frame_main3.grid_rowconfigure(1, weight=0)
+            self.frame_main3.grid_columnconfigure(0, weight=1)
             # Make canvas area expand more
             self.grid_rowconfigure(3, weight=8)
 
@@ -167,7 +3741,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         try:
             # Create language selection combobox
             lang_combo = LanguageSelectCombo(self.frame_main0)
-            lang_combo.grid(row=0, column=0, padx=1, pady=1, sticky="e")
+            lang_combo.grid(row=0, column=0, padx=3, pady=3, sticky="e")
 
             # Create theme change button
             # UI text for Change Theme button
@@ -177,7 +3751,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U025"),
             )
             self._color_theme_change_btn.grid(
-                row=0, column=1, padx=1, pady=0, sticky="e"
+                row=0, column=1, padx=3, pady=2, sticky="e"
             )
 
             # Base file path label and entry
@@ -198,17 +3772,20 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 entry_setting_key="base_file_path"
             )
             self._base_file_path_entry.grid(
-                column=1, row=1, columnspan=2, padx=5, pady=8, sticky="ew"
+                column=1, row=1, padx=5, pady=8, sticky="ew"
             )
+            self._base_file_path_entry.path_var.set(self.base_path.get())
+            self._base_file_path_entry.path_entry.bind("<Return>", lambda event: self._on_path_entry_submit("base", event))
+            self._base_file_path_entry.path_entry.bind("<KP_Enter>", lambda event: self._on_path_entry_submit("base", event))
 
             # Base image color change button
             self._base_image_color_change_btn = BaseImageColorChangeButton(
                 fr=self.frame_main1,
                 color_key="base_image_color_change_button",
                 command=self._on_base_image_color_change,
-                width=2,
             )
-            self._base_image_color_change_btn.grid(column=2, row=1, padx=2, pady=2)
+            self._base_image_color_change_btn.image_color_select_btn.configure(width=2, height=1)
+            self._base_image_color_change_btn.grid(column=2, row=1, padx=(2, 4), pady=6)
 
             # Base file path select button
             # UI text for Base File Path select button
@@ -221,16 +3798,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 command=self._on_base_file_select,
             )
             self._base_file_path_button.grid(column=3, row=1, padx=5, pady=8)
-
-            # Base file analyze button
-            # UI text for Analyze Base File button
-            self._base_file_analyze_btn = BaseFileAnalyzeButton(
-                fr=self.frame_main1,
-                color_key="base_file_analyze_button",
-                text=message_manager.get_ui_message("U016"),
-                command=self._on_base_analyze_click,
-            )
-            self._base_file_analyze_btn.grid(column=4, row=1, padx=5, pady=8)
 
             # Comparison file path label and entry
             # UI text for Comparison File Path label
@@ -252,15 +3819,18 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._comparison_file_path_entry.grid(
                 column=1, row=2, padx=5, pady=8, sticky="we"
             )
+            self._comparison_file_path_entry.path_var.set(self.comparison_path.get())
+            self._comparison_file_path_entry.path_entry.bind("<Return>", lambda event: self._on_path_entry_submit("comparison", event))
+            self._comparison_file_path_entry.path_entry.bind("<KP_Enter>", lambda event: self._on_path_entry_submit("comparison", event))
 
             # Comparison image color change button
             self._comparison_image_color_change_btn = BaseImageColorChangeButton(
                 fr=self.frame_main1,
                 color_key="comparison_image_color_change_button",
                 command=self._on_comparison_image_color_change,
-                width=2,
             )
-            self._comparison_image_color_change_btn.grid(column=2, row=2, padx=2, pady=2)
+            self._comparison_image_color_change_btn.image_color_select_btn.configure(width=2, height=1)
+            self._comparison_image_color_change_btn.grid(column=2, row=2, padx=(2, 4), pady=6)
 
             # Comparison file path button
             # UI text for Comparison File Path select button
@@ -272,17 +3842,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U019"),
                 command=self._on_comparison_file_select,
             )
-            self._comparison_file_path_button.grid(column=2, row=2, padx=5, pady=8)
-
-            # Comparison file analyze button
-            # UI text for Analyze Comparison File button
-            self._comparison_file_analyze_btn = BaseFileAnalyzeButton(
-                fr=self.frame_main1,
-                color_key="comparison_file_analyze_button",
-                text=message_manager.get_ui_message("U017"),
-                command=self._on_comparison_analyze_click,
-            )
-            self._comparison_file_analyze_btn.grid(column=3, row=2, padx=5, pady=8)
+            self._comparison_file_path_button.grid(column=3, row=2, padx=5, pady=8)
 
             # Output folder path label and entry
             # UI text for Output Folder Path label
@@ -304,6 +3864,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._output_folder_path_entry.grid(
                 column=1, row=3, padx=5, pady=8, sticky="we"
             )
+            self._output_folder_path_entry.path_var.set(self.output_path.get())
+            self._output_folder_path_entry.path_entry.bind("<Return>", lambda event: self._on_path_entry_submit("output", event))
+            self._output_folder_path_entry.path_entry.bind("<KP_Enter>", lambda event: self._on_path_entry_submit("output", event))
 
             # Output folder path button
             # UI text for Output Folder Path select button
@@ -315,51 +3878,259 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U019"),
                 command=self._on_output_folder_select,
             )
-            self._output_folder_path_button.grid(column=2, row=3, padx=5, pady=8)
+            self._output_folder_path_button.grid(column=3, row=3, padx=5, pady=8)
 
-            # DPI selection controls
-            # UI text for DPI Setting label
+            self._row4_comment_frame = tk.Frame(self.frame_main2)
+            self._row4_comment_frame.grid(row=0, column=0, padx=(8, 12), pady=6, sticky="nsw")
+            self._row4_comment_frame.grid_columnconfigure(0, weight=1)
+
+            self._row4_comment_text_label = tk.Label(
+                self._row4_comment_frame,
+                text=message_manager.get_ui_message("U137"),
+                anchor="w",
+                justify="left",
+                wraplength=216,
+            )
+            self._row4_comment_text_label.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+            self._base_file_analyze_btn = CreateSubGraphWindowButton(
+                master=self._row4_comment_frame,
+                window_id="base_file_graph",
+                graph_data=[0] * 766,
+                graph_color="blue",
+                color_key="create_sub_graph_window_button",
+                common_setting_key="base_separat_color_threshold",
+                threshold_var=self._base_threshold_value_var,
+                text=message_manager.get_ui_message("U016"),
+                command=self._open_base_analysis_graph,
+            )
+            self._base_file_analyze_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+
+            self._comparison_file_analyze_btn = CreateSubGraphWindowButton(
+                master=self._row4_comment_frame,
+                window_id="comparison_file_graph",
+                graph_data=[0] * 766,
+                graph_color="red",
+                color_key="create_sub_graph_window_button",
+                common_setting_key="comparison_separat_color_threshold",
+                threshold_var=self._comparison_threshold_value_var,
+                text=message_manager.get_ui_message("U017"),
+                command=self._open_comparison_analysis_graph,
+            )
+            self._comparison_file_analyze_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+            self._threshold_summary_frame = tk.Frame(self._row4_comment_frame)
+            self._threshold_summary_frame.grid(row=3, column=0, columnspan=2, sticky="ew")
+            self._threshold_summary_frame.grid_columnconfigure(2, weight=1)
+            self._threshold_summary_frame.grid_columnconfigure(5, weight=1)
+
+            self._threshold_summary_label = tk.Label(
+                self._threshold_summary_frame,
+                text=message_manager.get_ui_message("U142"),
+                anchor="w",
+            )
+            self._threshold_summary_label.grid(row=0, column=0, padx=(0, 4), sticky="w")
+
+            self._base_threshold_inline_label = tk.Label(
+                self._threshold_summary_frame,
+                text=message_manager.get_ui_message("U143"),
+                anchor="w",
+            )
+            self._base_threshold_inline_label.grid(row=0, column=1, padx=(0, 4), sticky="w")
+
+            self._base_threshold_entry = BaseEntryClass(
+                fr=self._threshold_summary_frame,
+                color_key="create_fb_threshold_entry",
+                textvariable=self._base_threshold_value_var,
+                width=6,
+            )
+            self._base_threshold_entry.grid(row=0, column=2, padx=(0, 6), sticky="ew")
+
+            self._threshold_separator_label = tk.Label(
+                self._threshold_summary_frame,
+                text=message_manager.get_ui_message("U144"),
+                anchor="w",
+            )
+            self._threshold_separator_label.grid(row=0, column=3, padx=(0, 4), sticky="w")
+
+            self._comparison_threshold_entry = BaseEntryClass(
+                fr=self._threshold_summary_frame,
+                color_key="create_fb_threshold_entry",
+                textvariable=self._comparison_threshold_value_var,
+                width=6,
+            )
+            self._comparison_threshold_entry.grid(row=0, column=5, padx=(0, 6), sticky="ew")
+
+            self._threshold_apply_button = BaseButton(
+                fr=self._threshold_summary_frame,
+                color_key="process_button",
+                text=message_manager.get_ui_message("U069"),
+                command=self._on_threshold_apply_click,
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
+            )
+            self._threshold_apply_button.grid(row=0, column=6, sticky="e")
+
+            self._row4_auto_column_frame = tk.Frame(self.frame_main2)
+            self._row4_auto_column_frame.grid(row=0, column=1, padx=(10, 14), pady=6, sticky="n")
+            self._row4_auto_column_frame.grid_columnconfigure(0, weight=1)
+
+            self._row4_arrow_guidance_frame = tk.Frame(self._row4_auto_column_frame)
+            self._row4_arrow_guidance_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+            self._row4_arrow_guidance_frame.grid_columnconfigure(0, weight=1)
+
+            self._row4_arrow_guidance_label = tk.Label(
+                self._row4_arrow_guidance_frame,
+                text=message_manager.get_ui_message("U146"),
+                anchor="center",
+                justify="center",
+                wraplength=156,
+                padx=10,
+                pady=6,
+            )
+            self._row4_arrow_guidance_label.grid(row=0, column=0, sticky="ew")
+
+            self._row4_arrow_frame = tk.Frame(
+                self._row4_auto_column_frame,
+                width=self._action_button_square_size,
+                height=self._action_button_square_size,
+            )
+            self._row4_arrow_frame.grid(row=1, column=0, sticky="n")
+            self._row4_arrow_frame.grid_propagate(False)
+            self._row4_arrow_frame.grid_rowconfigure(0, weight=1)
+            self._row4_arrow_frame.grid_columnconfigure(0, weight=1)
+
+            self._automatic_execute_button = tk.Button(
+                self._row4_arrow_frame,
+                command=self._on_automatic_image_button_click,
+                text=message_manager.get_ui_message("U145"),
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
+                highlightbackground="#ffffff",
+                highlightcolor="#ffffff",
+            )
+            self._automatic_execute_button.place(x=0, y=0, width=self._action_button_square_size, height=self._action_button_square_size)
+
+            self._row4_action_frame = tk.Frame(self.frame_main2)
+            self._row4_action_frame.grid(row=0, column=2, padx=(10, 14), pady=6, sticky="new")
+            self._row4_action_frame.grid_columnconfigure(0, weight=0)
+
+            self._color_mode_row_frame = tk.Frame(self._row4_action_frame)
+            self._color_mode_row_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+            self._color_mode_row_frame.grid_columnconfigure(1, weight=1)
+            self._color_mode_label = BaseLabelClass(
+                fr=self._color_mode_row_frame,
+                color_key="dpi_label",
+                text=message_manager.get_ui_message("U136"),
+            )
+            self._color_mode_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
+            self._color_processing_mode_combo = BaseValueCombobox(
+                master=self._color_mode_row_frame,
+                color_key="dpi_entry",
+                values=self._get_color_processing_mode_display_values(),
+                default_value=self._color_processing_mode_var.get(),
+                textvariable=self._color_processing_mode_var,
+                width=16,
+                state="disabled",
+            )
+            self._color_processing_mode_combo.grid(row=0, column=1, sticky="ew")
+            self._color_processing_mode_combo.bind("<<ComboboxSelected>>", self._on_color_processing_mode_changed)
+
+            self._dpi_row_frame = tk.Frame(self._row4_action_frame)
+            self._dpi_row_frame.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+            self._dpi_row_frame.grid_columnconfigure(1, weight=0)
+
             self._dpi_label = BaseLabelClass(
-                fr=self.frame_main2,
+                fr=self._dpi_row_frame,
                 color_key="dpi_label",
                 text=message_manager.get_ui_message("U022"),
             )
-            self._dpi_label.grid(
-                column=0, row=0, padx=5, pady=5, sticky="nswe"
-            )
+            self._dpi_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
 
-            self._dpi_entry = BaseEntryClass(
-                fr=self.frame_main2,
-                color_key="dpi_entry"
+            self._dpi_combo = BaseValueCombobox(
+                master=self._dpi_row_frame,
+                color_key="dpi_entry",
+                values=[str(value) for value in self._get_configured_dpi_choices()],
+                default_value=str(self.selected_dpi_value),
+                textvariable=self._dpi_choice_var,
+                width=12,
+                state="disabled",
             )
-            self._dpi_entry.grid(
-                column=1, row=0, padx=5, pady=5, sticky="nswe"
-            )
-            # Initialize DPI entry with current setting
-            self._dpi_entry.insert(0, str(self.selected_dpi_value))
+            self._dpi_combo.grid(row=0, column=1, sticky="w")
+            self._sync_dpi_combo_choices(preserve_current=False)
 
-            # Process button
-            # UI text for Process button
-            self._process_button = BaseButton(
-                fr=self.frame_main2,
+            self._layer_toggle_frame = tk.Frame(self._row4_action_frame)
+            self._layer_toggle_frame.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            self._layer_toggle_frame.grid_columnconfigure(0, weight=1)
+
+            self._show_base_layer_check = tk.Checkbutton(
+                self._layer_toggle_frame,
+                text=message_manager.get_ui_message("U140"),
+                variable=self._show_base_layer_var,
+                command=self._on_layer_visibility_changed,
+                anchor="w",
+            )
+            self._show_base_layer_check.grid(row=0, column=0, sticky="ew")
+
+            self._show_comp_layer_check = tk.Checkbutton(
+                self._layer_toggle_frame,
+                text=message_manager.get_ui_message("U141"),
+                variable=self._show_comp_layer_var,
+                command=self._on_layer_visibility_changed,
+                anchor="w",
+            )
+            self._show_comp_layer_check.grid(row=1, column=0, sticky="ew")
+
+            self._show_reference_grid_check = tk.Checkbutton(
+                self._layer_toggle_frame,
+                text=message_manager.get_ui_message("U149"),
+                variable=self._show_reference_grid_var,
+                command=self._on_layer_visibility_changed,
+                anchor="w",
+            )
+            self._show_reference_grid_check.grid(row=2, column=0, sticky="ew")
+
+            self._custom_rotation_guide_button = BaseButton(
+                fr=self._row4_action_frame,
                 color_key="process_button",
-                text=message_manager.get_ui_message("U023"),
-                command=self._on_process_click,
+                text=message_manager.get_ui_message("U151"),
+                command=self._show_custom_rotation_guide,
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
             )
-            self._process_button.grid(column=2, row=0, padx=5, pady=5)
+            self._custom_rotation_guide_button.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
-            # Progress window
-            self._progress_window = ProgressWindow(
-                parent=self.frame_main2,
+            self._row4_custom_column_frame = tk.Frame(self.frame_main2)
+            self._row4_custom_column_frame.grid(row=0, column=3, padx=(10, 8), pady=6, sticky="n")
+            self._row4_custom_column_frame.grid_columnconfigure(0, weight=1)
+
+            self._row4_custom_guidance_frame = tk.Frame(self._row4_custom_column_frame)
+            self._row4_custom_guidance_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+            self._row4_custom_guidance_frame.grid_columnconfigure(0, weight=1)
+
+            self._row4_custom_guidance_label = tk.Label(
+                self._row4_custom_guidance_frame,
+                text=message_manager.get_ui_message("U147"),
+                anchor="center",
+                justify="center",
+                wraplength=156,
+                padx=10,
+                pady=6,
             )
-            # Calculate position relative to parent
-            parent_x = self.frame_main2.winfo_rootx()
-            parent_y = self.frame_main2.winfo_rooty()
-            parent_width = self.frame_main2.winfo_width()
-            parent_height = self.frame_main2.winfo_height()
+            self._row4_custom_guidance_label.grid(row=0, column=0, sticky="ew")
 
-            # Set window position
-            self._progress_window.geometry(f"+{parent_x + parent_width - 200}+{parent_y + parent_height // 2}")
+            self._row4_custom_frame = tk.Frame(
+                self._row4_custom_column_frame,
+                width=self._action_button_square_size,
+                height=self._action_button_square_size,
+            )
+            self._row4_custom_frame.grid(row=1, column=0, sticky="n")
+            self._row4_custom_frame.grid_propagate(False)
+            self._row4_custom_frame.grid_rowconfigure(0, weight=1)
+            self._row4_custom_frame.grid_columnconfigure(0, weight=1)
 
             # Canvas for PDF comparison display with fallback for tab_bg
             notebook_theme = ColorThemeManager.get_instance().get_current_theme().get("Notebook", {})
@@ -371,23 +4142,41 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             )
             self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
 
-            # Execute button
-            self._execute_button = BaseButtonImageChangeToggleButton(
-                parent=self.frame_main1,
-                command=self._on_execute_click,
-                image_path=get_resource_path("images/execute_button.png")
-            )
-            self._execute_button.grid(column=3, row=3, padx=5, pady=8)
+            self._shortcut_guide_frame = tk.Frame(self.frame_main3)
+            self._shortcut_guide_frame.grid(row=1, column=0, padx=(6, 6), pady=(0, 6), sticky="ew")
+            self._shortcut_guide_frame.grid_columnconfigure(0, weight=1)
 
-            # PDF Save button
-            # UI text for Save PDF button
-            self._pdf_save_button = BaseButton(
-                fr=self.frame_main1,
-                color_key="pdf_save_button",
-                text=message_manager.get_ui_message("U041"),
-                command=self._on_pdf_save_click
+            self._shortcut_guide_label = tk.Label(
+                self._shortcut_guide_frame,
+                text=message_manager.get_ui_message("U150"),
+                anchor="w",
+                justify="left",
+                wraplength=760,
+                padx=8,
+                pady=4,
+                font=("Helvetica", 9),
             )
-            self._pdf_save_button.grid(column=4, row=3, padx=5, pady=8)
+            self._shortcut_guide_label.grid(row=0, column=0, sticky="ew")
+            self._shortcut_guide_frame.grid_remove()
+
+            self._create_page_control_frame(self.page_count)
+            self._render_comparison_placeholder()
+
+            self._custom_execute_button = tk.Button(
+                self._row4_custom_frame,
+                command=self._on_custom_image_button_click,
+                text=message_manager.get_ui_message("U023"),
+                relief=tk.RAISED,
+                bd=2,
+                highlightthickness=1,
+                highlightbackground="#ffffff",
+                highlightcolor="#ffffff",
+            )
+            self._custom_execute_button.place(x=0, y=0, width=self._action_button_square_size, height=self._action_button_square_size)
+
+            self._apply_action_button_visual("automatic", False)
+            self._apply_action_button_visual("custom", False)
+            self._refresh_interaction_state()
 
             # Widgets setup completed - using message code for multilingual support
             logger.debug(message_manager.get_log_message("L230", "CreateComparisonFileApp"))
@@ -397,103 +4186,199 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             raise
 
     def _on_base_image_color_change(self) -> None:
-        """Handle base image color change button click (dummy handler)."""
-        pass
+        """Handle base image color change button click."""
+        if hasattr(self, "_base_image_color_change_btn"):
+            try:
+                self._base_selected_color_hex = self._base_image_color_change_btn.get_selected_color_hex()
+            except Exception:
+                self._base_selected_color_hex = None
+        self._refresh_preview_after_color_change()
 
     def _on_comparison_image_color_change(self) -> None:
-        """Handle comparison image color change button click (dummy handler)."""
-        pass
+        """Handle comparison image color change button click."""
+        if hasattr(self, "_comparison_image_color_change_btn"):
+            try:
+                self._comparison_selected_color_hex = self._comparison_image_color_change_btn.get_selected_color_hex()
+            except Exception:
+                self._comparison_selected_color_hex = None
+        self._refresh_preview_after_color_change()
 
     def _on_base_file_select(self) -> None:
         """Handle base file selection event using common dialog."""
+        initial_dir = self._get_initial_dir_from_setting("base_file_path", self.base_path.get())
         file_path = ask_file_dialog(
-            initialdir=resolve_initial_dir(self._base_file_path_entry.path_obj),
+            initialdir=initial_dir,
             title_code="U022",
             filetypes=[("PDF files", "*.pdf")],
         )
         if file_path:
             self._base_file_path_entry.path_var.set(file_path)
+            self.base_path.set(file_path)
+            self.status_var.set("Base PDF route has been prepared. Use Analyze to validate the input side.")
+            self._refresh_workspace_state()
             logger.debug(message_manager.get_log_message("L070", file_path))
 
     def _on_comparison_file_select(self) -> None:
         """Handle comparison file selection event using common dialog."""
+        initial_dir = self._get_initial_dir_from_setting("comparison_file_path", self.comparison_path.get())
         file_path = ask_file_dialog(
-            initialdir=resolve_initial_dir(self._comparison_file_path_entry.path_obj),
+            initialdir=initial_dir,
             title_code="U023",
             filetypes=[("PDF files", "*.pdf")],
         )
         if file_path:
             self._comparison_file_path_entry.path_var.set(file_path)
+            self.comparison_path.set(file_path)
+            self.status_var.set("Comparison PDF route has been prepared. Use Analyze to validate the comparison side.")
+            self._refresh_workspace_state()
             logger.debug(message_manager.get_log_message("L071", file_path))
 
     def _on_output_folder_select(self) -> None:
         """Handle output folder selection event using common dialog."""
+        initial_dir = self._get_initial_dir_from_setting("output_folder_path", self.output_path.get())
         folder_path = ask_folder_dialog(
-            initialdir=resolve_initial_dir(self._output_folder_path_entry.path_obj),
+            initialdir=initial_dir,
             title_code="U024",
         )
         if folder_path:
             self._output_folder_path_entry.path_var.set(folder_path)
+            self.output_path.set(folder_path)
+            self.status_var.set("Output folder is ready for later comparison export.")
+            if self._has_loaded_workspace_pages():
+                self._display_page(self.current_page_index)
+            else:
+                self._render_comparison_placeholder()
+            self._refresh_interaction_state()
             logger.debug(message_manager.get_log_message("L072", folder_path))
+
+    def _on_path_entry_submit(self, target: str, event: Optional[tk.Event] = None) -> str:
+        """Handle Enter-key submission from a path entry field.
+
+        Args:
+            target: One of ``base``, ``comparison``, or ``output``.
+            event: Optional Tk event object.
+
+        Returns:
+            Tkinter break string to stop duplicate default handling.
+        """
+        _ = event
+        if target == "base":
+            self.base_path.set(self._base_file_path_entry.path_var.get().strip())
+            self._refresh_workspace_state()
+        elif target == "comparison":
+            self.comparison_path.set(self._comparison_file_path_entry.path_var.get().strip())
+            self._refresh_workspace_state()
+        else:
+            self.output_path.set(self._output_folder_path_entry.path_var.get().strip())
+            if self._has_loaded_workspace_pages():
+                self._display_page(self.current_page_index)
+            else:
+                self._render_comparison_placeholder()
+            self._refresh_interaction_state()
+        return "break"
 
     def _on_pdf_save_click(self) -> None:
         """Handle PDF save button click event."""
-        from widgets.pdf_save_dialog import PDFSaveDialog
-        from controllers.pdf_export_handler import PDFExportHandler
-        # This would normally gather the necessary data for export
-        def on_save(filename: str, parent_widget: tk.Widget) -> None:
-            # Dummy data for demonstration; replace with actual data gathering logic
-            base_pages: List[Any] = []
-            comp_pages: List[Any] = []
-            base_transform_data: List[Any] = []
-            comp_transform_data: List[Any] = []
-            output_folder = resolve_initial_dir(self._output_folder_path_entry.path_obj)
-            pdf_metadata: Dict[str, Any] = {}
-            handler = PDFExportHandler(
-                base_pages=base_pages,
-                comp_pages=comp_pages,
-                base_transform_data=base_transform_data,
-                comp_transform_data=comp_transform_data,
-                output_folder=output_folder,
-                pdf_metadata=pdf_metadata,
-            )
-            handler.export_to_pdf(filename, parent_widget)
-        PDFSaveDialog(self, on_save)
+        try:
+            output_pdf_path = self._on_save_workspace_pdf()
+            self._show_status_feedback(f"PDFを保存しました: {output_pdf_path}", True)
+        except Exception as e:
+            logger.error(message_manager.get_log_message("L124", str(e)))
+            self._show_status_feedback(f"PDFの保存に失敗しました: {e}", False)
+
+    def _build_export_metadata(self) -> Dict[str, Any]:
+        """Build PDF export metadata from the currently rendered page set.
+
+        Returns:
+            Metadata containing at least ``page_width`` and ``page_height``.
+        """
+        export_metadata = dict(self.base_pdf_metadata or self.comp_pdf_metadata)
+        first_page_path = None
+        if self.base_page_paths:
+            first_page_path = self.base_page_paths[0]
+        elif self.comp_page_paths:
+            first_page_path = self.comp_page_paths[0]
+
+        if first_page_path is not None and first_page_path.exists():
+            with Image.open(first_page_path) as first_image:
+                export_metadata.setdefault("page_width", first_image.width)
+                export_metadata.setdefault("page_height", first_image.height)
+        return export_metadata
 
     def _on_process_click(self) -> None:
         """Handle process button click event."""
         try:
-            # Process button clicked
+            # Main processing: convert the selected PDFs into actual page images and build the live workspace.
             logger.debug(message_manager.get_log_message("L074"))
-            # Process implementation will be added later
-            pass
+            resolved_dpi = self._get_dpi_from_entry()
+            _, dpi_mode = self._get_selected_dpi_from_control()
+            self._persist_selected_dpi(resolved_dpi, dpi_mode)
+            base_selected = self._path_points_to_file(self.base_path.get())
+            comparison_selected = self._path_points_to_file(self.comparison_path.get())
+            if not base_selected and not comparison_selected:
+                self._show_status_feedback("Select at least one PDF before processing.", False)
+                return
+
+            self.base_page_paths = self._convert_pdf_for_workspace(self.base_path.get(), "base") if base_selected else []
+            self.comp_page_paths = self._convert_pdf_for_workspace(self.comparison_path.get(), "comp") if comparison_selected else []
+            self._sync_workspace_page_lists()
+            self.current_page_index = 0
+            self._ensure_transform_slots(self.page_count)
+            self._create_page_control_frame(self.page_count)
+            self._refresh_operation_restriction_state()
+            self._setup_mouse_events(self.page_count)
+            self._display_page(self.current_page_index)
+            self._refresh_interaction_state()
+            self.status_var.set(
+                "選択したPDFを現在のDPI設定で下のプレビューへ読み込みました。"
+            )
         except Exception as e:
             # Failed to process files: {error}
             logger.error(message_manager.get_log_message("L080", str(e)))
+            self._show_status_feedback(f"Process failed: {e}", False)
 
     def _on_base_analyze_click(self) -> None:
         """Handle base file analyze button click event."""
         try:
-            # Base file analysis started
+            # Main processing: prepare histogram data for the base-file analysis graph window.
             logger.debug(message_manager.get_log_message("L075"))
-            # Base file analysis implementation will be added later
-            pass
+            if self._path_points_to_file(self.base_path.get()):
+                histogram_counts = self._prepare_analysis_histogram("base")
+                if self._base_file_analyze_btn is not None:
+                    self._base_file_analyze_btn.update_graph_data(histogram_counts)
+                self.status_var.set(
+                    "ベースファイル解析のヒストグラムを更新しました。"
+                )
+                if not self._has_loaded_workspace_pages():
+                    self._render_comparison_placeholder()
+            else:
+                self._show_status_feedback("Base analyze could not find a valid base PDF path.", False)
         except Exception as e:
             # Failed to analyze base file: {error}
             logger.error(message_manager.get_log_message("L081", str(e)))
+            self._show_status_feedback(f"Base analyze failed: {e}", False)
 
     def _on_comparison_analyze_click(self) -> None:
         """Handle comparison file analyze button click event."""
         try:
-            # Comparison file analysis started
+            # Main processing: prepare histogram data for the comparison-file analysis graph window.
             logger.debug(message_manager.get_log_message("L076"))
-            # Comparison file analysis implementation will be added later
-            pass
+            if self._path_points_to_file(self.comparison_path.get()):
+                histogram_counts = self._prepare_analysis_histogram("comp")
+                if self._comparison_file_analyze_btn is not None:
+                    self._comparison_file_analyze_btn.update_graph_data(histogram_counts)
+                self.status_var.set(
+                    "比較ファイル解析のヒストグラムを更新しました。"
+                )
+                if not self._has_loaded_workspace_pages():
+                    self._render_comparison_placeholder()
+            else:
+                self._show_status_feedback("Comparison analyze could not find a valid comparison PDF path.", False)
         except Exception as e:
             # Failed to analyze comparison file: {error}
             logger.error(message_manager.get_log_message("L082", str(e)))
+            self._show_status_feedback(f"Comparison analyze failed: {e}", False)
 
     def _on_execute_click(self) -> None:
-        """Handle execute button click event."""
-        # TODO: Implement execution logic
-        pass
+        """Apply the current threshold changes to the lower preview."""
+        self._on_threshold_apply_click()

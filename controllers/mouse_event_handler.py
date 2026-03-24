@@ -24,6 +24,7 @@ class MouseEventHandler:
             current_page_index: int,
             visible_layers: Dict[int, bool],
             on_transform_update: Callable[[], None],
+            on_live_translation_update: Optional[Callable[[], None]] = None,
             operations_enabled: bool = True,
             blocked_message_code: str = "M055",
         ) -> None:
@@ -35,6 +36,7 @@ class MouseEventHandler:
             current_page_index: Current page index
             visible_layers: Layer visibility state Dict[layer_number, visibility_state]
             on_transform_update: Callback after transformation update
+            on_live_translation_update: Optional lightweight callback used during drag-only translation
             operations_enabled: Whether canvas operations (zoom/pan/rotate/transform) are enabled
             blocked_message_code: Message code to display when an operation is blocked
         """
@@ -43,6 +45,7 @@ class MouseEventHandler:
         self.__current_page_index: int = current_page_index
         self.__visible_layers: Dict[int, bool] = visible_layers
         self.__on_transform_update: Callable[[], None] = on_transform_update
+        self.__on_live_translation_update: Optional[Callable[[], None]] = on_live_translation_update
 
         # Tracking variables
         self.__dragging: bool = False
@@ -67,6 +70,7 @@ class MouseEventHandler:
         self.__rotation_drag_base_transforms: Dict[int, tuple[float, float, float, float]] = {}
         self.__last_applied_angle: float = 0.0
         self.__last_rotation_update_time: float = 0.0
+        self.__translation_preview_active: bool = False
         
         # Get message manager for localized messages
         self.__msg_mgr = get_message_manager()
@@ -648,6 +652,61 @@ class MouseEventHandler:
         self.__rotation_center_candidate_moved = False
         self.__last_applied_angle = 0.0
         return "break"
+
+    def _get_visible_layer_ids(self) -> list[int]:
+        """Return the currently visible layer IDs.
+
+        Returns:
+            List of visible layer IDs.
+        """
+        return [layer_id for layer_id, visible in self.__visible_layers.items() if visible]
+
+    def _get_transform_target_layer_ids(self, *, ctrl_pressed: bool) -> list[int]:
+        """Resolve which layers should receive pan or zoom updates.
+
+        Args:
+            ctrl_pressed: Whether the Ctrl key is currently held.
+
+        Returns:
+            Ordered list of layer IDs to update.
+        """
+        visible_layer_ids = self._get_visible_layer_ids()
+        if ctrl_pressed and len(visible_layer_ids) == 1:
+            return visible_layer_ids
+        return list(self.__layer_transform_data.keys())
+
+    def _is_ctrl_pressed(self, state: int) -> bool:
+        """Return whether Ctrl is pressed in a Tk event state mask.
+
+        Args:
+            state: Tk event state bitmask.
+
+        Returns:
+            bool: True when Ctrl is pressed.
+        """
+        return (state & 0x0004) != 0
+
+    def _is_shift_pressed(self, state: int) -> bool:
+        """Return whether Shift is pressed in a Tk event state mask.
+
+        Args:
+            state: Tk event state bitmask.
+
+        Returns:
+            bool: True when Shift is pressed.
+        """
+        return (state & 0x0001) != 0
+
+    def _is_ctrl_shift_pressed(self, state: int) -> bool:
+        """Return whether Ctrl and Shift are both pressed.
+
+        Args:
+            state: Tk event state bitmask.
+
+        Returns:
+            bool: True when Ctrl and Shift are pressed together.
+        """
+        return self._is_ctrl_pressed(state) and self._is_shift_pressed(state)
     
     def on_mouse_down(self, event: tk.Event) -> None:
         """Handle mouse button press.
@@ -661,15 +720,19 @@ class MouseEventHandler:
         self.__drag_start_y = last_y
         self.__last_mouse_x = last_x
         self.__last_mouse_y = last_y
+        self.__translation_preview_active = False
         
-        # Check for Ctrl key
+        # Main processing: resolve modifier state for rotation and translation gestures.
         state = int(event.state)
-        ctrl_pressed = (state & 0x0004) != 0  # Control key bitmask
+        ctrl_pressed = self._is_ctrl_pressed(state)
+        ctrl_shift_pressed = self._is_ctrl_shift_pressed(state)
+        visible_layer_ids = self._get_visible_layer_ids()
+        isolate_visible_layer = ctrl_pressed and len(visible_layer_ids) == 1
         
         if ctrl_pressed and not self.__operations_enabled:
             return
 
-        if ctrl_pressed and self.__canvas_ref:
+        if ctrl_pressed and not ctrl_shift_pressed and self.__canvas_ref and not isolate_visible_layer:
             # Toggle rotation mode or update rotation center
             if not self.__rotation_mode:
                 # Entering rotation mode: record pivot in image-relative coords
@@ -683,7 +746,6 @@ class MouseEventHandler:
                 self.__rotation_center_candidate_pending = False
                 self.__rotation_center_candidate_moved = False
                 self.__last_applied_angle = 0.0
-
                 # Main processing: store per-layer image offsets and base transforms.
                 self.__rotation_center_img_offsets = {}
                 self.__rotation_drag_base_transforms = {}
@@ -733,8 +795,9 @@ class MouseEventHandler:
         """Handle mouse drag.
         
         Performs different operations based on modifier keys:
-        - Regular drag: Move/pan image
         - Ctrl+drag: Rotate image around defined center point
+        - Drag: Move/pan image
+        - Ctrl+Shift+drag: Move/pan only the currently isolated visible layer
         
         Args:
             event: Mouse event
@@ -748,10 +811,12 @@ class MouseEventHandler:
 
         # Cast event.state to int for type safety
         state = int(event.state)
-        ctrl_pressed = (state & 0x0004) != 0  # Control key bitmask
+        ctrl_pressed = self._is_ctrl_pressed(state)
+        ctrl_shift_pressed = self._is_ctrl_shift_pressed(state)
+        target_layer_ids = self._get_transform_target_layer_ids(ctrl_pressed=ctrl_pressed)
 
         # Check if we're in rotation mode with Ctrl key
-        if ctrl_pressed and self.__rotation_mode:
+        if ctrl_pressed and not ctrl_shift_pressed and self.__rotation_mode:
             # Discard stale queued events: check real-time Ctrl state (M1-006).
             if not self._is_ctrl_physically_pressed():
                 self._on_ctrl_key_release(event)
@@ -866,13 +931,14 @@ class MouseEventHandler:
                 self.refresh_overlay_positions()
                 
         else:
-            # Standard image movement
-            # Apply throttling to prevent excessive rendering
-            move_threshold = 5  # Threshold for normal movement
-            should_update = abs(dx) > move_threshold or abs(dy) > move_threshold
+            if not self.__operations_enabled:
+                return
+
+            # Main processing: move the preview image during normal drag gestures.
+            should_update = abs(dx) > 0 or abs(dy) > 0
             
             # Process for each layer
-            for layer_id, visible in self.__visible_layers.items():
+            for layer_id in target_layer_ids:
                 # Check if current page index is within range
                 if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
                     r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
@@ -887,7 +953,11 @@ class MouseEventHandler:
             
             # Update display only when necessary
             if should_update:
-                self.__on_transform_update()
+                if self.__on_live_translation_update is not None:
+                    self.__translation_preview_active = True
+                    self.__on_live_translation_update()
+                else:
+                    self.__on_transform_update()
 
         # Update last mouse position
         self.__last_mouse_x = current_x
@@ -903,12 +973,13 @@ class MouseEventHandler:
         
         # Check if Ctrl is still pressed
         state = int(event.state)
-        ctrl_pressed = (state & 0x0004) != 0  # Control key bitmask
+        ctrl_pressed = self._is_ctrl_pressed(state)
+        ctrl_shift_pressed = self._is_ctrl_shift_pressed(state)
         
         # Handle rotation mode completion
         if self.__rotation_mode:
             # Main processing: keep M042 visible until Ctrl is released.
-            if ctrl_pressed:
+            if ctrl_pressed and not ctrl_shift_pressed:
                 self.__rotation_active = False
                 self.__rotation_drag_base_rotations = {}
                 self.__rotation_drag_base_transforms = {}
@@ -936,6 +1007,10 @@ class MouseEventHandler:
                 self.__rotation_center_candidate_pending = False
                 self.__rotation_center_candidate_moved = False
                 self.__last_applied_angle = 0.0
+
+        if self.__translation_preview_active:
+            self.__translation_preview_active = False
+            self.__on_transform_update()
 
     def _hide_feedback_circle(self) -> None:
         """Hide the feedback circle."""
@@ -999,8 +1074,14 @@ class MouseEventHandler:
             # Unknown platform, no action
             return
         
+        state = int(getattr(event, "state", 0))
+        ctrl_pressed = self._is_ctrl_pressed(state)
+        if not self.__operations_enabled:
+            return
+
         # Apply zoom to visible layers
         zoom_factor = 1.1 if direction > 0 else 0.9
+        target_layer_ids = self._get_transform_target_layer_ids(ctrl_pressed=ctrl_pressed)
         
         # Get canvas center for scaling origin
         canvas_width = self.__canvas_ref.winfo_width()
@@ -1009,11 +1090,8 @@ class MouseEventHandler:
         center_x = x0 + canvas_width / 2
         center_y = y0 + canvas_height / 2
         
-        # Apply zoom to all visible layers around canvas center
-        for layer_id, visible in self.__visible_layers.items():
-            if not visible:
-                continue
-                
+        # Apply zoom to the resolved target layers around canvas center
+        for layer_id in target_layer_ids:
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
                 r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
                 

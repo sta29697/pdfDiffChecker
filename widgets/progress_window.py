@@ -8,6 +8,7 @@ import os
 
 from controllers.color_theme_manager import ColorThemeManager
 from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from configurations import tool_settings
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
@@ -41,7 +42,7 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
 
         # Main processing: apply application icon to this Toplevel window.
         icon_multi_ico_path = get_resource_path("images/icon_multi.ico")
-        runtime_ico_path = get_resource_path("temp/LOGOm.ico")
+        runtime_ico_path = str(tool_settings.RUNTIME_ICON_ICO_PATH)
 
         ico_path = icon_multi_ico_path if os.path.exists(icon_multi_ico_path) else runtime_ico_path
         if os.path.exists(ico_path):
@@ -92,7 +93,6 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         self.resizable(False, False)
         # Set transient only if parent is Tk or Toplevel
         self.transient(cast(tk.Wm, parent))  # Make window modal
-        self.grab_set()  # Make window modal
 
         # Create main frame
         self.main_frame = ttk.Frame(self, padding=10)
@@ -156,10 +156,23 @@ class ProgressWindow(tk.Toplevel, ThemeColorApplicable, ColoringThemeIF):
         except Exception:
             pass
 
+        try:
+            # Main processing: acquire modal grab only while the window is actually visible.
+            self.grab_set()
+        except Exception:
+            pass
+
         self.update()
 
     def hide(self) -> None:
         """Hide the progress window."""
+        try:
+            # Main processing: release the modal grab before withdrawing the window.
+            current_grab = self.grab_current()
+            if current_grab == self:
+                self.grab_release()
+        except Exception:
+            pass
         self.withdraw()
         self.update()
 

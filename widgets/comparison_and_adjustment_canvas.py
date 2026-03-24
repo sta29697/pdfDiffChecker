@@ -432,7 +432,7 @@ class PDFCompareCanvas(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
 
             # Save PDF logic here
             # TODO: Implement PDF saving
-            logger.info(message_manager.get_log_message("L189", output_path))
+            logger.info(f"[APP_SAVE] {message_manager.get_log_message('L189', output_path)}")
 
         except Exception as e:
             # Failed to save PDF: {error}

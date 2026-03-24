@@ -51,10 +51,15 @@ class DisplaySettings(TypedDict, total=False):
     """Display settings type definition."""
 
     theme_color: Literal["dark", "light", "pastel"]
+    window_set: bool
     dpi: int
     setted_dpi: int
+    setted_dpi_mode: Literal["manual", "detected"]
+    preview_scale: float
     setted_alpha: int
     separat_color_threshold: int
+    base_separat_color_threshold: int
+    comparison_separat_color_threshold: int
     dpi_list: List[int]
     language: Literal["japanese", "english"]
 
@@ -96,9 +101,14 @@ class UserSettingsData(TypedDict, total=False):
 
     # Display settings
     theme_color: Literal["dark", "light", "pastel"]
+    window_set: bool
     setted_dpi: int
+    setted_dpi_mode: Literal["manual", "detected"]
+    preview_scale: float
     setted_alpha: int
     separat_color_threshold: int
+    base_separat_color_threshold: int
+    comparison_separat_color_threshold: int
     dpi_list: List[int]
     language: Literal["japanese", "english"]
 
@@ -128,6 +138,25 @@ class UserSettingManager:
     _instance: Optional[Self] = None
     _user_settings: Dict[str, Any] = {}
     _settings_status: Literal["default", "user_settings"] = "default"
+
+    @classmethod
+    def _merge_with_default_settings(
+        cls,
+        section_data: Optional[Dict[str, Any]],
+    ) -> UserSettingsData:
+        """Return a settings section merged with the current default schema.
+
+        Args:
+            section_data: Raw section dictionary loaded from disk.
+
+        Returns:
+            UserSettingsData: Merged settings containing all default keys.
+        """
+        # Main processing: copy the current schema first, then overlay persisted values.
+        merged_settings: Dict[str, Any] = DEFAULT_USER_SET["default"].copy()
+        if isinstance(section_data, dict):
+            merged_settings.update(section_data)
+        return cast(UserSettingsData, merged_settings)
 
     def __new__(cls: type[Self], *args: Any, **kwargs: Any) -> Self:
         """Create a new instance of UserSettingManager using singleton pattern.
@@ -197,16 +226,24 @@ class UserSettingManager:
                     if status == "user_settings":
                         # Use only the user_settings section from file
                         user_block = file_settings.get("user_settings", {})
+                        merged_default = cls._merge_with_default_settings(
+                            file_settings.get("default", {})
+                        )
+                        merged_user_settings = cls._merge_with_default_settings(user_block)
                         cls._user_settings = {
                             "meta_data": {"user_settings_status": "user_settings"},
-                            "user_settings": user_block,
+                            "default": merged_default,
+                            "user_settings": merged_user_settings,
                         }
                         cls._settings_status = "user_settings"
                     else:
                         # Use default section from file
+                        merged_default = cls._merge_with_default_settings(
+                            file_settings.get("default", {})
+                        )
                         cls._user_settings = {
                             "meta_data": {"user_settings_status": "default"},
-                            "default": file_settings.get("default", {}),
+                            "default": merged_default,
                         }
                         cls._settings_status = "default"
 
@@ -274,6 +311,25 @@ class UserSettingManager:
                 return DEFAULT_USER_SET["default"][key]
             except KeyError:
                 return None
+
+    @classmethod
+    def has_active_setting(cls, key: str) -> bool:
+        """Return whether the active settings section contains the requested key.
+
+        Args:
+            key: Setting key to check.
+
+        Returns:
+            ``True`` when the key exists in the active section.
+        """
+        section = (
+            "user_settings" if cls._settings_status == "user_settings" else "default"
+        )
+        try:
+            active_section = cls._user_settings.get(section, {})
+            return key in active_section
+        except Exception:
+            return False
 
     @classmethod
     def get_setting_list(
@@ -368,6 +424,14 @@ class UserSettingManager:
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(USER_SETTINGS_FILE), exist_ok=True)
 
+            # Main processing: normalize both sections before persisting to disk.
+            if "default" not in cls._user_settings:
+                cls._user_settings["default"] = cls._merge_with_default_settings({})
+            else:
+                cls._user_settings["default"] = cls._merge_with_default_settings(
+                    cls._user_settings.get("default", {})
+                )
+
             # Ensure user_settings section exists and contains current settings
             if "user_settings" not in cls._user_settings:
                 # Copy settings from the current active section
@@ -377,6 +441,10 @@ class UserSettingManager:
                 cls._user_settings["user_settings"] = cls._user_settings[
                     current_section
                 ].copy()
+            else:
+                cls._user_settings["user_settings"] = cls._merge_with_default_settings(
+                    cls._user_settings.get("user_settings", {})
+                )
 
             # Change status to user_settings
             cls._settings_status = "user_settings"

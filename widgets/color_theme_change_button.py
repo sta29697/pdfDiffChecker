@@ -11,6 +11,7 @@ from PIL import Image, ImageColor, ImageTk
 from configurations import tool_settings
 from configurations.tool_settings import DEFAULT_USER_SET
 from controllers.color_theme_manager import ColorThemeManager, ThemeType
+from controllers.event_bus import EventBus, EventNames
 from controllers.image_sw_paths import ImageSwPaths, SwitchPaths
 from widgets.base_button import BaseButton
 from utils.utils import show_balloon_message
@@ -72,7 +73,7 @@ class ColorThemeChangeButton(tk.Frame):
         self.color_theme_change_btn_img: (
             SwitchPaths
         ) = ImageSwPaths().set_color_theme_change_btn_image(
-            program_mode=tool_settings.program_mode == "PRODUCTION_MODE",
+            program_mode=tool_settings.is_production_mode,
             theme_color=self.__current_theme_color_name,
         )
 
@@ -113,6 +114,10 @@ class ColorThemeChangeButton(tk.Frame):
         # Use more constrained packing to avoid excessive size
         self.color_theme_change_btn.pack(fill="both", expand=False, pady=0, anchor="center")
 
+        EventBus().subscribe(EventNames.THEME_CHANGED, self._handle_theme_changed)
+        self.bind("<Visibility>", self._on_visibility_changed)
+        self.after_idle(self.refresh_button_visuals)
+
         # Log message for successful creation of color theme change button
         logger.info(message_manager.get_log_message("L133"))
         
@@ -144,13 +149,7 @@ class ColorThemeChangeButton(tk.Frame):
 
                     # Main processing: avoid black artifacts by compositing alpha onto parent background.
                     try:
-                        raw_bg = str(self.__fr.cget("background"))
-                        if raw_bg in {"SystemButtonFace", ""}:
-                            try:
-                                theme = ColorThemeManager.get_instance().get_current_theme()
-                                raw_bg = str(theme.get("Window", {}).get("bg", "#f0f0f0"))
-                            except Exception:
-                                raw_bg = "#f0f0f0"
+                        raw_bg = self._resolve_parent_bg()
                         bg_color = ImageColor.getrgb(raw_bg)
                     except Exception:
                         bg_color = (240, 240, 240)
@@ -268,27 +267,16 @@ class ColorThemeChangeButton(tk.Frame):
             self.__color_theme_change_btn_status_on = True
             self.color_theme_change_btn_img = (
                 ImageSwPaths().set_color_theme_change_btn_image(
-                    program_mode=tool_settings.program_mode == "PRODUCTION_MODE",
+                    program_mode=tool_settings.is_production_mode,
                     theme_color=theme_color,
                 )
             )
             
             # Get parent background color for consistent styling
-            parent_bg = self.__fr.cget("background")
-            if parent_bg == "SystemButtonFace" or parent_bg == "":
-                try:
-                    theme = ColorThemeManager.get_instance().get_current_theme()
-                    parent_bg = str(theme.get("Window", {}).get("bg", parent_bg))
-                except Exception:
-                    pass
+            parent_bg = self._resolve_parent_bg()
             logger.debug(message_manager.get_log_message("L256", parent_bg))
             
-            # Update button background to match parent frame
-            if hasattr(self, 'color_theme_change_btn'):
-                self.color_theme_change_btn.configure(
-                    bg=parent_bg,
-                    activebackground=parent_bg
-                )
+            self._apply_button_background(parent_bg)
             
             # Load new button image (this will also update the button size)
             self._load_button_image()
@@ -333,3 +321,60 @@ class ColorThemeChangeButton(tk.Frame):
             return str(images_dir / "dark_mode.png")
 
         return fallback_path
+
+    def _resolve_parent_bg(self) -> str:
+        """Resolve the effective background color used behind the toggle image.
+
+        Returns:
+            str: Background color string to use for frame and button rendering.
+        """
+        parent_bg = str(self.__fr.cget("background"))
+        if parent_bg in {"SystemButtonFace", ""}:
+            try:
+                theme = ColorThemeManager.get_instance().get_current_theme()
+                parent_bg = str(theme.get("Frame", {}).get("bg", theme.get("Window", {}).get("bg", "#f0f0f0")))
+            except Exception:
+                parent_bg = "#f0f0f0"
+        return parent_bg
+
+    def _apply_button_background(self, parent_bg: str) -> None:
+        """Apply the resolved background color to the wrapper frame and button.
+
+        Args:
+            parent_bg: Background color resolved from the current tab frame.
+        """
+        self.configure(bg=parent_bg)
+        if hasattr(self, "color_theme_change_btn"):
+            self.color_theme_change_btn.configure(
+                bg=parent_bg,
+                activebackground=parent_bg,
+                highlightbackground=parent_bg,
+                highlightcolor=parent_bg,
+            )
+
+    def refresh_button_visuals(self) -> None:
+        """Refresh both background and image composition for the current theme."""
+        parent_bg = self._resolve_parent_bg()
+        self._apply_button_background(parent_bg)
+        self._load_button_image()
+
+    def _handle_theme_changed(self, theme: dict[str, Any], theme_name: str) -> None:
+        """Refresh button visuals when a global theme change event is published.
+
+        Args:
+            theme: Current theme snapshot from the event bus.
+            theme_name: Active theme name.
+        """
+        _ = theme
+        if not theme_name:
+            return
+        self.after_idle(lambda: self._update_button_theme(cast(ThemeType, theme_name)))
+
+    def _on_visibility_changed(self, event: tk.Event[Any]) -> None:
+        """Refresh button visuals when the owning tab becomes visible.
+
+        Args:
+            event: Tkinter visibility event.
+        """
+        _ = event
+        self.after_idle(self.refresh_button_visuals)

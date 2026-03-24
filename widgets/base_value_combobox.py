@@ -5,7 +5,7 @@ from tkinter import ttk
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Union
 
-from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker, resolve_disabled_visual_colors
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_tab_widgets import BaseTabWidgets as btw
@@ -15,6 +15,17 @@ logger = getLogger(__name__)
 res_path = get_resource_path("relative/path/to/your/resource.ext")
 # Initialize singleton message manager
 message_manager = get_message_manager()
+
+UNSUPPORTED_TTK_COMBOBOX_OPTIONS = {
+    "bg",
+    "fg",
+    "disabledbackground",
+    "disabledforeground",
+    "highlightbackground",
+    "highlightcolor",
+    "insertbackground",
+    "readonlybackground",
+}
 
 
 class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
@@ -47,15 +58,17 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         self.__color_key = color_key
         self.__values = values
         self.__default_value = default_value
+        self.__style_name = f"BaseValueCombobox.{id(self)}.TCombobox"
 
         # Convert all values to strings
         str_values = [str(value) for value in values]
 
-        # Configure combobox
+        # Main processing: bind a dedicated style so disabled visuals remain under our control.
         self.configure(
             values=str_values,
             font=btw.base_font,
             state="readonly",
+            style=self.__style_name,
         )
 
         # Set default value if provided
@@ -96,6 +109,21 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
             # logger.warning(message_manager.get_log_message("L114", value))
             pass
 
+    def _filter_supported_theme_settings(self, theme_settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Return theme settings safe to pass to ``ttk.Combobox.configure``.
+
+        Args:
+            theme_settings: Raw theme dictionary.
+
+        Returns:
+            Filtered theme dictionary without Tk Entry-only options.
+        """
+        return {
+            key: value
+            for key, value in theme_settings.items()
+            if key not in UNSUPPORTED_TTK_COMBOBOX_OPTIONS
+        }
+
     def apply_theme_color(self, theme_data: Dict[str, Dict[str, str]]) -> None:
         """Apply theme colors to the combobox.
 
@@ -104,7 +132,46 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
         """
         try:
             combobox_theme_config = theme_data.get(self.__color_key, {})
-            self.configure(**combobox_theme_config)
+            frame_theme = theme_data.get("Frame", {})
+            active_bg = str(combobox_theme_config.get("bg", frame_theme.get("bg", "#ffffff")))
+            active_fg = str(combobox_theme_config.get("fg", frame_theme.get("fg", "#000000")))
+            disabled_visuals = resolve_disabled_visual_colors(
+                active_bg,
+                str(combobox_theme_config.get("disabledforeground", frame_theme.get("disabledforeground", active_fg))),
+                fallback_bg=str(frame_theme.get("bg", active_bg)),
+            )
+            disabled_bg = str(
+                combobox_theme_config.get(
+                    "disabledbackground",
+                    combobox_theme_config.get("readonlybackground", disabled_visuals.get("disabled_bg", active_bg)),
+                )
+            )
+            disabled_fg = str(
+                combobox_theme_config.get(
+                    "disabledforeground",
+                    disabled_visuals.get("disabled_fg", active_fg),
+                )
+            )
+
+            style = ttk.Style(self)
+            style.configure(
+                self.__style_name,
+                foreground=active_fg,
+                fieldbackground=active_bg,
+                background=active_bg,
+                arrowcolor=active_fg,
+            )
+            style.map(
+                self.__style_name,
+                foreground=[("readonly", active_fg), ("disabled", disabled_fg)],
+                selectforeground=[("readonly", active_fg), ("disabled", disabled_fg)],
+                fieldbackground=[("readonly", active_bg), ("disabled", disabled_bg)],
+                background=[("readonly", active_bg), ("disabled", disabled_bg)],
+                arrowcolor=[("readonly", active_fg), ("disabled", disabled_fg)],
+            )
+
+            safe_theme_config = self._filter_supported_theme_settings(combobox_theme_config)
+            self.configure(style=self.__style_name, **safe_theme_config)
             if self.__color_key in {"base_file_path_entry", "filename_label"}:
                 logger.debug(
                     f"[COMBO_THEME] color_key={self.__color_key}, config={combobox_theme_config}, "
@@ -121,7 +188,7 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
             theme_settings: Dictionary containing theme settings
         """
         try:
-            self.configure(**theme_settings)
+            self.configure(**self._filter_supported_theme_settings(theme_settings))
             # Configured combobox with settings: {settings}
             # logger.debug(message_manager.get_log_message("L116", theme_settings))
         except Exception as e:

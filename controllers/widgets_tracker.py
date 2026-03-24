@@ -116,6 +116,54 @@ def ensure_contrast_color(color: str, background: str, fallback_amount: float = 
     return color
 
 
+def resolve_disabled_visual_colors(
+    base_bg: str,
+    disabled_fg_candidate: str,
+    *,
+    fallback_bg: str | None = None,
+    use_emphasis_surface: bool = False,
+) -> Dict[str, str]:
+    """Resolve disabled-state background and foreground colors.
+
+    Args:
+        base_bg: Base surface color to derive the disabled background from.
+        disabled_fg_candidate: Preferred disabled foreground color from theme data.
+        fallback_bg: Fallback background to use when the derived color matches the base.
+        use_emphasis_surface: Whether to use the stronger control/button adjustment.
+
+    Returns:
+        Dictionary containing resolved `disabled_bg` and `disabled_fg` values.
+    """
+    # Main processing: derive the disabled background from the source surface.
+    bg_source = str(base_bg or "#ffffff")
+    source_luminance = get_hex_color_luminance(bg_source)
+    if use_emphasis_surface:
+        disabled_bg_amount = 0.32 if source_luminance < 0.5 else -0.22
+    else:
+        disabled_bg_amount = 0.24 if source_luminance < 0.5 else -0.14
+    disabled_bg = adjust_hex_color(bg_source, disabled_bg_amount)
+
+    # Main processing: fall back to the provided surface when the derived color does not change.
+    if str(disabled_bg).strip().lower() == bg_source.strip().lower() and fallback_bg:
+        disabled_bg = str(fallback_bg)
+
+    # Main processing: synthesize a stable disabled foreground with contrast protection.
+    disabled_bg_luminance = get_hex_color_luminance(disabled_bg)
+    neutral_disabled_fg = adjust_hex_color(
+        disabled_bg,
+        0.58 if disabled_bg_luminance < 0.5 else -0.52,
+    )
+    disabled_fg = ensure_contrast_color(
+        neutral_disabled_fg or str(disabled_fg_candidate),
+        disabled_bg,
+        0.42 if disabled_bg_luminance < 0.5 else -0.42,
+    )
+    return {
+        "disabled_bg": disabled_bg,
+        "disabled_fg": disabled_fg,
+    }
+
+
 def refresh_combobox_popdown_listboxes(
     root: tk.Misc,
     listbox_bg: str,
