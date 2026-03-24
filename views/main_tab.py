@@ -2020,7 +2020,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if not resolved_values:
             return list(_MAIN_TAB_FALLBACK_DPI_CHOICES)
         return resolved_values
-
     def _get_dpi_from_entry(self) -> int:
         """Return a validated DPI value from the current DPI selector.
 
