@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from logging import getLogger
+import os
 from pathlib import Path
 from tkinter import messagebox
 from typing import Optional, Any, Dict
@@ -37,6 +38,10 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
         fr: tk.Frame,
         color_key: str,
         entry_setting_key: str,
+        *,
+        allow_files: bool = True,
+        allow_directories: bool = True,
+        allowed_file_extensions: Optional[set[str]] = None,
         **kwargs: Any
     ) -> None:
         """Initialize the path entry widget.
@@ -45,12 +50,23 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
             fr (tk.Frame): Parent frame
             color_key (str): Color key for theme application
             entry_setting_key (str): Key for entry widget settings
+            allow_files (bool): Whether regular files are accepted.
+            allow_directories (bool): Whether directories are accepted.
+            allowed_file_extensions (Optional[set[str]]): Allowed file extensions
+                for file inputs. Lower-case suffixes including the dot.
             **kwargs: Additional keyword arguments for tk.Frame
         """
         super().__init__(fr, **kwargs)
         self.__entry_setting_key = entry_setting_key
         self.__color_key = color_key
         self.__settings = UserSettingManager()
+        self.__allow_files = bool(allow_files)
+        self.__allow_directories = bool(allow_directories)
+        self.__allowed_file_extensions = {
+            str(ext).strip().lower()
+            for ext in (allowed_file_extensions or set())
+            if str(ext).strip()
+        }
         self.path_obj: Optional[FilePathInfo | FolderPathInfo] = None
 
         # Flag to track if theme has been initialized
@@ -59,6 +75,7 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
         # Initialize path variable with suppressed callback during initial setup
         self.path_var = tk.StringVar()
         self._suppress_callback: bool = True
+        self._show_invalid_path_warning: bool = False
         self.path_var.trace_add("write", self._on_path_var_write)
 
         # Initialize entry display.
@@ -217,45 +234,187 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
         """Handle path_var changes with initial suppression."""
         if self._suppress_callback:
             return
-        self._set_path_obj_from_entry(self.path_var)
-    def _set_path_obj_from_entry(self, path_var: tk.StringVar, *args: Any) -> None:
+        self._set_path_obj_from_entry(
+            self.path_var,
+            show_warning=self._show_invalid_path_warning,
+        ) 
+    
+    def validate_current_path(self, show_warning: bool = True) -> bool:
+        """Validate the current entry value on demand.
+
+        Args:
+            show_warning: Whether an invalid path should trigger a warning dialog.
+
+        Returns:
+            bool: ``True`` when the current value points to a valid file or folder.
+        """
+        # Main processing: allow explicit submit-time validation to opt into warning dialogs.
+        return self._set_path_obj_from_entry(self.path_var, show_warning=show_warning)
+
+    def accept_dialog_path(self, path_str: str) -> bool:
+        """Apply a path from the file or folder dialog after the same checks as manual entry.
+
+        Rejects symlinks, dangerous extensions, and disallowed file types so the dialog
+        cannot bypass ``BasePathEntry`` validation.
+
+        Args:
+            path_str: Absolute path string returned by the dialog.
+
+        Returns:
+            bool: ``True`` when the path was accepted and persisted; ``False`` otherwise.
+        """
+        previous = self.path_var.get()
+        self._suppress_callback = True
+        try:
+            self.path_var.set(path_str)
+        finally:
+            self._suppress_callback = False
+        ok = self._set_path_obj_from_entry(self.path_var, show_warning=True)
+        if not ok:
+            self._suppress_callback = True
+            try:
+                self.path_var.set(previous)
+            finally:
+                self._suppress_callback = False
+        return ok
+     
+    def _set_path_obj_from_entry(self, path_var: tk.StringVar, *args: Any, show_warning: bool = False) -> bool:
         """
         Update path object from entry widget value.
 
         Args:
             path_var (tk.StringVar): StringVar containing the path
             *args: Additional arguments from trace_add callback
+            show_warning: Whether invalid input should trigger a warning dialog
+
+        Returns:
+            bool: ``True`` when the current value points to a valid file or folder.
         """
         try:
             path_str = path_var.get()
             if not path_str:
-                return
+                self.path_obj = None
+                return False
+
+            placeholder_values = {
+                message_manager.get_ui_message("U053"),
+                message_manager.get_ui_message("U054"),
+            }
+            if path_str in placeholder_values:
+                self.path_obj = None
+                return False
 
             path = Path(path_str)
+            if self._is_blocked_security_target(path):
+                self.path_obj = None
+                logger.warning(f"Blocked path input by security policy: {path_str}")
+                if show_warning:
+                    messagebox.showwarning(
+                        message_manager.get_ui_message("U050"),
+                        message_manager.get_ui_message("U168"),
+                    )
+                return False
+
             if path.is_file():
+                if not self.__allow_files:
+                    self.path_obj = None
+                    if show_warning:
+                        messagebox.showwarning(
+                            message_manager.get_ui_message("U050"),
+                            message_manager.get_ui_message("U169"),
+                        )
+                    return False
+                if (
+                    self.__allowed_file_extensions
+                    and path.suffix.lower() not in self.__allowed_file_extensions
+                ):
+                    self.path_obj = None
+                    if show_warning:
+                        messagebox.showwarning(
+                            message_manager.get_ui_message("U050"),
+                            message_manager.get_ui_message("U170"),
+                        )
+                    return False
                 self.path_obj = FilePathInfo(path)
             elif path.is_dir():
+                if not self.__allow_directories:
+                    self.path_obj = None
+                    if show_warning:
+                        messagebox.showwarning(
+                            message_manager.get_ui_message("U050"),
+                            message_manager.get_ui_message("U171"),
+                        )
+                    return False
                 self.path_obj = FolderPathInfo(path)
             else:
+                self.path_obj = None
                 # Log invalid path warning with entered path
                 logger.warning(message_manager.get_log_message("L108", path_str))
-                # Show warning dialog for invalid path entered
-                messagebox.showwarning(
-                    message_manager.get_ui_message("U050"),
-                    message_manager.get_ui_message("U051")
-                )
-                return
+                if show_warning:
+                    # Main processing: show the invalid path warning only for explicit user validation.
+                    messagebox.showwarning(
+                        message_manager.get_ui_message("U050"),
+                        message_manager.get_ui_message("U051")
+                    )
+                return False
 
             # Save to user settings
             self.__settings.update_setting(self.__entry_setting_key, str(path))
             self.__settings.save_settings()
             # Path object updated: {path_obj}
             logger.debug(message_manager.get_log_message("L109", self.path_obj))
+            return True
         except Exception as e:
+            self.path_obj = None
             # Log error when setting path object fails
             logger.error(message_manager.get_log_message("L067", str(e)))
-            # Show warning dialog for failed to set path
-            messagebox.showwarning(
-                message_manager.get_ui_message("U050"),
-                message_manager.get_ui_message("U052")
-            )
+            if show_warning:
+                # Main processing: keep startup-time validation silent and reserve the dialog for explicit checks.
+                messagebox.showwarning(
+                    message_manager.get_ui_message("U050"),
+                    message_manager.get_ui_message("U052")
+                )
+            return False
+
+    @staticmethod
+    def _is_blocked_security_target(path: Path) -> bool:
+        """Return whether a path must be rejected for security reasons.
+
+        Args:
+            path: Candidate path entered by the user.
+
+        Returns:
+            bool: ``True`` when the path points to a shortcut, script, or link-like target.
+        """
+        blocked_suffixes = {
+            ".bat",
+            ".cmd",
+            ".com",
+            ".exe",
+            ".hta",
+            ".js",
+            ".jse",
+            ".lnk",
+            ".ps1",
+            ".ps1xml",
+            ".psd1",
+            ".psm1",
+            ".py",
+            ".pyw",
+            ".rb",
+            ".scr",
+            ".sh",
+            ".url",
+            ".vb",
+            ".vbe",
+            ".vbs",
+            ".website",
+            ".wsf",
+            ".wsh",
+        }
+        try:
+            if path.is_symlink() or os.path.islink(path):
+                return True
+        except Exception:
+            pass
+        return path.suffix.lower() in blocked_suffixes

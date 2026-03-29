@@ -1629,8 +1629,32 @@
             "ja": "元の状態にリセット"
         },
         "M049": {
-            "en": "Keyboard Shortcuts:\nCtrl+R: Rotate right 90°\nCtrl+L: Rotate left 90°\nCtrl+V: Flip vertical\nCtrl+H: Flip horizontal\nCtrl+B: Reset all transformations\nCtrl+?: Show/hide this help",
-            "ja": "キーボードショートカット:\nCtrl+R: 右に90°回転\nCtrl+L: 左に90°回転\nCtrl+V: 垂直反転\nCtrl+H: 水平反転\nCtrl+B: すべての変換をリセット\nCtrl+?: このヘルプを表示/非表示"
+            "en": "Keyboard shortcuts ※1\nCtrl+R / Ctrl+L: Rotate 90° right / left\nCtrl+Shift+R: Rotate 90° clockwise ※3\nCtrl+Shift+L: Rotate 90° counter-clockwise ※3\nCtrl+Alt+R: Rotate 90° clockwise ※2\nCtrl+Alt+L: Rotate 90° counter-clockwise ※2\nCtrl+V / Ctrl+H: Flip vertical / horizontal\nCtrl+B: Reset transforms\nCtrl+? / Ctrl+/: Show or hide this guide",
+            "ja": "キーボードショートカット：※1\nCtrl+R／Ctrl+L：右左90°回転\nCtrl+Shift+R：右90°回転 ※3\nCtrl+Shift+L：左90°回転 ※3\nCtrl+Alt+R：右90°回転 ※2\nCtrl+Alt+L：左90°回転 ※2\nCtrl+V／Ctrl+H：垂直／水平反転\nCtrl+B：変換をリセット\nCtrl+?／Ctrl+/：このガイドの表示／非表示"
+        },
+        "M049F": {
+            "en": "※1: Target pages depend on the Batch Edit\n\u3000\u3000checkbox state.\n※2: Every page sheet.\n※3: Canvas click / page change /\n\u3000\u3000Esc cancel / other shortcuts to apply\n\u3000\u3000data (faster display).",
+            "ja": "※1：対象ページは一括編集チェックの状態\n\u3000\u3000次第\n※2：用紙ごと\n※3：Canvas上クリック／ページ切替／\n\u3000\u3000Esc取り消し／他のショートカットで\n\u3000\u3000データ反映（表示高速化目的）"
+        },
+        "M049W": {
+            "en": "Ctrl+? / Ctrl+/: Show or hide this guide",
+            "ja": "Ctrl+?／Ctrl+/：このガイドの表示／非表示"
+        },
+        "M061": {
+            "en": "Current page sheet rotated 90° clockwise",
+            "ja": "表示中ページの用紙を90°右回転しました"
+        },
+        "M062": {
+            "en": "Current page sheet rotated 90° counter-clockwise",
+            "ja": "表示中ページの用紙を90°左回転しました"
+        },
+        "M063": {
+            "en": "+90° preview — apply via canvas click, page change, or another transform shortcut",
+            "ja": "プレビュー右90°（クリック・ページ切替・他の変換ショートカットで確定）"
+        },
+        "M064": {
+            "en": "-90° preview — apply via canvas click, page change, or another transform shortcut",
+            "ja": "プレビュー左90°（クリック・ページ切替・他の変換ショートカットで確定）"
         },
         "M050": {
             "en": "File name: {0}, Error: {1}",
@@ -2247,8 +2271,8 @@
             "ja": "閾値変更結果を下の表示へ反映します。"
         },
         "U147": {
-            "en": "Apply the selected DPI to the preview so you can inspect image granularity.",
-            "ja": "選択中のDPIをプレビューに反映させ、画像粒度確認ができます。"
+            "en": "Apply the selected\nDPI to the preview\nso you can inspect\nimage granularity.",
+            "ja": "選択中のDPIを\nプレビューに反映させ、\n画像粒度の確認が\nできます。"
         },
         "U148": {
             "en": "Detected",
@@ -2259,8 +2283,8 @@
             "ja": "基準罫線を表示"
         },
         "U150": {
-            "en": "Shortcut Guide: Ctrl+? / Ctrl+/\nCanvas guide: Mouse wheel = zoom, drag = pan. To affect only the displayed canvas image, use these operations while holding Ctrl+Shift.",
-            "ja": "ショートカットガイド：Ctrl＋？／Ctrl＋/\nCanvasガイド：マウスホイールで拡大・縮小、ドラッグで移動できます。表示画面のみに反映する場合は、Ctrl＋Shiftを押しながら操作してください。"
+            "en": "● Ctrl+? / Ctrl+/ : shortcut list|||● Canvas : wheel zoom · drag pan\n● Replace Ctrl with Ctrl+Shift for preview-only faster apply",
+            "ja": "● Ctrl＋？／Ctrl+/ : ショートカット一覧　　　　　　　　　　　　● Canvas : ホイール拡大縮小・ドラッグ移動\n● Ctrl を Ctrl+Shift に置き換えることでプレビューのみ高速反映"
         },
         "U151": {
             "en": "Custom Rotation Guide",
@@ -2309,6 +2333,70 @@
         "U162": {
             "en": "Scale",
             "ja": "拡大率"
+        },
+        "U163": {
+            "en": "Show Temp Folder Path",
+            "ja": "一時保存フォルダパスを表示"
+        },
+        "U164": {
+            "en": "Show Log File Path",
+            "ja": "ログファイルパスを表示"
+        },
+        "U165": {
+            "en": "Temp Folder Path",
+            "ja": "一時保存フォルダパス"
+        },
+        "U_OVERWRITE_WARN": {
+            "en": "The output PDF already exists and will be overwritten.",
+            "ja": "出力先に同名の PDF が既にあるため、上書き保存します。"
+        },
+        "U166": {
+            "en": "Log File Path",
+            "ja": "ログファイルパス"
+        },
+        "U167": {
+            "en": "Edited PDF will be saved to: {0}",
+            "ja": "編集後PDFの保存先: {0}"
+        },
+        "U168": {
+            "en": "Shortcuts, links, and script files are not allowed in this path field.",
+            "ja": "このパス入力欄ではショートカット、リンク、スクリプトファイルは使用できません。"
+        },
+        "U169": {
+            "en": "This field accepts files only.",
+            "ja": "この入力欄にはファイルのみ指定できます。"
+        },
+        "U170": {
+            "en": "This field accepts PDF files only.",
+            "ja": "この入力欄には PDF ファイルのみ指定できます。"
+        },
+        "U171": {
+            "en": "This field accepts folders only.",
+            "ja": "この入力欄にはフォルダのみ指定できます。"
+        },
+        "U172": {
+            "en": "Saved size",
+            "ja": "保存サイズ"
+        },
+        "U173": {
+            "en": "Show User Settings File Path",
+            "ja": "ユーザー設定ファイルのパスを表示"
+        },
+        "U174": {
+            "en": "User Settings File Path",
+            "ja": "ユーザー設定ファイルのパス"
+        },
+        "U175": {
+            "en": "Custom\nRotation Guide",
+            "ja": "カスタム\n回転ガイド"
+        },
+        "U176": {
+            "en": "Comparison:",
+            "ja": "比較:"
+        },
+        "U177": {
+            "en": "This operation is only available when both the base and comparison files are shown at the same time.",
+            "ja": "この操作は両ファイルを同時に表示させているときにしかできません。"
         }
     }
 }

@@ -9,6 +9,7 @@ import json
 import os
 from logging import getLogger
 from typing import Dict, Any, Optional
+from configurations import tool_settings
 
 logger = getLogger(__name__)
 
@@ -88,7 +89,7 @@ class MessageManager:
         and stores them in memory to minimize file access.
         """
         try:
-            message_file = os.path.join("configurations", "message_codes.json")
+            message_file = str(tool_settings.BASE_DIR / "configurations" / "message_codes.json")
             with open(message_file, "r", encoding="utf-8") as f:
                 self._messages = json.load(f)
             logger.info(

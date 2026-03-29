@@ -53,6 +53,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         on_transform_value_change: Optional[Callable[[float, float, float, float, set[str]], None]] = None,
         initial_batch_edit_checked: bool = True,
         on_batch_edit_toggle: Optional[Callable[[bool], None]] = None,
+        on_rotation_guide: Optional[Callable[[], None]] = None,
+        reference_grid_var: Optional[tk.BooleanVar] = None,
+        on_reference_grid_toggle: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Initialize the page control frame.
@@ -74,6 +77,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_page_entry: Callback for page number entry
             initial_batch_edit_checked: Initial checkbox state for batch edit.
             on_batch_edit_toggle: Callback when the batch edit checkbox changes.
+            on_rotation_guide: Optional callback to show the custom rotation guide (PDF tab).
+            reference_grid_var: When set, show a reference-grid visibility checkbox (PDF tab).
+            on_reference_grid_toggle: Optional callback after the reference-grid checkbox changes.
         """
         try:
             super().__init__(parent)
@@ -81,6 +87,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             self.__color_key: str = color_key
             self.__page_amount_limit: int = page_amount_limit
             self.__on_batch_edit_toggle = on_batch_edit_toggle
+            self.__on_rotation_guide = on_rotation_guide
+            self.__on_reference_grid_toggle = on_reference_grid_toggle
+            self.__reference_grid_var = reference_grid_var
         except Exception as e:
             # Failed to initialize PageControlFrame: {error}
             logger.error(message_manager.get_log_message("L067", str(e)))
@@ -150,7 +159,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.__edit_buttons_enabled: bool = True
         self.__workspace_controls_enabled: bool = True
 
-        # Page navigation buttons
+        # Page navigation buttons (vertical stack; compact sidebar width for canvas)
         self.prev_page_btn = BasePageChangeButton(
             fr=self,
             color_key="change_previous_page_button",
@@ -224,18 +233,27 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         )
         self.delete_page_btn.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
 
-        # Export button
-        self.export_btn = BaseButton(
-            fr=self,
-            color_key="pdf_save_button",
-            text=message_manager.get_ui_message("U037"), # Save
-            command=on_export if on_export else lambda: None,
-            font=btw.base_font,
-            relief=tk.RAISED,
-            bd=2,
-            highlightthickness=1,
-        )
-        self.export_btn.grid(row=6, column=0, padx=5, pady=5, sticky="ew")
+        layout_row = 6
+
+        self.__reference_grid_cb: Optional[tk.Checkbutton] = None
+        if reference_grid_var is not None:
+            self.__reference_grid_cb = tk.Checkbutton(
+                self,
+                text=message_manager.get_ui_message("U149"),
+                variable=reference_grid_var,
+                font=("", 8),
+                bg=self.__base_bg,
+                fg=self.__swfg,
+                selectcolor=self.__base_bg,
+                activebackground=self.__base_bg,
+                activeforeground=self.__swfg,
+                anchor="w",
+                command=self._on_reference_grid_checkbox_changed,
+            )
+            self.__reference_grid_cb.grid(
+                row=layout_row, column=0, padx=5, pady=5, sticky="ew"
+            )
+            layout_row += 1
 
         # --- Batch edit checkbox (M1-010) ---
         self.batch_edit_var = tk.BooleanVar(value=bool(initial_batch_edit_checked))
@@ -252,7 +270,8 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             anchor="center",
             command=self._on_batch_edit_changed,
         )
-        self.__batch_edit_cb.grid(row=7, column=0, padx=5, pady=(5, 0), sticky="ew")
+        self.__batch_edit_cb.grid(row=layout_row, column=0, padx=5, pady=(5, 0), sticky="ew")
+        layout_row += 1
 
         # Store transform value change callback
         self.__on_transform_value_change = on_transform_value_change
@@ -260,7 +279,8 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # --- Transform info section (M1-008) ---
         # Separator line
         self.__transform_separator = tk.Frame(self, height=1, bg=self.__swfg)
-        self.__transform_separator.grid(row=8, column=0, padx=3, pady=(8, 2), sticky="ew")
+        self.__transform_separator.grid(row=layout_row, column=0, padx=3, pady=(8, 2), sticky="ew")
+        layout_row += 1
 
         # Header label
         self.__transform_header = tk.Label(
@@ -271,7 +291,8 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             fg=self.__swfg,
             anchor="center",
         )
-        self.__transform_header.grid(row=9, column=0, padx=2, pady=(0, 2), sticky="ew")
+        self.__transform_header.grid(row=layout_row, column=0, padx=2, pady=(0, 2), sticky="ew")
+        layout_row += 1
 
         # Entry style settings
         entry_font = ("", 8)
@@ -296,8 +317,10 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 The created Entry widget.
             """
             sub = tk.Frame(parent_frame, bg=self.__base_bg)
-            sub.grid(row=row, column=0, padx=2, pady=1, sticky="ew")
-            sub.grid_columnconfigure(1, weight=1)
+            # Keep label and entry adjacent; do not allocate a wide stretch column between them.
+            sub.grid(row=row, column=0, padx=2, pady=1, sticky="w")
+            sub.grid_columnconfigure(0, weight=0)
+            sub.grid_columnconfigure(1, weight=0)
             self.__transform_sub_frames.append(sub)
             lbl = tk.Label(
                 sub, text=label_text, font=entry_font, width=label_width,
@@ -312,24 +335,63 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 insertbackground=self.__entry_theme_dict.get("insertbackground", self.__acfg),
                 relief="sunken", bd=1,
             )
-            ent.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+            ent.grid(row=0, column=1, sticky="w", padx=(2, 0))
             return ent
 
         # Create transform entry fields
-        self.__transform_x_entry = _make_transform_row(self, 10,
-            message_manager.get_ui_message("U065"))   # "X:"
-        self.__transform_y_entry = _make_transform_row(self, 11,
-            message_manager.get_ui_message("U066"))   # "Y:"
-        self.__transform_angle_entry = _make_transform_row(self, 12,
-            message_manager.get_ui_message("U067"))   # "Angle:" / "角度:"
-        self.__transform_scale_entry = _make_transform_row(self, 13,
-            message_manager.get_ui_message("U068"))   # "Scale:" / "倍率:"
+        self.__transform_x_entry = _make_transform_row(
+            self, layout_row, message_manager.get_ui_message("U065")
+        )
+        layout_row += 1
+        self.__transform_y_entry = _make_transform_row(
+            self, layout_row, message_manager.get_ui_message("U066")
+        )
+        layout_row += 1
+        self.__transform_angle_entry = _make_transform_row(
+            self, layout_row, message_manager.get_ui_message("U067")
+        )
+        layout_row += 1
+        self.__transform_scale_entry = _make_transform_row(
+            self, layout_row, message_manager.get_ui_message("U068")
+        )
+        layout_row += 1
 
         # Bind Enter key to apply transform values
         for ent in (self.__transform_x_entry, self.__transform_y_entry,
                     self.__transform_angle_entry, self.__transform_scale_entry):
             ent.bind("<Return>", self._on_transform_entry_submit)
             ent.bind("<KP_Enter>", self._on_transform_entry_submit)
+
+        self.__rotation_guide_btn: Optional[BaseButton] = None
+        if on_rotation_guide is not None:
+            self.__rotation_guide_btn = BaseButton(
+                fr=self,
+                color_key="process_button",
+                text=message_manager.get_ui_message("U175"),
+                command=on_rotation_guide,
+                font=btw.base_font,
+            )
+            self.__rotation_guide_btn.grid(
+                row=layout_row, column=0, padx=5, pady=(10, 6), sticky="ew"
+            )
+            layout_row += 1
+
+        self.grid_rowconfigure(layout_row, weight=1, minsize=0)
+        self.__vertical_tail_spacer = tk.Frame(self, bg=self.__base_bg)
+        self.__vertical_tail_spacer.grid(row=layout_row, column=0, sticky="nsew")
+        layout_row += 1
+
+        self.export_btn = BaseButton(
+            fr=self,
+            color_key="pdf_save_button",
+            text=message_manager.get_ui_message("U037"),
+            command=on_export if on_export else lambda: None,
+            font=btw.base_font,
+            relief=tk.RAISED,
+            bd=2,
+            highlightthickness=1,
+        )
+        self.export_btn.grid(row=layout_row, column=0, padx=5, pady=(4, 6), sticky="ew")
 
         self.__last_transform_values: Dict[str, float] = {
             "tx": 0.0,
@@ -562,6 +624,15 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         except Exception:
             return False
 
+    def _on_reference_grid_checkbox_changed(self) -> None:
+        """Notify listeners when the reference-grid checkbox state changes."""
+        if self.__on_reference_grid_toggle is None:
+            return
+        try:
+            self.__on_reference_grid_toggle()
+        except Exception:
+            pass
+
     def _on_batch_edit_changed(self) -> None:
         """Notify listeners when the batch edit checkbox state changes."""
         if self.__on_batch_edit_toggle is None:
@@ -658,7 +729,6 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 bd=0,
                 relief=tk.FLAT,
             )
-
             # Update Entry widget colors (use the same style as other input entries)
             entry_theme = theme_data.get(
                 "page_number_entry",
@@ -694,6 +764,18 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                     activeforeground=self.__swfg,
                 )
 
+            if self.__reference_grid_cb is not None:
+                self.__reference_grid_cb.configure(
+                    bg=self.__base_bg,
+                    fg=self.__swfg,
+                    selectcolor=self.__base_bg,
+                    activebackground=self.__base_bg,
+                    activeforeground=self.__swfg,
+                )
+
+            if hasattr(self, "_PageControlFrame__vertical_tail_spacer"):
+                self.__vertical_tail_spacer.configure(bg=self.__base_bg)
+
             # Apply theme to transform info section (M1-008)
             if hasattr(self, '_PageControlFrame__transform_separator'):
                 self.__transform_separator.configure(bg=self.__swfg)
@@ -710,6 +792,14 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                         fg=entry_theme.get("fg", self.__acfg),
                         insertbackground=entry_theme.get("insertbackground", self.__acfg),
                     )
+
+            if self.__rotation_guide_btn is not None:
+                try:
+                    self.__rotation_guide_btn.configure(
+                        text=message_manager.get_ui_message("U175"),
+                    )
+                except Exception:
+                    pass
 
             # Main processing: re-apply edit buttons state (e.g. copy-protected mode).
             self.__entry_theme_dict = cast(Dict[str, Any], entry_theme)
@@ -810,6 +900,14 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             return
         self._set_transform_entries(tx, ty, rotation, scale)
 
+    def commit_transform_entries(self) -> None:
+        """Apply the current transform entry values without requiring Enter.
+
+        This is used before export so pending text edits in the transform fields
+        are reflected in the saved output.
+        """
+        self._on_transform_entry_submit(cast(tk.Event, None))
+
     @staticmethod
     def _normalize_fullwidth(text: str) -> str:
         """Convert full-width characters to half-width equivalents.
@@ -840,11 +938,13 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             event: Key event from the Entry widget.
         """
         try:
-            # Main processing: convert full-width to half-width before parsing
-            tx = float(self._normalize_fullwidth(self.__transform_x_entry.get()))
-            ty = float(self._normalize_fullwidth(self.__transform_y_entry.get()))
-            angle = float(self._normalize_fullwidth(self.__transform_angle_entry.get()))
-            scale = float(self._normalize_fullwidth(self.__transform_scale_entry.get()))
+            from utils.input_normalization import parse_strict_float
+
+            # Main processing: NFKC + strict decimal pattern (digits and one optional dot).
+            tx = parse_strict_float(self._normalize_fullwidth(self.__transform_x_entry.get()))
+            ty = parse_strict_float(self._normalize_fullwidth(self.__transform_y_entry.get()))
+            angle = parse_strict_float(self._normalize_fullwidth(self.__transform_angle_entry.get()))
+            scale = parse_strict_float(self._normalize_fullwidth(self.__transform_scale_entry.get()))
         except ValueError:
             # Invalid input; restore previous display values
             logger.warning("Transform entry: invalid numeric input ignored")

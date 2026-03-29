@@ -5,7 +5,7 @@ from logging import getLogger
 import tkinter as tk
 import numpy as np
 from PIL import Image, ImageOps, ImageFile
-from typing import Any, Dict, Optional, Protocol, TypedDict, cast
+from typing import Any, Dict, Optional, Protocol, Tuple, TypedDict, cast
 
 # Import PyPDFium2 for PDF rendering
 try:
@@ -29,6 +29,89 @@ from widgets.progress_window import ProgressWindow
 message_manager = get_message_manager()
 
 logger = getLogger(__name__)
+
+
+def _extract_embedded_dpi_from_pypdf_page(
+    page: Any,
+    page_width_pt: float,
+    page_height_pt: float,
+) -> Optional[Tuple[int, int]]:
+    """Infer effective DPI from the largest embedded image vs page MediaBox (points).
+
+    Matches the logic used in ``image_ope_tab`` so PDF Operation footer can show the
+    same embedded-resolution hint as the extension tab.
+
+    Args:
+        page: First page object from ``pypdf.PdfReader.pages``.
+        page_width_pt: Page width in PDF points.
+        page_height_pt: Page height in PDF points.
+
+    Returns:
+        ``(dpi_x, dpi_y)`` when derivable, otherwise ``None``.
+    """
+    if page_width_pt <= 0 or page_height_pt <= 0:
+        return None
+    try:
+        resources = page.get("/Resources")
+        if resources is None or "/XObject" not in resources:
+            return None
+        xobjects = resources["/XObject"].get_object()
+    except Exception:
+        return None
+
+    max_area = 0
+    best_width = 0
+    best_height = 0
+
+    for xobj_ref in xobjects.values():
+        try:
+            xobj = xobj_ref.get_object()
+        except Exception:
+            continue
+        if xobj.get("/Subtype") != "/Image":
+            continue
+        try:
+            img_width = int(xobj.get("/Width", 0) or 0)
+            img_height = int(xobj.get("/Height", 0) or 0)
+        except Exception:
+            continue
+        area = img_width * img_height
+        if area > max_area:
+            max_area = area
+            best_width = img_width
+            best_height = img_height
+
+    if max_area <= 0 or best_width <= 0 or best_height <= 0:
+        return None
+
+    dpi_x = int(round(best_width * 72.0 / page_width_pt))
+    dpi_y = int(round(best_height * 72.0 / page_height_pt))
+    if dpi_x <= 0 or dpi_y <= 0:
+        return None
+    return dpi_x, dpi_y
+
+
+def _merge_embedded_pdf_dpi_into_meta(reader: Any, file_meta: Dict[str, Any]) -> None:
+    """Store embedded page DPI hints into ``file_meta`` when PyPDF is available.
+
+    Args:
+        reader: ``PdfReader`` instance positioned on the target file.
+        file_meta: ``FilePathInfo.file_meta_info`` dictionary to update in place.
+    """
+    try:
+        if len(reader.pages) < 1:
+            return
+        page0 = reader.pages[0]
+        mb = page0.mediabox
+        page_w_pt = float(mb.width)
+        page_h_pt = float(mb.height)
+        pair = _extract_embedded_dpi_from_pypdf_page(page0, page_w_pt, page_h_pt)
+        if pair:
+            file_meta["embedded_page_dpi_x"] = pair[0]
+            file_meta["embedded_page_dpi_y"] = pair[1]
+            file_meta["embedded_page_dpi"] = pair[0]
+    except Exception:
+        return
 
 
 class ProgressCallback(Protocol):
@@ -377,7 +460,10 @@ class Pdf2PngByPages(BaseImageConverter):
                 
                 # Set page count
                 self.file_info.file_page_count = len(reader.pages)
-                
+
+                # Main processing: derive embedded image DPI vs MediaBox (same idea as image tab).
+                _merge_embedded_pdf_dpi_into_meta(reader, self.file_info.file_meta_info)
+
                 # Log metadata extraction
                 logger.info(message_manager.get_log_message("L307", str(metadata)))
                 return

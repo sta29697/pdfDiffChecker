@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from logging import getLogger
+import math
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Any, Dict, Optional, Tuple, Union, cast
@@ -14,6 +15,7 @@ from PIL.Image import Resampling
 from PIL.ImageFile import ImageFile
 
 from configurations.message_manager import get_message_manager
+from controllers.color_theme_manager import ColorThemeManager
 from controllers.mouse_event_handler import MouseEventHandler
 from controllers.drag_and_drop_file import DragAndDropHandler
 from widgets.base_tab_widgets import BaseTabWidgets
@@ -23,9 +25,10 @@ from widgets.base_path_entry import BasePathEntry
 from widgets.base_path_select_button import BasePathSelectButton
 from widgets.base_label_class import BaseLabelClass
 from widgets.page_control_frame import PageControlFrame
-from utils.utils import get_temp_dir
+from utils.utils import create_unique_file_path, get_temp_dir
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
 from controllers.file2png_by_page import Pdf2PngByPages
+from controllers.pdf_export_handler import PDFExportHandler
 from models.class_dictionary import FilePathInfo
 from themes.coloring_theme_interface import ColoringThemeIF
 from controllers.widgets_tracker import WidgetsTracker
@@ -37,6 +40,37 @@ message_manager = get_message_manager()
 class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     """PDF operation tab."""
 
+    # Sequences registered with bind_all while this notebook tab is active (avoid duplicate main-tab handlers).
+    _GLOBAL_SHORTCUT_SEQUENCES: tuple[str, ...] = (
+        "<Control-r>",
+        "<Control-R>",
+        "<Control-Shift-r>",
+        "<Control-Shift-R>",
+        "<Control-l>",
+        "<Control-L>",
+        "<Control-Shift-l>",
+        "<Control-Shift-L>",
+        "<Control-Alt-r>",
+        "<Control-Alt-R>",
+        "<Control-Alt-l>",
+        "<Control-Alt-L>",
+        "<Control-v>",
+        "<Control-V>",
+        "<Control-h>",
+        "<Control-H>",
+        "<Control-b>",
+        "<Control-B>",
+        "<Control-question>",
+        "<Control-slash>",
+        "<Control-Shift-slash>",
+        "<Control-Shift-h>",
+        "<Control-Shift-H>",
+        "<KeyRelease-Control_L>",
+        "<KeyRelease-Control_R>",
+        "<Control-plus>",
+        "<Control-minus>",
+    )
+
     def __init__(self, master: Optional[tk.Misc] = None, **kwargs: Any) -> None:
         """Initialize the PDF operation tab.
 
@@ -46,6 +80,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         """
         super().__init__(master, **kwargs)
         WidgetsTracker().add_widgets(self)
+        self._pdf_global_shortcuts_active: bool = False
         self.base_widgets = BaseTabWidgets(self)
         
         # Configure frame to expand
@@ -62,6 +97,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.base_path.set(message_manager.get_ui_message("U053"))
         self.output_path = tk.StringVar()
         self.output_path.set(message_manager.get_ui_message("U054"))
+        self._show_pdf_reference_grid_var = tk.BooleanVar(
+            value=bool(UserSettingManager().get_setting("show_reference_grid", False)),
+        )
 
         # Create frames without borders
         self.frame_main0 = tk.Frame(self)
@@ -73,19 +111,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.frame_main1.grid_columnconfigure(1, weight=1)  # Entry column expands
         
         self.frame_main2 = tk.Frame(self)
-        self.frame_main2.grid(row=2, column=0, sticky="nsew", ipady=2)  # nsew to fill all directions
+        self.frame_main2.grid(row=2, column=0, sticky="nsew")
         self.frame_main2.grid_columnconfigure(0, weight=1)
         self.frame_main2.grid_rowconfigure(0, weight=1)  # Make canvas row expandable
 
-        # Create canvas
+        # Create canvas (same background resolution as Main tab preview)
+        _theme0 = ColorThemeManager.get_instance().get_current_theme()
+        _nb0 = _theme0.get("Notebook", {})
+        _cv0 = dict(_theme0.get("canvas", {}))
+        _canvas_bg0 = _cv0.get(
+            "background",
+            _nb0.get("tab_bg", _nb0.get("bg", "#1d1d29")),
+        )
         self.canvas = tk.Canvas(
             self.frame_main2,
-            bg="#ffffff",  # Default canvas background (will be themed)
+            bg=_canvas_bg0,
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=1,
-            highlightbackground="#e0e0e0",
-            highlightcolor="#e0e0e0",
+            highlightbackground=_cv0.get("highlightbackground", "#e0e0e0"),
+            highlightcolor=_cv0.get("highlightcolor", "#e0e0e0"),
         )
         self.canvas.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         # Make canvas expand with frame_main2
@@ -100,7 +145,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             font=("", 8),
             anchor="w",
         )
-        self._footer_meta_label.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 2))
+        self._footer_meta_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=(0, 2))
+        self._pdf_shortcut_guide_frame: Optional[tk.Frame] = None
+        self._pdf_shortcut_guide_label: Optional[tk.Label] = None
 
         # Initialize variables for PDF display
         self.current_pdf_document = None
@@ -121,10 +168,14 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.mouse_handler: Optional[MouseEventHandler] = None
         self.page_control_frame: Optional[PageControlFrame] = None
         self.visualized_image: tk.StringVar = tk.StringVar(value="base")
+        self._preferred_preview_scale: float = self._get_saved_preview_scale()
+        self._loaded_pdf_source_path: Optional[str] = None
+        self._preview_keyboard_rotation_delta: float = 0.0
 
         # Setup UI
         self._setup_ui()
         self._setup_drag_and_drop()
+        self.canvas.bind("<Configure>", self._on_pdf_canvas_configure, add="+")
 
         # Main processing: refresh shared paths when the tab becomes visible.
         self.bind("<Visibility>", self._sync_shared_paths_from_settings)
@@ -132,6 +183,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
     def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
         """Synchronize shared base/output paths from persisted settings.
+
+        On idle (startup), if base points to an existing file, the PDF tab shows the
+        parent folder locally only so startup does not auto-load a preview; shared
+        settings are not rewritten (main tab keeps full PDF paths).
 
         Args:
             event: Tkinter visibility event (unused).
@@ -151,9 +206,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 base_value_to_apply = saved_base
                 base_path_obj = Path(saved_base)
                 if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
-                    # Main processing: avoid startup-time preview load by restoring only folder path.
+                    # Main processing: avoid startup-time preview load; do not persist folder to settings.
                     base_value_to_apply = str(base_path_obj.parent)
-                    UserSettingManager().update_setting("base_file_path", base_value_to_apply)
 
                 if self._base_file_path_entry.path_var.get() != base_value_to_apply:
                     self._base_file_path_entry.path_var.set(base_value_to_apply)
@@ -164,6 +218,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     and base_path_obj.exists()
                     and base_path_obj.is_file()
                     and base_path_obj.suffix.lower() == ".pdf"
+                    and str(base_path_obj) != str(self._loaded_pdf_source_path or "")
                 ):
                     self._load_and_display_pdf(saved_base)
 
@@ -178,6 +233,64 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 self.output_path.set(saved_output)
         except Exception as exc:
             logger.warning(f"Shared path sync failed in pdf tab: {exc}")
+
+    def _get_saved_preview_scale(self) -> float:
+        """Return the persisted PDF-operation preview scale.
+
+        Returns:
+            float: Saved scale factor, clamped to a positive value.
+        """
+        raw_scale = UserSettingManager().get_setting("pdf_operation_preview_scale", 1.0)
+        try:
+            resolved_scale = float(raw_scale)
+        except (TypeError, ValueError):
+            return 1.0
+        if resolved_scale <= 0:
+            return 1.0
+        return max(0.05, min(10.0, resolved_scale))
+
+    def _persist_preview_scale(self, scale_value: float) -> None:
+        """Persist the current PDF-operation preview scale in memory.
+
+        Args:
+            scale_value: Scale factor to save.
+        """
+        resolved_scale = max(0.05, min(10.0, float(scale_value)))
+        if abs(resolved_scale - self._preferred_preview_scale) < 1e-6:
+            return
+        self._preferred_preview_scale = resolved_scale
+        UserSettingManager().update_setting("pdf_operation_preview_scale", resolved_scale)
+
+    def _update_preferred_preview_scale_from_current_page(self) -> None:
+        """Refresh the persisted preferred scale from the current page transform."""
+        if not hasattr(self, "base_transform_data"):
+            return
+        if not (0 <= self.current_page_index < len(self.base_transform_data)):
+            return
+        _rotation, _tx, _ty, scale = self.base_transform_data[self.current_page_index]
+        self._persist_preview_scale(scale)
+
+    def _build_export_metadata(self) -> Dict[str, Any]:
+        """Build export metadata for the currently loaded PDF pages.
+
+        Returns:
+            Dict[str, Any]: Metadata containing page width and page height when available.
+        """
+        export_metadata: Dict[str, Any] = {}
+        if hasattr(self, "_conversion_dpi"):
+            export_metadata["dpi"] = int(getattr(self, "_conversion_dpi", 0) or 0)
+
+        if not getattr(self, "base_page_paths", None):
+            return export_metadata
+
+        first_page_path = self.base_page_paths[0]
+        if not first_page_path.exists():
+            return export_metadata
+
+        with Image.open(first_page_path) as first_image:
+            export_metadata["page_width"] = first_image.width
+            export_metadata["page_height"] = first_image.height
+        return export_metadata
 
     def _get_initial_dir_from_setting(self, setting_key: str) -> str:
         """Return an initial directory path for dialogs based on saved settings.
@@ -240,7 +353,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._base_file_path_entry = BasePathEntry(
             fr=self.frame_main1,
             color_key="base_file_path_entry",
-            entry_setting_key="base_file_path"
+            entry_setting_key="base_file_path",
+            allow_files=True,
+            allow_directories=False,
+            allowed_file_extensions={".pdf"},
         )
         self._base_file_path_entry.grid(
             column=1, row=1, padx=5, pady=8, sticky="ew"
@@ -277,7 +393,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._output_folder_path_entry = BasePathEntry(
             fr=self.frame_main1,
             color_key="output_folder_path_entry",
-            entry_setting_key="output_folder_path"
+            entry_setting_key="output_folder_path",
+            allow_files=False,
+            allow_directories=True,
         )
         self._output_folder_path_entry.grid(
             column=1, row=3, padx=5, pady=8, sticky="ew"
@@ -324,6 +442,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         )
         if folder_path:
             self._output_folder_path_entry.path_var.set(folder_path)
+            self.output_path.set(folder_path)
             logger.debug(message_manager.get_log_message("L073", folder_path))
 
     def _setup_drag_and_drop(self) -> None:
@@ -368,10 +487,20 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     self.mouse_handler.clear_overlays()
             except Exception:
                 pass
+            old_guide = getattr(self, "_pdf_shortcut_guide_frame", None)
+            if old_guide is not None:
+                try:
+                    old_guide.destroy()
+                except Exception:
+                    pass
+            self._pdf_shortcut_guide_frame = None
+            self._pdf_shortcut_guide_label = None
             try:
                 self.canvas.delete("all")
             except Exception:
                 pass
+            self._original_page_width = 0
+            self._original_page_height = 0
 
             # Create temporary directory for extracted PNG files
             self.session_id = f"pdf_op_{os.path.basename(file_path)}_{Path(file_path).stem}"
@@ -408,11 +537,15 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             self.current_page_index = 0
             self.file_path_info = file_path_info
             self.page_count = file_path_info.file_page_count
+            self._loaded_pdf_source_path = str(Path(file_path))
 
             self._refresh_operation_restriction_state()
             
-            # Create empty transform data for mouse operations (rotation, translation, scale)
-            self.base_transform_data = [(0.0, 0.0, 0.0, 1.0) for _ in range(self.page_count)]
+            # Main processing: initialize page transforms with the persisted preferred scale.
+            self.base_transform_data = [
+                (0.0, 0.0, 0.0, self._preferred_preview_scale)
+                for _ in range(self.page_count)
+            ]
             
             # Generate base_pages list for display and reference
             self.base_pages = [f"Page {i+1}" for i in range(self.page_count)]
@@ -606,6 +739,62 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         """
         return bool(getattr(self, "_visual_adjustments_enabled", True))
 
+    def _commit_preview_keyboard_rotation(self) -> None:
+        """Merge pending Ctrl+Shift preview rotation into stored transform data (then propagate if batch)."""
+        delta = float(self._preview_keyboard_rotation_delta)
+        if abs(delta) < 1e-9:
+            return
+        self._preview_keyboard_rotation_delta = 0.0
+        if not hasattr(self, "base_transform_data") or self.page_count <= 0:
+            return
+        idx = self.current_page_index
+        if not (0 <= idx < len(self.base_transform_data)):
+            return
+        r, x, y, s = self.base_transform_data[idx]
+        self.base_transform_data[idx] = (r + delta, x, y, s)
+        self._on_transform_update()
+
+    def _clear_preview_keyboard_rotation_only(self) -> None:
+        """Discard pending Ctrl+Shift preview rotation without writing it to transform data."""
+        self._preview_keyboard_rotation_delta = 0.0
+
+    def _on_pdf_preview_keyboard_rotate_right(self, event: Optional[tk.Event] = None) -> str:
+        """Handle Ctrl+Shift+R: preview +90° (committed on click, page change, or other transform shortcuts)."""
+        _ = event
+        if self.mouse_handler is None:
+            return "break"
+        if not self._ensure_visual_adjustments_enabled():
+            return "break"
+        if not hasattr(self, "page_count") or self.page_count <= 0:
+            return "break"
+        self._preview_keyboard_rotation_delta += 90.0
+        self._display_page(self.current_page_index)
+        self.mouse_handler._show_notification(message_manager.get_message("M063"))
+        return "break"
+
+    def _on_pdf_preview_keyboard_rotate_left(self, event: Optional[tk.Event] = None) -> str:
+        """Handle Ctrl+Shift+L: preview −90° (committed on click, page change, or other transform shortcuts)."""
+        _ = event
+        if self.mouse_handler is None:
+            return "break"
+        if not self._ensure_visual_adjustments_enabled():
+            return "break"
+        if not hasattr(self, "page_count") or self.page_count <= 0:
+            return "break"
+        self._preview_keyboard_rotation_delta -= 90.0
+        self._display_page(self.current_page_index)
+        self.mouse_handler._show_notification(message_manager.get_message("M064"))
+        return "break"
+
+    def _on_pdf_canvas_escape_preview(self, event: Optional[tk.Event] = None) -> str:
+        """Discard pending Ctrl+Shift preview rotation when Escape is pressed on the canvas."""
+        _ = event
+        if abs(self._preview_keyboard_rotation_delta) < 1e-9:
+            return "break"
+        self._clear_preview_keyboard_rotation_only()
+        self._display_page(self.current_page_index)
+        return "break"
+
     def _display_page(self, page_index: int) -> None:
         """Display specified page of the current PDF document using PNG files.
         
@@ -624,7 +813,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 logger.warning(message_manager.get_log_message("L283", 
                              str(page_index), str(self.page_count-1)))
                 return
-            
+
+            if page_index != self.current_page_index:
+                self._commit_preview_keyboard_rotation()
+
             # Main processing: prefer actual path list from converter output.
             png_path: Path
             if hasattr(self, 'base_page_paths') and self.base_page_paths and page_index < len(self.base_page_paths):
@@ -673,14 +865,17 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             if hasattr(self, 'base_transform_data') and len(self.base_transform_data) > page_index:
                 # Get transform data for current page
                 rotation, translate_x, translate_y, scale = self.base_transform_data[page_index]
-                
+                rotation_draw = rotation
+                if page_index == self.current_page_index:
+                    rotation_draw = rotation + float(self._preview_keyboard_rotation_delta)
+
                 # Apply transformations if needed
-                if rotation != 0 or scale != 1.0:
+                if abs(rotation_draw) > 1e-9 or scale != 1.0:
                     # Apply rotation if needed (PIL can handle any rotation angle, not limited to 90 degree increments)
-                    if rotation != 0:
+                    if abs(rotation_draw) > 1e-9:
                         # Use cast to handle type compatibility
                         # PIL can rotate by any angle - no need to normalize to 90 degree increments
-                        rotated_image = pil_image.rotate(rotation, resample=Resampling.BICUBIC, expand=True)
+                        rotated_image = pil_image.rotate(rotation_draw, resample=Resampling.BICUBIC, expand=True)
                         pil_image = cast(Union[Image.Image, ImageFile], rotated_image)
                     
                     # Apply scaling if needed
@@ -698,6 +893,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Clear canvas (keep overlay items)
             self.canvas.delete("pdf_image")
+            self.canvas.delete("export_outline")
+            self.canvas.delete("pdf_reference_grid")
             
             # Display image with any translation offset
             if hasattr(self, 'base_transform_data') and self.base_transform_data:
@@ -716,11 +913,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             except Exception:
                 pass
             
-            # Update scroll region
-            try:
-                self.canvas.config(scrollregion=self.canvas.bbox("pdf_image"))
-            except Exception:
-                self.canvas.config(scrollregion=self.canvas.bbox("all"))
+            self._draw_export_outline()
+            self._update_canvas_scrollregion()
+            self._draw_pdf_canvas_reference_grid()
+            self._draw_pdf_canvas_footer_guide()
 
             # Store previous page index to check if page actually changed
             previous_page_index = getattr(self, 'current_page_index', None)
@@ -766,7 +962,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             if self.page_control_frame is not None and hasattr(self, 'base_transform_data'):
                 if page_index < len(self.base_transform_data):
                     r, tx, ty, s = self.base_transform_data[page_index]
-                    self.page_control_frame.update_transform_info(r, tx, ty, s)
+                    r_panel = r + float(self._preview_keyboard_rotation_delta)
+                    self.page_control_frame.update_transform_info(r_panel, tx, ty, s)
 
             # Update footer metadata label (M1-009)
             self._update_footer_meta(pil_image)
@@ -803,25 +1000,364 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             lbl_size = message_manager.get_ui_message("U072")  # "Pixel size:" / "ピクセルサイズ:"
             size_text = f"{lbl_size} {width} x {height} px" if width and height else f"{lbl_size} -"
 
-            # Main processing: get DPI from stored conversion value (M1-009 fix).
-            dpi_val = getattr(self, '_conversion_dpi', None)
+            # Prefer PDF embedded DPI (from PyPDF MediaBox vs largest image), then raster DPI.
+            dpi_int = 0
+            try:
+                if hasattr(self, "file_path_info") and self.file_path_info:
+                    raw_emb = (self.file_path_info.file_meta_info or {}).get("embedded_page_dpi")
+                    if raw_emb is not None:
+                        dpi_int = int(raw_emb)
+            except (TypeError, ValueError):
+                dpi_int = 0
+            if dpi_int <= 0:
+                dpi_val = getattr(self, "_conversion_dpi", None)
+                try:
+                    dpi_int = int(dpi_val) if dpi_val is not None else 0
+                except (TypeError, ValueError):
+                    dpi_int = 0
+            if dpi_int <= 0:
+                try:
+                    dpi_int = int(UserSettingManager().get_setting("setted_dpi", 0) or 0)
+                except (TypeError, ValueError):
+                    dpi_int = 0
             lbl_dpi = message_manager.get_ui_message("U073")  # "Pixel density:" / "ピクセル密度:"
-            dpi_text = f"{lbl_dpi} {dpi_val}dpi" if dpi_val else f"{lbl_dpi} -"
+            dpi_text = f"{lbl_dpi} {dpi_int}dpi" if dpi_int > 0 else f"{lbl_dpi} -"
 
             # Main processing: estimate paper size from original pixel dimensions and DPI.
             lbl_paper = message_manager.get_ui_message("U074")  # "Paper size:" / "用紙サイズ:"
-            paper_name = self._estimate_paper_size(width, height, dpi_val) if (width and height and dpi_val) else ""
+            paper_name = (
+                self._estimate_paper_size(int(width), int(height), dpi_int)
+                if (width and height and dpi_int > 0)
+                else ""
+            )
 
-            # Compose footer text
+            # Compose footer text (saved-size prefix matches former export overlay, U172).
             footer_text = f"{size_text}  |  {dpi_text}"
             if paper_name:
                 footer_text += f"  |  {lbl_paper} {paper_name}"
+            saved_line = self._format_export_bounds_label_text()
+            if saved_line:
+                footer_text = f"{saved_line}  |  {footer_text}"
             self._footer_meta_label.configure(text=footer_text)
         except Exception:
             try:
                 self._footer_meta_label.configure(text="-")
             except Exception:
                 pass
+
+    def _on_pdf_canvas_configure(self, event: tk.Event) -> None:
+        """Redraw the PDF Operation reference grid when the canvas size changes.
+
+        Args:
+            event: Tkinter configure event (unused).
+        """
+        _ = event
+        self._draw_pdf_canvas_reference_grid()
+        self.schedule_pdf_canvas_footer_reposition()
+        try:
+            mh = getattr(self, "mouse_handler", None)
+            if mh is not None:
+                mh.refresh_overlay_positions()
+        except Exception:
+            pass
+
+    def schedule_pdf_canvas_footer_reposition(self) -> None:
+        """Defer PDF canvas footer layout until Tk geometry has settled."""
+
+        def _run() -> None:
+            self._reposition_pdf_canvas_footer_guide()
+
+        try:
+            self.after_idle(_run)
+        except Exception:
+            try:
+                _run()
+            except Exception:
+                pass
+
+    def _reposition_pdf_canvas_footer_guide(self) -> None:
+        """Keep the PDF canvas shortcut guide aligned with the visible canvas bottom."""
+        if not hasattr(self, "canvas"):
+            return
+        guide_frame = getattr(self, "_pdf_shortcut_guide_frame", None)
+        guide_label = getattr(self, "_pdf_shortcut_guide_label", None)
+        if guide_frame is None or guide_label is None:
+            return
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+        try:
+            cw = int(self.canvas.winfo_width())
+        except Exception:
+            cw = 1
+        canvas_width = max(cw, 1)
+        left_inset = 2
+        right_inset = 2
+        guide_width = max(canvas_width - left_inset - right_inset, 120)
+        guide_label.configure(wraplength=max(guide_width - 12, 80))
+        try:
+            guide_frame.update_idletasks()
+        except Exception:
+            pass
+        guide_height = max(guide_frame.winfo_reqheight(), 28)
+        guide_frame.place(
+            x=left_inset,
+            rely=1.0,
+            y=-2,
+            anchor="sw",
+            width=guide_width,
+            height=guide_height,
+        )
+        try:
+            guide_frame.lift()
+        except Exception:
+            pass
+
+    def _draw_pdf_canvas_footer_guide(self) -> None:
+        """Draw the same shortcut/canvas hint strip as the Main tab (U150)."""
+        if not hasattr(self, "canvas"):
+            return
+        mouse_handler = getattr(self, "mouse_handler", None)
+        if mouse_handler is not None and hasattr(mouse_handler, "set_shortcut_help_visibility"):
+            try:
+                mouse_handler.set_shortcut_help_visibility(False)
+            except Exception:
+                pass
+        current_theme = ColorThemeManager.get_instance().get_current_theme()
+        frame_theme = dict(current_theme.get("Frame", {}))
+        guide_fg = str(frame_theme.get("fg", "#000000"))
+        overlay_bg = str(self.canvas.cget("bg"))
+
+        if getattr(self, "_pdf_shortcut_guide_frame", None) is None:
+            self._pdf_shortcut_guide_frame = tk.Frame(
+                self.canvas,
+                relief=tk.FLAT,
+                borderwidth=0,
+                highlightthickness=0,
+            )
+        if getattr(self, "_pdf_shortcut_guide_label", None) is None:
+            self._pdf_shortcut_guide_label = tk.Label(
+                self._pdf_shortcut_guide_frame,
+                anchor="w",
+                justify="left",
+                padx=5,
+                pady=2,
+                font=("Helvetica", 9),
+            )
+            self._pdf_shortcut_guide_label.pack(fill="both", expand=True)
+
+        self._pdf_shortcut_guide_frame.configure(bg=overlay_bg)
+        raw_u150 = message_manager.get_ui_message("U150")
+        if "|||" in raw_u150 and "\n" in raw_u150:
+            line1, line2 = raw_u150.split("\n", 1)
+            left, right = line1.split("|||", 1)
+            raw_u150 = f"{left.strip()}    {right.strip()}\n{line2}"
+        self._pdf_shortcut_guide_label.configure(
+            text=raw_u150,
+            bg=overlay_bg,
+            fg=guide_fg,
+            pady=2,
+        )
+        self._reposition_pdf_canvas_footer_guide()
+        try:
+            self._pdf_shortcut_guide_frame.lift()
+        except Exception:
+            pass
+
+    def _show_pdf_rotation_guide_dialog(self) -> None:
+        """Show the custom rotation guide (same copy as the Main tab)."""
+        messagebox.showinfo(
+            title=message_manager.get_ui_message("U151"),
+            message=message_manager.get_ui_message("U152"),
+            parent=self.winfo_toplevel(),
+        )
+
+    def _on_pdf_reference_grid_toggle(self) -> None:
+        """Persist reference-grid visibility and refresh the PDF canvas."""
+        try:
+            UserSettingManager().update_setting(
+                "show_reference_grid",
+                bool(self._show_pdf_reference_grid_var.get()),
+            )
+        except Exception:
+            pass
+        if getattr(self, "page_count", 0) > 0:
+            self._display_page(self.current_page_index)
+
+    def _get_pdf_canvas_reference_grid_color(self) -> str:
+        """Return the dot-grid color aligned with the main preview tab.
+
+        Returns:
+            str: Hex color for reference dots.
+        """
+        current_theme = ColorThemeManager.get_instance().get_current_theme()
+        canvas_theme = dict(current_theme.get("canvas", {}))
+        frame_theme = dict(current_theme.get("Frame", {}))
+        return str(
+            canvas_theme.get("reference_grid", frame_theme.get("disabledforeground", "#bfc3cf"))
+        )
+
+    def _draw_pdf_canvas_reference_grid(self) -> None:
+        """Draw a full-canvas intersection-dot grid like the Main tab preview."""
+        if not hasattr(self, "canvas"):
+            return
+        self.canvas.delete("pdf_reference_grid")
+        try:
+            if not bool(self._show_pdf_reference_grid_var.get()):
+                return
+        except Exception:
+            pass
+        try:
+            cw = max(int(self.canvas.winfo_width()), 1)
+            ch = max(int(self.canvas.winfo_height()), 1)
+        except Exception:
+            return
+        spacing = 24
+        if cw < spacing or ch < spacing:
+            return
+        grid_color = self._get_pdf_canvas_reference_grid_color()
+        x1, y1, x2, y2 = 0, 0, cw, ch
+        start_x = int(math.floor(x1 / spacing) * spacing)
+        start_y = int(math.floor(y1 / spacing) * spacing)
+        for x in range(start_x, x2 + spacing, spacing):
+            for y in range(start_y, y2 + spacing, spacing):
+                self.canvas.create_line(
+                    x,
+                    y,
+                    x + 1,
+                    y,
+                    fill=grid_color,
+                    width=1,
+                    capstyle=tk.ROUND,
+                    tags=("pdf_reference_grid",),
+                )
+        # Stack: pdf_image (back) -> reference grid -> export outline -> window footer (front).
+        try:
+            self.canvas.tag_lower("pdf_image")
+        except Exception:
+            pass
+        if self.canvas.find_withtag("pdf_image"):
+            try:
+                self.canvas.tag_raise("pdf_reference_grid", "pdf_image")
+            except Exception:
+                pass
+        if self.canvas.find_withtag("export_outline"):
+            try:
+                self.canvas.tag_raise("export_outline", "pdf_reference_grid")
+            except Exception:
+                pass
+
+    @staticmethod
+    def _merge_canvas_bboxes(
+        first_bbox: Optional[tuple[int, int, int, int]],
+        second_bbox: Optional[tuple[int, int, int, int]],
+    ) -> Optional[tuple[int, int, int, int]]:
+        """Merge two canvas bounding boxes into one rectangle.
+
+        Args:
+            first_bbox: First bounding box in canvas coordinates.
+            second_bbox: Second bounding box in canvas coordinates.
+
+        Returns:
+            Optional[tuple[int, int, int, int]]: Bounding box covering both inputs.
+        """
+        if first_bbox is None:
+            return second_bbox
+        if second_bbox is None:
+            return first_bbox
+        return (
+            min(int(first_bbox[0]), int(second_bbox[0])),
+            min(int(first_bbox[1]), int(second_bbox[1])),
+            max(int(first_bbox[2]), int(second_bbox[2])),
+            max(int(first_bbox[3]), int(second_bbox[3])),
+        )
+
+    def _format_export_bounds_label_text(self) -> str:
+        """Build the saved-size line shown beside the footer (same data as former canvas label).
+
+        Returns:
+            Localized text, or empty string when no page dimensions are available.
+        """
+        width = int(getattr(self, "_original_page_width", 0) or 0)
+        height = int(getattr(self, "_original_page_height", 0) or 0)
+        if width <= 1 or height <= 1:
+            return ""
+        dpi_value = int(getattr(self, "_conversion_dpi", 0) or 0)
+        paper_name = (
+            self._estimate_paper_size(width, height, dpi_value)
+            if dpi_value > 0
+            else ""
+        )
+        label_text = f"{message_manager.get_ui_message('U172')}: {width} x {height} px"
+        if dpi_value > 0:
+            label_text += f" / {dpi_value} dpi"
+        if paper_name:
+            label_text += f" / {paper_name}"
+        return label_text
+
+    def _draw_export_outline(self) -> None:
+        """Draw a dashed page outline that matches the saved PDF bounds."""
+        self.canvas.delete("export_outline")
+        width = int(getattr(self, "_original_page_width", 0) or 0)
+        height = int(getattr(self, "_original_page_height", 0) or 0)
+        if width <= 1 or height <= 1:
+            return
+
+        current_theme = ColorThemeManager.get_instance().get_current_theme()
+        canvas_theme = dict(current_theme.get("canvas", {}))
+        frame_theme = dict(current_theme.get("Frame", {}))
+        outline_color = str(
+            canvas_theme.get(
+                "highlightbackground",
+                frame_theme.get("disabledforeground", "#9ca4bc"),
+            )
+        )
+        self.canvas.create_rectangle(
+            0,
+            0,
+            width,
+            height,
+            outline=outline_color,
+            width=1,
+            dash=(6, 4),
+            tags=("export_outline",),
+        )
+        try:
+            self.canvas.tag_raise("export_outline")
+        except Exception:
+            pass
+
+    def _update_canvas_scrollregion(self) -> None:
+        """Update the scroll region to include both the page image and save outline."""
+        combined_bbox = self._merge_canvas_bboxes(
+            cast(Optional[tuple[int, int, int, int]], self.canvas.bbox("pdf_image")),
+            cast(Optional[tuple[int, int, int, int]], self.canvas.bbox("export_outline")),
+        )
+        if combined_bbox is not None:
+            x0, y0, x1, y1 = (
+                int(combined_bbox[0]),
+                int(combined_bbox[1]),
+                int(combined_bbox[2]),
+                int(combined_bbox[3]),
+            )
+            cw = max(int(self.canvas.winfo_width()), 1)
+            ch = max(int(self.canvas.winfo_height()), 1)
+            self.canvas.config(
+                scrollregion=(
+                    min(0, x0),
+                    min(0, y0),
+                    max(x1, cw),
+                    max(y1, ch),
+                )
+            )
+            return
+        try:
+            self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        except Exception:
+            self.canvas.config(
+                scrollregion=(0, 0, self.canvas.winfo_width(), self.canvas.winfo_height())
+            )
 
     @staticmethod
     def _estimate_paper_size(width_px: int, height_px: int, dpi: int) -> str:
@@ -912,6 +1448,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Check if we can go to a previous page
         if self.current_page_index > 0:
+            self._commit_preview_keyboard_rotation()
             self.current_page_index -= 1
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
@@ -973,6 +1510,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Check if we can go to a next page
         if self.current_page_index < page_count - 1:
+            self._commit_preview_keyboard_rotation()
             self.current_page_index += 1
             self._display_page(self.current_page_index)
             if hasattr(self, 'page_control_frame') and self.page_control_frame:
@@ -1008,6 +1546,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 return
                 
             # Update current page index and display
+            self._commit_preview_keyboard_rotation()
             self.current_page_index = page_index
             self._display_page(self.current_page_index)
             
@@ -1055,6 +1594,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             visible_layers=visible_layers,
             on_transform_update=self._on_transform_update,
             operations_enabled=self._visual_adjustments_enabled,
+            commit_keyboard_preview_rotation=self._commit_preview_keyboard_rotation,
+            clear_keyboard_preview_rotation=self._clear_preview_keyboard_rotation_only,
+            on_transform_commit_no_propagate=self._on_transform_update_skip_batch_propagate,
         )
         
         # Attach mouse handler to canvas
@@ -1073,10 +1615,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         logger.info(message_manager.get_log_message("L301", page_count))
         
         # Explicitly bind mouse events to ensure they work
-        self.canvas.bind(
-            "<Button-1>",
-            lambda e: (self.canvas.focus_set() or (self.mouse_handler.on_mouse_down(e) if self.mouse_handler else None)),
-        )
+        def _pdf_canvas_button1(event: tk.Event) -> None:
+            self._commit_preview_keyboard_rotation()
+            self.canvas.focus_set()
+            if self.mouse_handler is not None:
+                self.mouse_handler.on_mouse_down(event)
+
+        self.canvas.bind("<Button-1>", _pdf_canvas_button1)
         self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
         self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
         self.canvas.bind("<Button-3>", lambda e: self.mouse_handler.on_right_click(e) if self.mouse_handler and hasattr(self.mouse_handler, 'on_right_click') else None)
@@ -1086,40 +1631,41 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)  # Linux scroll up
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)  # Linux scroll down
 
-        self._bind_global_shortcuts()
+        self.canvas.bind("<Escape>", self._on_pdf_canvas_escape_preview)
+
+        # Canvas rebuild drops bind_all state; clear flag so reactivation can re-register.
+        self._pdf_global_shortcuts_active = False
+        self._unbind_pdf_global_shortcuts()
+        self._reactivate_pdf_shortcuts_if_tab_selected()
         
         # Log event binding
         logger.info(message_manager.get_log_message("L302"))
 
-    def _bind_global_shortcuts(self) -> None:
-        """Bind global keyboard shortcuts for transform operations."""
-        # Main processing: clear existing bindings to avoid duplicates on reload.
-        for seq in [
-            "<Control-r>", "<Control-R>",
-            "<Control-l>", "<Control-L>",
-            "<Control-v>", "<Control-V>",
-            "<Control-h>", "<Control-H>",
-            "<Control-b>", "<Control-B>",
-            "<Control-question>",
-            "<Control-slash>",
-            "<Control-Shift-slash>",
-            "<Control-Shift-h>",
-            "<Control-Shift-H>",
-            "<KeyRelease-Control_L>",
-            "<KeyRelease-Control_R>",
-            "<Control-plus>",
-            "<Control-minus>",
-        ]:
+    def _unbind_pdf_global_shortcuts(self) -> None:
+        """Remove PDF-tab bind_all handlers (safe when tab is hidden or before rebinding)."""
+        for seq in self._GLOBAL_SHORTCUT_SEQUENCES:
             try:
                 self.unbind_all(seq)
             except Exception:
                 pass
 
+    def _bind_pdf_global_shortcuts(self) -> None:
+        """Register bind_all handlers for PDF Operation tab (call only when this tab is selected)."""
+        self._unbind_pdf_global_shortcuts()
+
         # Main processing: rotation / flip / reset shortcuts are handled by MouseEventHandler.
         self.bind_all("<Control-r>", self._on_shortcut_rotate_right)
         self.bind_all("<Control-R>", self._on_shortcut_rotate_right)
+        self.bind_all("<Control-Shift-r>", self._on_shortcut_rotate_fast_right)
+        self.bind_all("<Control-Shift-R>", self._on_shortcut_rotate_fast_right)
         self.bind_all("<Control-l>", self._on_shortcut_rotate_left)
         self.bind_all("<Control-L>", self._on_shortcut_rotate_left)
+        self.bind_all("<Control-Shift-l>", self._on_shortcut_rotate_fast_left)
+        self.bind_all("<Control-Shift-L>", self._on_shortcut_rotate_fast_left)
+        self.bind_all("<Control-Alt-r>", self._on_shortcut_rotate_sheet_right)
+        self.bind_all("<Control-Alt-R>", self._on_shortcut_rotate_sheet_right)
+        self.bind_all("<Control-Alt-l>", self._on_shortcut_rotate_sheet_left)
+        self.bind_all("<Control-Alt-L>", self._on_shortcut_rotate_sheet_left)
         self.bind_all("<Control-v>", self._on_shortcut_flip_vertical)
         self.bind_all("<Control-V>", self._on_shortcut_flip_vertical)
         self.bind_all("<Control-h>", self._on_shortcut_flip_horizontal)
@@ -1142,6 +1688,48 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.bind_all("<Control-plus>", self._on_shortcut_zoom_in)
         self.bind_all("<Control-minus>", self._on_shortcut_zoom_out)
 
+    def _activate_pdf_global_shortcuts(self) -> None:
+        """Bind PDF global shortcuts (idempotent)."""
+        if self._pdf_global_shortcuts_active:
+            return
+        self._bind_pdf_global_shortcuts()
+        self._pdf_global_shortcuts_active = True
+
+    def _deactivate_pdf_global_shortcuts(self) -> None:
+        """Unbind PDF global shortcuts and hide the canvas shortcut overlay."""
+        if not self._pdf_global_shortcuts_active:
+            return
+        self._unbind_pdf_global_shortcuts()
+        self._pdf_global_shortcuts_active = False
+        mh = getattr(self, "mouse_handler", None)
+        if mh is not None and hasattr(mh, "set_shortcut_help_visibility"):
+            try:
+                mh.set_shortcut_help_visibility(False)
+            except Exception:
+                pass
+
+    def set_pdf_tab_shortcuts_active(self, active: bool) -> None:
+        """Enable or disable PDF Operation global shortcuts from the notebook.
+
+        Args:
+            active: True when this tab is the selected notebook page.
+        """
+        if active:
+            self._activate_pdf_global_shortcuts()
+        else:
+            self._deactivate_pdf_global_shortcuts()
+
+    def _reactivate_pdf_shortcuts_if_tab_selected(self) -> None:
+        """After canvas rebuild, re-bind globals only if the PDF tab is currently visible."""
+        try:
+            nb = self.master.master
+            cur = nb.index("current")
+            mine = nb.index(self.master)
+            if cur == mine:
+                self._activate_pdf_global_shortcuts()
+        except Exception:
+            pass
+
     def _on_shortcut_rotate_right(self, event: tk.Event) -> str:
         """Handle Ctrl+R shortcut."""
         if self.mouse_handler is None:
@@ -1153,6 +1741,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         if self.mouse_handler is None:
             return "break"
         return cast(str, self.mouse_handler._on_rotate_left(event) or "break")
+
+    def _on_shortcut_rotate_fast_right(self, event: tk.Event) -> str:
+        """Handle Ctrl+Shift+R shortcut (preview rotation; see _on_pdf_preview_keyboard_rotate_right)."""
+        return self._on_pdf_preview_keyboard_rotate_right(event)
+
+    def _on_shortcut_rotate_fast_left(self, event: tk.Event) -> str:
+        """Handle Ctrl+Shift+L shortcut (preview rotation; see _on_pdf_preview_keyboard_rotate_left)."""
+        return self._on_pdf_preview_keyboard_rotate_left(event)
+
+    def _on_shortcut_rotate_sheet_right(self, event: tk.Event) -> str:
+        """Handle Ctrl+Alt+R shortcut (rotate every page sheet)."""
+        if self.mouse_handler is None:
+            return "break"
+        return cast(str, self.mouse_handler._on_rotate_sheet_right(event) or "break")
+
+    def _on_shortcut_rotate_sheet_left(self, event: tk.Event) -> str:
+        """Handle Ctrl+Alt+L shortcut (rotate every page sheet)."""
+        if self.mouse_handler is None:
+            return "break"
+        return cast(str, self.mouse_handler._on_rotate_sheet_left(event) or "break")
 
     def _on_shortcut_flip_vertical(self, event: tk.Event) -> str:
         """Handle Ctrl+V shortcut."""
@@ -1194,6 +1802,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._zoom_out()
         return "break"
 
+    def _on_transform_update_skip_batch_propagate(self) -> None:
+        """Redraw after Ctrl+Alt sheet rotation without copying the current page to all."""
+        if not hasattr(self, "page_count") or self.page_count <= 0:
+            return
+        self._update_preferred_preview_scale_from_current_page()
+        self._display_page(self.current_page_index)
+
     def _on_transform_update(self) -> None:
         """Callback when transform data is updated.
 
@@ -1206,15 +1821,18 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             return
 
         # Main processing: propagate transform to all pages when batch edit is ON (M1-010).
-        if (self.page_control_frame
-                and hasattr(self.page_control_frame, 'batch_edit_var')
-                and self.page_control_frame.batch_edit_var.get()
-                and hasattr(self, 'base_transform_data')):
+        if (
+            self.page_control_frame
+            and hasattr(self.page_control_frame, "batch_edit_var")
+            and self.page_control_frame.batch_edit_var.get()
+            and hasattr(self, "base_transform_data")
+        ):
             current_transform = self.base_transform_data[self.current_page_index]
             for i in range(len(self.base_transform_data)):
                 if i != self.current_page_index:
                     self.base_transform_data[i] = current_transform
 
+        self._update_preferred_preview_scale_from_current_page()
         self._display_page(self.current_page_index)
     
     def _on_transform_value_input(self, rotation: float, tx: float,
@@ -1333,8 +1951,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 on_export=self._on_complete_edit,
                 on_page_entry=self._on_page_entry,
                 on_transform_value_change=self._on_transform_value_input,
+                on_rotation_guide=self._show_pdf_rotation_guide_dialog,
+                reference_grid_var=self._show_pdf_reference_grid_var,
+                on_reference_grid_toggle=self._on_pdf_reference_grid_toggle,
             )
-            self.page_control_frame.grid(row=0, column=1, sticky="ns", padx=(0, 5), pady=5)
+            self.page_control_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 4), pady=0)
 
             self.page_control_frame.update_page_label(self.current_page_index, page_count)
             self.page_control_frame.set_edit_buttons_enabled(not self._copy_protected)
@@ -1429,7 +2050,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Update page count and transform data
         self.page_count += 1
-        self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
+        self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, self._preferred_preview_scale))
 
         # Main processing: insert new path into base_page_paths at the correct position.
         if hasattr(self, 'base_page_paths'):
@@ -1500,6 +2121,28 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
         logger.info(message_manager.get_log_message("L304", delete_index + 1))
 
+    def _commit_pending_transform_entries(self) -> None:
+        """Apply any pending transform-entry text before exporting."""
+        if self.page_control_frame is None:
+            return
+        commit_method = getattr(self.page_control_frame, "commit_transform_entries", None)
+        if callable(commit_method):
+            commit_method()
+
+    def _build_export_transform_data(self) -> list[Tuple[float, float, float, float]]:
+        """Build export transforms for PDF-operation saving.
+
+        Returns:
+            list[Tuple[float, float, float, float]]: Export transforms with preview
+            zoom removed so saved pages always use ``1.0`` scale.
+        """
+        export_transforms: list[Tuple[float, float, float, float]] = []
+        for rotation, translate_x, translate_y, _scale in self.base_transform_data:
+            export_transforms.append(
+                (float(rotation), float(translate_x), float(translate_y), 1.0)
+            )
+        return export_transforms
+
     def _on_complete_edit(self) -> None:
         """Complete the editing process and export the PDF."""
         if self._copy_protected:
@@ -1508,9 +2151,13 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         if not hasattr(self, 'page_count') or self.page_count == 0:
             messagebox.showinfo(message_manager.get_ui_message("U056"), message_manager.get_ui_message("U057"))
             return
-            
+
+        # Main processing: make sure unsaved text in the transform fields is reflected in the export.
+        self._commit_pending_transform_entries()
+        self._commit_preview_keyboard_rotation()
+
         # Get output folder path
-        output_folder = self._output_folder_path_entry.path_var.get()
+        output_folder = self._output_folder_path_entry.path_var.get().strip()
         if not output_folder or not os.path.isdir(output_folder):
             # Ask user to select an output folder
             current_dir = os.getcwd()  # Use current working directory as initial directory
@@ -1521,24 +2168,49 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Update the output folder path entry with selected path
             output_folder = str(output_folder_path)  # Convert None or str to str
             self._output_folder_path_entry.path_var.set(output_folder)
+            self.output_path.set(output_folder)
+        else:
+            self.output_path.set(output_folder)
+
+        UserSettingManager().update_setting("output_folder_path", output_folder)
             
         # Get the base file name for the new PDF
-        base_file_name = os.path.basename(self.base_path.get())
-        output_file = os.path.join(output_folder, f"edited_{base_file_name}")
-        
+        source_pdf_path = str(self._loaded_pdf_source_path or self.base_path.get()).strip()
+        source_pdf_name = Path(source_pdf_path).name if source_pdf_path else "edited_output.pdf"
+        if not source_pdf_name.lower().endswith(".pdf"):
+            source_pdf_name = f"{Path(source_pdf_name).stem}.pdf"
+
+        source_stem = Path(source_pdf_name).stem
+        output_path = create_unique_file_path(
+            Path(output_folder), f"edited_{source_stem}", ".pdf"
+        )
+        output_filename = output_path.name
+        output_file = str(output_path)
+
         try:
-            # This would normally call a PDF creation function
-            # For now, just show a message that it would create a PDF
+            # Main processing: export the current transformed PDF pages into a new PDF file.
+            export_handler = PDFExportHandler(
+                base_pages=[str(path) for path in self.base_page_paths],
+                comp_pages=[],
+                base_transform_data=self._build_export_transform_data(),
+                comp_transform_data=[],
+                output_folder=output_folder,
+                pdf_metadata=self._build_export_metadata(),
+                color_processing_mode="original",
+                show_base_layer=True,
+                show_comp_layer=False,
+            )
+            export_handler.export_to_pdf(output_filename, self)
             messagebox.showinfo(
                 message_manager.get_ui_message("U056"),
-                message_manager.get_ui_message("U061").format(output_file)
+                message_manager.get_ui_message("U167").format(output_file)
             )
             logger.info(message_manager.get_log_message("L305", output_file))
         except Exception as e:
-            logger.error(message_manager.get_log_message("L306", str(e)))
+            logger.error(message_manager.get_log_message("L124", str(e)))
             messagebox.showerror(
                 message_manager.get_ui_message("U056"),
-                message_manager.get_ui_message("U062").format(str(e))
+                message_manager.get_ui_message("U047").format(str(e))
             )
             
     def apply_theme_color(self, theme_data: Dict[str, Any]) -> None:
@@ -1564,11 +2236,27 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 label_fg = frame_settings.get("fg", "#000000")
                 self._footer_meta_label.configure(bg=frame_bg, fg=label_fg)
 
-            # Apply theme to canvas
-            canvas_settings = theme_data.get("canvas", {})
-            if canvas_settings and hasattr(self, "canvas"):
-                self._config_widget(canvas_settings)
-                
+            # Apply theme to canvas (match Main tab: Notebook tab_bg fallback + canvas overrides)
+            if hasattr(self, "canvas"):
+                notebook_settings = theme_data.get("Notebook", {})
+                canvas_theme = dict(theme_data.get("canvas", {}))
+                canvas_background = notebook_settings.get(
+                    "tab_bg", notebook_settings.get("bg", frame_bg)
+                )
+                self._config_widget(
+                    {
+                        "background": canvas_theme.get("background", canvas_background),
+                        "highlightbackground": canvas_theme.get(
+                            "highlightbackground", frame_bg
+                        ),
+                        "highlightcolor": canvas_theme.get(
+                            "highlightcolor", frame_settings.get("fg", "#000000")
+                        ),
+                    }
+                )
+            self._draw_pdf_canvas_reference_grid()
+            self._draw_pdf_canvas_footer_guide()
+
             logger.debug(message_manager.get_log_message("L211", "PDF operation tab"))
         except Exception as e:
             logger.error(message_manager.get_log_message("L199", str(e)))
