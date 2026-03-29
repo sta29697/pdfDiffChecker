@@ -56,6 +56,7 @@ class DisplaySettings(TypedDict, total=False):
     setted_dpi: int
     setted_dpi_mode: Literal["manual", "detected"]
     preview_scale: float
+    pdf_operation_preview_scale: float
     setted_alpha: int
     separat_color_threshold: int
     base_separat_color_threshold: int
@@ -105,6 +106,7 @@ class UserSettingsData(TypedDict, total=False):
     setted_dpi: int
     setted_dpi_mode: Literal["manual", "detected"]
     preview_scale: float
+    pdf_operation_preview_scale: float
     setted_alpha: int
     separat_color_threshold: int
     base_separat_color_threshold: int

@@ -1,5 +1,24 @@
 Generated: 2026-01-21T16:49:54
 
+[Latest audit summary]
+- Source of truth: `pyproject.toml` runtime dependencies and `uv tree --no-dev`
+- Development-only dependencies such as `pytest` and `pytest-cov` are excluded from this document because they are not part of the runtime dependency set.
+- Runtime top-level dependencies confirmed in the current environment:
+  - matplotlib==3.10.7
+  - numpy==2.3.4
+  - pdf2image==1.17.0
+  - pillow==12.0.0
+  - pypdf==6.1.3
+  - pypdfium2==5.0.0
+  - reportlab==4.4.10
+  - svglib==1.6.0
+  - tkinterdnd2==0.4.3
+  - typing-extensions==4.15.0
+- Distribution review required before release:
+  - reportlab and charset-normalizer in the SVG/PDF export path
+  - svglib and downstream packages (`cssselect2`, `tinycss2`, `webencodings`, `lxml`, `rlpycairo`, `freetype-py`, `pycairo`)
+- This summary is a technical audit memo and does not replace the final legal or product distribution decision.
+
 [Top-level dependencies]
 matplotlib==3.10.7
 License: License agreement for matplotlib versions 1.3.0 and later

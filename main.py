@@ -95,7 +95,10 @@ def _restore_main_window_geometry(root: tk.Tk) -> None:
         saved_display_height = int(settings.get_setting("window_display_height", 0) or 0)
         current_display_width = int(root.winfo_screenwidth())
         current_display_height = int(root.winfo_screenheight())
-        saved_geometry = str(settings.get_setting("window_geometry", "800x600+500+10") or "800x600+500+10")
+        default_w = int(settings.get_setting("window_width", 884) or 884)
+        default_h = int(settings.get_setting("window_height", 859) or 859)
+        default_geometry = f"{default_w}x{default_h}+500+10"
+        saved_geometry = str(settings.get_setting("window_geometry", default_geometry) or default_geometry)
         saved_state = str(settings.get_setting("window_state", "normal") or "normal")
 
         same_display = (
@@ -105,7 +108,7 @@ def _restore_main_window_geometry(root: tk.Tk) -> None:
             and saved_display_height > 0
         )
 
-        geometry_to_apply = saved_geometry if same_display else "800x600"
+        geometry_to_apply = saved_geometry if same_display else default_geometry
         root.geometry(geometry_to_apply)
         root.update_idletasks()
         if same_display and saved_state == "zoomed":
@@ -118,17 +121,42 @@ def _restore_main_window_geometry(root: tk.Tk) -> None:
         )
 
 
+# Fallback when user settings do not yet contain window dimensions.
+MAIN_WINDOW_MIN_WIDTH = 400
+MAIN_WINDOW_MIN_HEIGHT = 280
+
+
+def _get_persisted_main_window_minimum_size() -> tuple[int, int]:
+    """Return minimum main-window size from persisted ``window_width`` / ``window_height``.
+
+    Uses the last saved normal window size so the user cannot shrink below their
+    chosen layout. Invalid values fall back to ``MAIN_WINDOW_MIN_*``.
+
+    Returns:
+        tuple[int, int]: Minimum window width and height.
+    """
+    settings = usm()
+    try:
+        w = int(settings.get_setting("window_width", MAIN_WINDOW_MIN_WIDTH) or MAIN_WINDOW_MIN_WIDTH)
+        h = int(settings.get_setting("window_height", MAIN_WINDOW_MIN_HEIGHT) or MAIN_WINDOW_MIN_HEIGHT)
+        if w < 1:
+            w = MAIN_WINDOW_MIN_WIDTH
+        if h < 1:
+            h = MAIN_WINDOW_MIN_HEIGHT
+        return (max(MAIN_WINDOW_MIN_WIDTH, w), max(MAIN_WINDOW_MIN_HEIGHT, h))
+    except Exception:
+        return (MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
+
+
 def _apply_main_window_minimum_size(root: tk.Tk) -> None:
-    """Apply the persisted user window size as the main-window minimum size.
+    """Apply ``root.minsize`` from persisted window dimensions (with absolute floors).
 
     Args:
         root: Main Tk window.
     """
-    settings = usm()
     try:
-        min_width = int(settings.get_setting("window_width", 800) or 800)
-        min_height = int(settings.get_setting("window_height", 600) or 600)
-        root.minsize(max(1, min_width), max(1, min_height))
+        min_width, min_height = _get_persisted_main_window_minimum_size()
+        root.minsize(min_width, min_height)
     except Exception as exc:
         logger.warning(
             message_manager.get_log_message(
@@ -780,9 +808,10 @@ def main() -> None:
                 )
             )
         
-        # Set window geometry
+        # Set window geometry: min size from saved window_width/height, then restore position/size.
         _apply_main_window_minimum_size(main_window)
         _restore_main_window_geometry(main_window)
+        _apply_main_window_minimum_size(main_window)
         try:
             main_window.update_idletasks()
             main_window.deiconify()
@@ -1101,10 +1130,10 @@ def main() -> None:
         
         # Create frames for each tab
         main_tab = tk.Frame(notebook)
-        # pdf_ope_tab = tk.Frame(notebook)  # PDF Operation tab
+        pdf_ope_tab = tk.Frame(notebook)  # PDF Operation tab
         image_ope_tab = tk.Frame(notebook)  # Image Operation tab (U006)
         description_tab = tk.Frame(notebook)  # Description tab
-        # licenses_tab = tk.Frame(notebook)  # Licenses tab
+        licenses_tab = tk.Frame(notebook)  # Licenses tab
 
         class TabContainerBgUpdater:
             """Update tab container backgrounds when the theme changes.
@@ -1140,7 +1169,7 @@ def main() -> None:
                         continue
 
         tab_container_bg_updater = TabContainerBgUpdater(
-            containers=[main_tab, image_ope_tab, description_tab]
+            containers=[main_tab, pdf_ope_tab, image_ope_tab, description_tab, licenses_tab]
         )
         EventBus().subscribe(EventNames.THEME_CHANGED, tab_container_bg_updater.handle_theme_changed)
         tab_container_bg_updater.handle_theme_changed(
@@ -1150,10 +1179,10 @@ def main() -> None:
         
         # Add tabs to notebook (text only, no icons)
         notebook.add(main_tab, text=message_manager.get_ui_message("U004"))  # Main tab
-        # notebook.add(pdf_ope_tab, text=message_manager.get_ui_message("U005"))  # PDF Operation tab
+        notebook.add(pdf_ope_tab, text=message_manager.get_ui_message("U005"))  # PDF Operation tab
         notebook.add(image_ope_tab, text=message_manager.get_ui_message("U006"))  # Image Operation tab (File Extension and Size)
         notebook.add(description_tab, text=message_manager.get_ui_message("U007"))  # Description tab
-        # notebook.add(licenses_tab, text=message_manager.get_ui_message("U008"))  # Licenses tab
+        notebook.add(licenses_tab, text=message_manager.get_ui_message("U008"))  # Licenses tab
         
         # Configure notebook to expand properly
         notebook.pack(fill="both", expand=True, padx=5, pady=5)
@@ -1167,9 +1196,9 @@ def main() -> None:
         main_app.pack(expand=True, fill="both")
 
         # Initialize PDF Operation tab
-        # from views.pdf_ope_tab import PDFOperationApp
-        # pdf_app = PDFOperationApp(pdf_ope_tab)
-        # pdf_app.pack(expand=True, fill="both")
+        from views.pdf_ope_tab import PDFOperationApp
+        pdf_app = PDFOperationApp(pdf_ope_tab)
+        pdf_app.pack(expand=True, fill="both")
         
         # Initialize Image Operation tab (U006)
         from views.image_ope_tab import ImageOperationApp
@@ -1181,13 +1210,62 @@ def main() -> None:
         desc_app.pack(expand=True, fill="both")
         
         # Initialize Licenses tab
-        # license_app = LicensesApp(licenses_tab)
-        # license_app.pack(expand=True, fill="both")
+        license_app = LicensesApp(licenses_tab)
+        license_app.pack(expand=True, fill="both")
 
         # Main processing: re-apply theme after tab contents are created.
         theme_manager.apply_color_theme_all_widgets()
         # Main processing: run one more pass after idle so launch-time colors settle.
         main_window.after_idle(theme_manager.apply_color_theme_all_widgets)
+
+        def _sync_shared_paths_on_tab_change(event: tk.Event) -> None:
+            """Refresh shared path fields whenever the active tab changes.
+
+            Args:
+                event: Notebook tab-change event.
+            """
+            for tab_app in (main_app, pdf_app, image_app):
+                sync_method = getattr(tab_app, "_sync_shared_paths_from_settings", None)
+                if callable(sync_method):
+                    try:
+                        sync_method(event)
+                    except Exception as exc:
+                        logger.warning(
+                            message_manager.get_log_message(
+                                "L227",
+                                f"Failed to sync shared paths on tab change: {str(exc)}",
+                            )
+                        )
+            try:
+                schedule_main = getattr(main_app, "schedule_canvas_footer_reposition", None)
+                if callable(schedule_main):
+                    schedule_main()
+            except Exception:
+                pass
+            try:
+                schedule_pdf = getattr(pdf_app, "schedule_pdf_canvas_footer_reposition", None)
+                if callable(schedule_pdf):
+                    schedule_pdf()
+            except Exception:
+                pass
+            try:
+                pdf_short = getattr(pdf_app, "set_pdf_tab_shortcuts_active", None)
+                if callable(pdf_short):
+                    pdf_short(
+                        notebook.index(notebook.select()) == notebook.index(pdf_ope_tab)
+                    )
+            except tk.TclError:
+                pass
+
+        notebook.bind("<<NotebookTabChanged>>", _sync_shared_paths_on_tab_change)
+        try:
+            pdf_short0 = getattr(pdf_app, "set_pdf_tab_shortcuts_active", None)
+            if callable(pdf_short0):
+                pdf_short0(
+                    notebook.index(notebook.select()) == notebook.index(pdf_ope_tab)
+                )
+        except tk.TclError:
+            pass
 
         # Pack notebook to fill the window
         notebook.pack(expand=True, fill=tk.BOTH)

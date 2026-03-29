@@ -1,17 +1,25 @@
 from __future__ import annotations
 from io import BytesIO
 from logging import getLogger
+import math
 import shutil
 import threading
 import time
 from pathlib import Path
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox
 from typing import Optional, Any, List, Dict, Literal
 from PIL import Image, ImageTk, ImageFile
 from PIL.Image import Resampling
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
-from utils.utils import get_resource_path, resolve_initial_dir, get_temp_dir, show_balloon_message
+from utils.utils import (
+    create_unique_file_path,
+    get_resource_path,
+    resolve_initial_dir,
+    get_temp_dir,
+    show_balloon_message,
+)
 
 from configurations.message_manager import get_message_manager
 from configurations import tool_settings
@@ -77,6 +85,22 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         selected_dpi_value (int): Selected DPI value for rendering
     """
 
+    # frame_main2: four fixed-width hosts; gutters are columns 1,3,5 (uniform + weight 1).
+    # Sum (h0+h2+h4+h6) is fixed (836). Host content uses _MAIN2_HOST_INNER_PAD_X_PX.
+    # Host2 spans full width so U146 tint matches the archer column; slightly narrower host4/host6 tighten
+    # the DPI→transform segment so the three visual gaps (col0→tint, tint→DPI, DPI→button) read ~1:1:1.
+    _MAIN2_HOST0_WIDTH_PX: int = 257
+    _MAIN2_HOST2_WIDTH_PX: int = 195
+    _MAIN2_HOST4_WIDTH_PX: int = 206
+    _MAIN2_HOST6_WIDTH_PX: int = 178
+    # Symmetric horizontal inset inside each fixed-width host so inter-column gaps look even.
+    _MAIN2_HOST_INNER_PAD_X_PX: int = 6
+    # Host6 only: smaller left / matching-sum right grid pad shifts the custom column parcel left so the
+    # transform button's side margins match the archer column (uniform gutters + host4 width read as extra left space).
+    _MAIN2_HOST6_CUSTOM_COLUMN_PADX_PX: tuple[int, int] = (0, 12)
+    # Fixed preview surface so thin vector strokes stay readable in every app theme.
+    _PREVIEW_CANVAS_BACKGROUND: str = "#ffffff"
+
     def __init__(
         self, master: tk.Misc, settings: UserSettingManager
     ) -> None:
@@ -109,9 +133,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self.visualized_image = tk.StringVar(value="base")
         self.current_page_index = 0
         self._preferred_preview_scale = self._get_saved_preview_scale()
-        self._show_base_layer_var = tk.BooleanVar(value=True)
-        self._show_comp_layer_var = tk.BooleanVar(value=True)
-        self._show_reference_grid_var = tk.BooleanVar(value=False)
+        self._show_base_layer_var = tk.BooleanVar(
+            value=self._get_saved_boolean_setting("show_base_layer", True)
+        )
+        self._show_comp_layer_var = tk.BooleanVar(
+            value=self._get_saved_boolean_setting("show_comp_layer", True)
+        )
+        self._show_reference_grid_var = tk.BooleanVar(
+            value=self._get_saved_boolean_setting("show_reference_grid", False)
+        )
         self.page_count = 0
         self.base_pages: List[str] = []
         self.comp_pages: List[str] = []
@@ -167,6 +197,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._comp_preview_render_lock = threading.Lock()
         self._last_translation_aux_update_time = 0.0
         self._translation_aux_update_interval_seconds = 1.0 / 30.0
+        self._preview_keyboard_rotation_delta: float = 0.0
 
         # Button images
         self.auto_conv_btn_img: Optional[ImageSwPaths] = None
@@ -178,11 +209,21 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._current_custom_button_state = "off"
         self._action_button_square_size = 120
         self._action_button_active_delay_ms = 420
+        # After the user selects a PDF (dialog, drop, or Enter), load that side from settings on sync.
+        # Until then, a stored PDF path only shows its parent folder and does not drive the preview.
+        self._base_pdf_session_committed: bool = False
+        self._comparison_pdf_session_committed: bool = False
+        self._shortcut_guide_en_row1: Optional[tk.Frame] = None
+        self._shortcut_guide_en_l1_left: Optional[tk.Label] = None
+        self._shortcut_guide_en_spacer: Optional[tk.Frame] = None
+        self._shortcut_guide_en_l1_right: Optional[tk.Label] = None
+        self._shortcut_guide_en_line2: Optional[tk.Label] = None
 
         # Setup UI components
         self._setup_frames()
         self._setup_widgets()
         self._setup_drag_and_drop()
+        self.bind("<Visibility>", self._sync_shared_paths_from_settings)
         self.after_idle(self._sync_shared_paths_from_settings)
         self.after_idle(self._apply_current_theme_after_build)
         # Completed main tab init
@@ -196,7 +237,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """
         if hasattr(self, "canvas"):
             self.canvas.configure(
-                background=theme_settings.get("background", theme_settings.get("bg", "#ffffff")),
+                background=CreateComparisonFileApp._PREVIEW_CANVAS_BACKGROUND,
                 highlightbackground=theme_settings.get("highlightbackground", "#e0e0e0"),
                 highlightcolor=theme_settings.get("highlightcolor", "#e0e0e0"),
             )
@@ -219,6 +260,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             "frame_main1",
             "frame_main2",
             "frame_main3",
+            "_row4_fixed_col0_host",
+            "_row4_fixed_col2_host",
+            "_row4_fixed_col4_host",
+            "_row4_fixed_col6_host",
             "_row4_comment_frame",
             "_row4_auto_column_frame",
             "_row4_arrow_frame",
@@ -227,7 +272,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             "_row4_custom_frame",
             "_dpi_row_frame",
             "_layer_toggle_frame",
-            "_row4_arrow_guidance_frame",
             "_row4_custom_guidance_frame",
             "_shortcut_guide_frame",
         ]:
@@ -289,7 +333,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
         for attr_name in [
             "_row4_arrow_guidance_frame",
-            "_row4_custom_guidance_frame",
         ]:
             guidance_frame = getattr(self, attr_name, None)
             if guidance_frame is not None:
@@ -297,6 +340,14 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                     guidance_frame.configure(bg=comment_panel_bg)
                 except Exception:
                     pass
+
+        # U147: only the tight inner band uses the comment-panel tint; the outer row stays frame_bg.
+        inner_u147 = getattr(self, "_row4_custom_guidance_inner", None)
+        if inner_u147 is not None:
+            try:
+                inner_u147.configure(bg=comment_panel_bg)
+            except Exception:
+                pass
 
         shortcut_guide_label = getattr(self, "_shortcut_guide_label", None)
         if shortcut_guide_label is not None:
@@ -306,7 +357,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 pass
 
         for attr_name in [
-            "_row4_arrow_guidance_label",
             "_row4_custom_guidance_label",
         ]:
             guidance_label = getattr(self, attr_name, None)
@@ -318,8 +368,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
         for attr_name in [
             "_row4_action_frame",
-            "_color_mode_row_frame",
+            "_color_mode_label_row_frame",
+            "_color_combo_only_row_frame",
             "_dpi_row_frame",
+            "_dpi_combo_holder",
         ]:
             frame = getattr(self, attr_name, None)
             if frame is not None:
@@ -340,7 +392,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             "_threshold_summary_label",
             "_base_threshold_inline_label",
             "_comparison_threshold_inline_label",
-            "_threshold_separator_label",
+            "_row4_arrow_guidance_label",
         ]:
             label = getattr(self, attr_name, None)
             if label is not None:
@@ -443,7 +495,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 pass
 
         _configure_entry("_base_file_path_entry", "base_file_path_entry", self._path_points_to_file(self.base_path.get()))
-        _configure_entry("_comparison_file_path_entry", "comparison_file_path_entry", self._path_points_to_file(self.comparison_path.get()))
+        _configure_entry(
+            "_comparison_file_path_entry",
+            "comparison_file_path_entry",
+            self._path_points_to_file(self.comparison_path.get()),
+        )
         _configure_entry("_output_folder_path_entry", "output_folder_path_entry", True)
 
     def _build_elevated_button_style(
@@ -673,6 +729,23 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 if index != self.current_page_index:
                     transform_data[index] = current_transform
 
+    def _can_main_sheet_rotate_dual_display(self) -> bool:
+        """Return True when Ctrl+Alt sheet rotation is allowed on the main tab.
+
+        Sheet rotation is defined for the comparison workspace and requires both
+        PDFs loaded with both layers shown.
+
+        Returns:
+            True if both sides are active; otherwise False.
+        """
+        if not self._has_loaded_workspace_pages():
+            return False
+        if not self.base_page_paths or not self.comp_page_paths:
+            return False
+        if not bool(self._show_base_layer_var.get()) or not bool(self._show_comp_layer_var.get()):
+            return False
+        return True
+
     def _get_visible_layer_state(self) -> dict[int, bool]:
         """Return the currently visible layer state for the workspace.
 
@@ -746,7 +819,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._last_translation_aux_update_time = current_time
 
         try:
-            self.canvas.config(scrollregion=self.canvas.bbox("pdf_image"))
+            self._set_main_canvas_scrollregion_from_pdf_image()
         except Exception:
             pass
 
@@ -777,8 +850,34 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         try:
             resolved_scale = float(raw_scale)
         except (TypeError, ValueError):
-            resolved_scale = 1.0
-        return max(0.05, min(10.0, resolved_scale))
+            return 1.0
+        if resolved_scale <= 0:
+            return 1.0
+        return resolved_scale
+
+    def _get_saved_boolean_setting(self, key: str, default_value: bool) -> bool:
+        """Return a persisted boolean setting using tolerant coercion.
+
+        Args:
+            key: Setting key to read.
+            default_value: Fallback boolean value.
+
+        Returns:
+            bool: Resolved boolean value.
+        """
+        raw_value = self.settings.get_setting(key, default_value)
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        try:
+            return bool(int(raw_value))
+        except Exception:
+            return bool(default_value)
 
     def _persist_preview_scale(self, scale_value: float) -> None:
         """Persist the preferred preview scale when it changes.
@@ -881,8 +980,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._threshold_summary_label.configure(text=message_manager.get_ui_message("U142"))
         if getattr(self, "_base_threshold_inline_label", None) is not None:
             self._base_threshold_inline_label.configure(text=message_manager.get_ui_message("U143"))
-        if getattr(self, "_threshold_separator_label", None) is not None:
-            self._threshold_separator_label.configure(text=message_manager.get_ui_message("U144"))
+        if getattr(self, "_comparison_threshold_inline_label", None) is not None:
+            self._comparison_threshold_inline_label.configure(
+                text=message_manager.get_ui_message("U176")
+            )
         if getattr(self, "_row4_arrow_guidance_label", None) is not None:
             self._row4_arrow_guidance_label.configure(text=message_manager.get_ui_message("U146"))
         if getattr(self, "_row4_custom_guidance_label", None) is not None:
@@ -893,8 +994,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_comp_layer_check.configure(text=message_manager.get_ui_message("U141"))
         if getattr(self, "_show_reference_grid_check", None) is not None:
             self._show_reference_grid_check.configure(text=message_manager.get_ui_message("U149"))
-        if getattr(self, "_shortcut_guide_label", None) is not None:
-            self._shortcut_guide_label.configure(text=message_manager.get_ui_message("U150"))
+        if getattr(self, "_shortcut_guide_frame", None) is not None:
+            self._draw_canvas_footer_guide()
         if getattr(self, "_custom_rotation_guide_button", None) is not None:
             self._custom_rotation_guide_button.configure(text=message_manager.get_ui_message("U151"))
         if getattr(self, "_color_processing_mode_combo", None) is not None:
@@ -1010,6 +1111,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
     def _on_layer_visibility_changed(self) -> None:
         """Refresh the canvas when the base/comparison visibility checkbox changes."""
         self._sync_visualized_image_state()
+        # Main processing: persist layer visibility toggles so the next launch restores the same preview state.
+        self.settings.update_setting("show_base_layer", bool(self._show_base_layer_var.get()))
+        self.settings.update_setting("show_comp_layer", bool(self._show_comp_layer_var.get()))
+        self.settings.update_setting("show_reference_grid", bool(self._show_reference_grid_var.get()))
+        self.settings.save_settings()
         if self._has_loaded_workspace_pages():
             self._display_page(self.current_page_index)
         else:
@@ -1039,85 +1145,257 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except Exception:
             return (0.0, 0.0)
 
+    def _set_main_canvas_scrollregion_from_pdf_image(self) -> None:
+        """Expand scrollregion past page pixels so the widget viewport has canvas coordinates.
+
+        Without this, areas of the canvas widget that extend beyond the PDF bbox
+        do not receive reference-grid dots after resize.
+        """
+        if not hasattr(self, "canvas"):
+            return
+        try:
+            ib = self.canvas.bbox("pdf_image")
+            cw = max(int(self.canvas.winfo_width()), 1)
+            ch = max(int(self.canvas.winfo_height()), 1)
+            if ib is None:
+                self.canvas.config(scrollregion=(0, 0, cw, ch))
+                return
+            x0, y0, x1, y1 = (int(ib[0]), int(ib[1]), int(ib[2]), int(ib[3]))
+            self.canvas.config(
+                scrollregion=(
+                    min(0, x0),
+                    min(0, y0),
+                    max(x1, cw),
+                    max(y1, ch),
+                )
+            )
+        except Exception:
+            try:
+                fallback = self.canvas.bbox("pdf_image")
+                if fallback:
+                    self.canvas.config(scrollregion=fallback)
+            except Exception:
+                pass
+
+    def schedule_canvas_footer_reposition(self) -> None:
+        """Defer footer guide layout until after Tk geometry has settled.
+
+        Call after window maximize/restore, tab switches, or other late layout updates.
+        """
+        if not hasattr(self, "canvas"):
+            return
+
+        def _run() -> None:
+            self._reposition_canvas_footer_guide()
+
+        try:
+            self.after_idle(_run)
+        except Exception:
+            try:
+                _run()
+            except Exception:
+                pass
+
     def _reposition_canvas_footer_guide(self) -> None:
         """Reposition the footer guide overlay so it stays fixed in the viewport.
 
         The footer guide should remain at the bottom of the visible canvas area,
-        even when the preview image is panned.
+        even when the preview image is panned (uses canvas coordinates).
         """
         if not hasattr(self, "canvas"):
             return
-        bg_items = self.canvas.find_withtag("canvas_footer_overlay_bg")
-        text_items = self.canvas.find_withtag("canvas_footer_overlay_text")
-        if not bg_items or not text_items:
+        guide_frame = getattr(self, "_shortcut_guide_frame", None)
+        guide_label = getattr(self, "_shortcut_guide_label", None)
+        if guide_frame is None or guide_label is None:
             return
 
-        x0, y0 = self._get_canvas_visible_origin()
-        canvas_width = max(self.canvas.winfo_width(), 720)
-        canvas_height = max(self.canvas.winfo_height(), 420)
-        overlay_top = y0 + max(0, canvas_height - 56)
-        overlay_bottom = y0 + max(max(0, canvas_height - 56) + 24, canvas_height - 4)
-
-        # Main processing: keep the footer guide anchored to the visible bottom edge.
-        self.canvas.coords(
-            bg_items[0],
-            x0 + 12,
-            overlay_top,
-            x0 + max(24, canvas_width - 12),
-            overlay_bottom,
-        )
-        self.canvas.coords(
-            text_items[0],
-            x0 + 18,
-            y0 + canvas_height - 12,
-        )
-        self.canvas.itemconfigure(text_items[0], width=max(canvas_width - 36, 260))
         try:
-            self.canvas.tag_raise("canvas_footer_overlay_bg")
-            self.canvas.tag_raise("canvas_footer_overlay_text")
+            self.update_idletasks()
         except Exception:
             pass
+        try:
+            cw = int(self.canvas.winfo_width())
+        except Exception:
+            cw = 1
+        canvas_width = max(cw, 1)
+        # Hug the canvas inner border; tiny insets avoid clipping the sunken relief.
+        left_inset = 2
+        right_inset = 2
+        guide_width = max(canvas_width - left_inset - right_inset, 120)
+        guide_label.configure(wraplength=max(guide_width - 12, 80))
+        en_line2 = getattr(self, "_shortcut_guide_en_line2", None)
+        if en_line2 is not None and en_line2.winfo_manager():
+            en_line2.configure(wraplength=max(guide_width - 12, 80))
+            spacer = getattr(self, "_shortcut_guide_en_spacer", None)
+            l1_left = getattr(self, "_shortcut_guide_en_l1_left", None)
+            if spacer is not None and l1_left is not None:
+                try:
+                    font = tkfont.Font(font=en_line2.cget("font"))
+                    w2 = int(font.measure(en_line2.cget("text")))
+                    fw = int(font.measure("\u3000"))
+                    if fw <= 0:
+                        fw = max(10, int(font.measure("0")))
+                    target = w2 + fw
+                    left_w = int(font.measure(l1_left.cget("text")))
+                    spacer.configure(width=max(target - left_w, 0))
+                except Exception:
+                    pass
+        try:
+            guide_frame.update_idletasks()
+        except Exception:
+            pass
+        guide_height = max(guide_frame.winfo_reqheight(), 28)
+        # Pin to the canvas widget's bottom edge (viewport), not scroll coordinates.
+        guide_frame.place(
+            x=left_inset,
+            rely=1.0,
+            y=-2,
+            anchor="sw",
+            width=guide_width,
+            height=guide_height,
+        )
+        try:
+            guide_frame.lift()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _u150_footer_message_uses_split_format(raw: str) -> bool:
+        """Return True when U150 uses EN split layout (line1 left|||right, then newline line2)."""
+        return "|||" in raw and "\n" in raw
+
+    def _ensure_shortcut_guide_en_split_widgets(self, bg: str, fg: str) -> None:
+        """Create EN two-row footer widgets (line1 left + spacer + right, then line2)."""
+        if self._shortcut_guide_en_row1 is not None:
+            return
+        parent = self._shortcut_guide_frame
+        self._shortcut_guide_en_row1 = tk.Frame(parent, bg=bg, highlightthickness=0, bd=0)
+        self._shortcut_guide_en_l1_left = tk.Label(
+            self._shortcut_guide_en_row1,
+            anchor="w",
+            justify="left",
+            padx=0,
+            pady=0,
+            font=("Helvetica", 9),
+            bg=bg,
+            fg=fg,
+        )
+        self._shortcut_guide_en_spacer = tk.Frame(
+            self._shortcut_guide_en_row1,
+            height=1,
+            bg=bg,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._shortcut_guide_en_l1_right = tk.Label(
+            self._shortcut_guide_en_row1,
+            anchor="w",
+            justify="left",
+            padx=0,
+            pady=0,
+            font=("Helvetica", 9),
+            bg=bg,
+            fg=fg,
+        )
+        self._shortcut_guide_en_l1_left.pack(side=tk.LEFT)
+        self._shortcut_guide_en_spacer.pack(side=tk.LEFT, fill=tk.Y)
+        self._shortcut_guide_en_spacer.pack_propagate(False)
+        self._shortcut_guide_en_l1_right.pack(side=tk.LEFT)
+        self._shortcut_guide_en_line2 = tk.Label(
+            parent,
+            anchor="w",
+            justify="left",
+            padx=5,
+            pady=0,
+            font=("Helvetica", 9),
+            bg=bg,
+            fg=fg,
+        )
+
+    def _hide_shortcut_guide_en_split_widgets(self) -> None:
+        """Remove EN split footer widgets from the pack manager."""
+        for w in (self._shortcut_guide_en_row1, self._shortcut_guide_en_line2):
+            if w is not None:
+                try:
+                    w.pack_forget()
+                except Exception:
+                    pass
 
     def _draw_canvas_footer_guide(self) -> None:
         """Draw the shortcut guide text inside the bottom area of the canvas."""
         if not hasattr(self, "canvas"):
             return
 
+        mouse_handler = getattr(self, "mouse_handler", None)
+        if mouse_handler is not None and hasattr(mouse_handler, "set_shortcut_help_visibility"):
+            try:
+                mouse_handler.set_shortcut_help_visibility(False)
+            except Exception:
+                pass
+
+        try:
+            self.canvas.delete("canvas_footer_overlay_bg")
+            self.canvas.delete("canvas_footer_overlay_text")
+        except Exception:
+            pass
+
         current_theme = ColorThemeManager.get_instance().get_current_theme()
         frame_theme = dict(current_theme.get("Frame", {}))
-        canvas_width = max(self.canvas.winfo_width(), 720)
-        canvas_height = max(self.canvas.winfo_height(), 420)
         guide_fg = str(frame_theme.get("fg", "#000000"))
         overlay_bg = str(self.canvas.cget("bg"))
-        x0, y0 = self._get_canvas_visible_origin()
-        overlay_top = y0 + max(0, canvas_height - 56)
-        overlay_bottom = y0 + max(max(0, canvas_height - 56) + 24, canvas_height - 4)
 
-        self.canvas.delete("canvas_footer_overlay_bg")
-        self.canvas.delete("canvas_footer_overlay_text")
-        self.canvas.create_rectangle(
-            x0 + 12,
-            overlay_top,
-            x0 + max(24, canvas_width - 12),
-            overlay_bottom,
-            fill=overlay_bg,
-            outline="",
-            tags=("workspace", "canvas_footer_overlay_bg"),
-        )
-        self.canvas.create_text(
-            x0 + 18,
-            y0 + canvas_height - 12,
-            anchor="sw",
-            text=message_manager.get_ui_message("U150"),
-            fill=guide_fg,
-            justify="left",
-            width=max(canvas_width - 36, 260),
-            font=("Helvetica", 9),
-            tags=("workspace", "canvas_footer_overlay_text", "canvas_footer_guide"),
-        )
+        if getattr(self, "_shortcut_guide_frame", None) is None:
+            self._shortcut_guide_frame = tk.Frame(
+                self.canvas,
+                relief=tk.FLAT,
+                borderwidth=0,
+                highlightthickness=0,
+            )
+        if getattr(self, "_shortcut_guide_label", None) is None:
+            self._shortcut_guide_label = tk.Label(
+                self._shortcut_guide_frame,
+                anchor="w",
+                justify="left",
+                padx=5,
+                pady=2,
+                font=("Helvetica", 9),
+            )
+
+        self._shortcut_guide_frame.configure(bg=overlay_bg)
+        raw_u150 = message_manager.get_ui_message("U150")
+        if self._u150_footer_message_uses_split_format(raw_u150):
+            line1, line2 = raw_u150.split("\n", 1)
+            left, right = line1.split("|||", 1)
+            self._ensure_shortcut_guide_en_split_widgets(overlay_bg, guide_fg)
+            try:
+                self._shortcut_guide_label.pack_forget()
+            except Exception:
+                pass
+            self._shortcut_guide_en_l1_left.configure(
+                text=left.strip(), bg=overlay_bg, fg=guide_fg
+            )
+            self._shortcut_guide_en_l1_right.configure(
+                text=right.strip(), bg=overlay_bg, fg=guide_fg
+            )
+            self._shortcut_guide_en_line2.configure(
+                text=line2, bg=overlay_bg, fg=guide_fg
+            )
+            self._shortcut_guide_en_row1.configure(bg=overlay_bg)
+            self._shortcut_guide_en_spacer.configure(bg=overlay_bg)
+            self._shortcut_guide_en_row1.pack(fill=tk.X, anchor="w", padx=5, pady=(2, 0))
+            self._shortcut_guide_en_line2.pack(fill=tk.X, anchor="w", pady=(0, 2))
+        else:
+            self._hide_shortcut_guide_en_split_widgets()
+            self._shortcut_guide_label.configure(
+                text=raw_u150,
+                bg=overlay_bg,
+                fg=guide_fg,
+                pady=2,
+            )
+            self._shortcut_guide_label.pack(fill="both", expand=True)
+        self._reposition_canvas_footer_guide()
         try:
-            self.canvas.tag_raise("canvas_footer_overlay_bg")
-            self.canvas.tag_raise("canvas_footer_overlay_text")
+            self._shortcut_guide_frame.lift()
         except Exception:
             pass
 
@@ -1148,19 +1426,31 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             bbox = (0, 0, canvas_width, canvas_height)
 
         x1, y1, x2, y2 = [int(value) for value in bbox]
+        grid_color = self._get_reference_grid_color()
+        spacing = 24
+        try:
+            visible_x1 = int(self.canvas.canvasx(0))
+            visible_y1 = int(self.canvas.canvasy(0))
+            visible_x2 = int(self.canvas.canvasx(canvas_width))
+            visible_y2 = int(self.canvas.canvasy(canvas_height))
+        except Exception:
+            visible_x1 = 0
+            visible_y1 = 0
+            visible_x2 = canvas_width
+            visible_y2 = canvas_height
+
+        x1 = min(x1, visible_x1)
+        y1 = min(y1, visible_y1)
+        x2 = max(x2, visible_x2)
+        y2 = max(y2, visible_y2)
         if x2 - x1 < 24 or y2 - y1 < 24:
             return
-
-        grid_color = self._get_reference_grid_color()
-        x1 = 0
-        y1 = 0
-        x2 = canvas_width
-        y2 = canvas_height
-        spacing = 24
+        start_x = math.floor(x1 / spacing) * spacing
+        start_y = math.floor(y1 / spacing) * spacing
 
         # Main processing: render the guide as a light intersection-dot grid for a visually finer result.
-        for x in range(x1, x2 + 1, spacing):
-            for y in range(y1, y2 + 1, spacing):
+        for x in range(start_x, x2 + spacing, spacing):
+            for y in range(start_y, y2 + spacing, spacing):
                 self.canvas.create_line(
                     x,
                     y,
@@ -1286,12 +1576,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             getattr(self, "_comparison_threshold_entry", None),
             enabled=any_input_ready,
             theme_key="create_fb_threshold_entry",
-            theme_data=current_theme,
-        )
-        self._apply_main_button_state(
-            getattr(self, "_threshold_apply_button", None),
-            enabled=any_input_ready,
-            theme_key="process_button",
             theme_data=current_theme,
         )
         self._apply_image_button_state("automatic", enabled=any_input_ready, theme_data=current_theme)
@@ -1452,6 +1736,28 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if image_kind == "custom":
             self._current_custom_button_state = requested_key
 
+    def _restore_custom_button_default_idle(self) -> None:
+        """Restore the custom action button to its default idle artwork."""
+        self._custom_button_images = self._build_action_button_images(
+            "custom",
+            force_default_idle=True,
+        )
+        self._apply_action_button_visual("custom", False)
+
+    def _prepare_custom_button_press_visual(self, event: Optional[tk.Event] = None) -> None:
+        """Show the custom-button active image before the command callback runs.
+
+        Args:
+            event: Optional Tk button-press event.
+
+        """
+        _ = event
+        self._custom_button_images = self._build_action_button_images(
+            "custom",
+            force_default_idle=True,
+        )
+        self._apply_action_button_visual("custom", True)
+
     def _restore_action_buttons_after_execute(self) -> None:
         """Restore the image buttons after an execute operation completes.
 
@@ -1469,6 +1775,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
     def _on_custom_image_button_click(self) -> None:
         """Handle the restored custom image button click event."""
+        self._custom_button_images = self._build_action_button_images(
+            "custom",
+            force_default_idle=True,
+        )
         self._apply_action_button_visual("custom", True)
         self.update_idletasks()
         self.after(self._action_button_active_delay_ms, self._run_custom_image_button_action)
@@ -1485,7 +1795,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         try:
             self._on_process_click()
         finally:
-            self.after(320, lambda: self._apply_action_button_visual("custom", False))
+            self.after(320, self._restore_custom_button_default_idle)
 
     def _normalize_histogram_counts(self, histogram_data: List[Any]) -> List[int]:
         """Normalize saved histogram payloads into a single 256-bin graph.
@@ -1553,9 +1863,13 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         This handler validates the threshold inputs, persists them to settings,
         refreshes graph guides, and redraws the currently loaded lower preview page.
         """
+        from utils.input_normalization import parse_strict_int
+
         try:
-            base_threshold_value = int(self._base_threshold_value_var.get())
-            comparison_threshold_value = int(self._comparison_threshold_value_var.get())
+            base_threshold_value = parse_strict_int(self._base_threshold_entry.get())
+            comparison_threshold_value = parse_strict_int(self._comparison_threshold_entry.get())
+            self._base_threshold_value_var.set(base_threshold_value)
+            self._comparison_threshold_value_var.set(comparison_threshold_value)
         except ValueError:
             self._show_status_feedback("閾値は整数で入力してください。", False)
             return
@@ -1749,60 +2063,176 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         finally:
             setattr(entry_widget, "_suppress_callback", previous_suppress)
 
-    def _get_startup_display_path(self, saved_value: str) -> str:
-        """Return the startup entry text for a persisted path.
+    def _is_existing_pdf_path(self, path_str: str, placeholder_file: str) -> bool:
+        """Return True when ``path_str`` points to an existing PDF file on disk.
 
         Args:
-            saved_value: Persisted file or folder path.
+            path_str: Candidate filesystem path.
+            placeholder_file: Localized unset-path token to treat as empty.
 
         Returns:
-            str: Folder path used for startup display.
+            Whether the path should be treated as a resolved PDF input.
         """
+        if not path_str or path_str == placeholder_file:
+            return False
         try:
-            saved_path = Path(saved_value)
-            if saved_path.exists() and saved_path.is_file():
-                return str(saved_path.parent)
+            p = Path(path_str)
+            return p.exists() and p.is_file() and p.suffix.lower() == ".pdf"
+        except Exception:
+            return False
+
+    def _path_display_for_main_entry(
+        self,
+        saved_value: str,
+        placeholder_file: str,
+        session_committed: bool,
+    ) -> str:
+        """Build base/comparison entry text: folder or placeholder until the side is committed.
+
+        Args:
+            saved_value: Persisted path from settings.
+            placeholder_file: Localized unset-path token (U053).
+            session_committed: Whether the user confirmed this side this session.
+
+        Returns:
+            String to show in the path entry.
+        """
+        if saved_value == placeholder_file:
+            return placeholder_file
+        if session_committed:
+            return saved_value
+        if self._is_existing_pdf_path(saved_value, placeholder_file):
+            return str(Path(saved_value).parent)
+        return saved_value
+
+    def _placeholder_status_path_line(self, path_value: str) -> str:
+        """Format a path for the canvas placeholder status lines (folder if PDF on disk).
+
+        Args:
+            path_value: Current path entry text (folder, PDF, or placeholder).
+
+        Returns:
+            Human-readable line for the placeholder canvas.
+        """
+        placeholder_pdf = message_manager.get_ui_message("U053")
+        if not path_value or path_value == placeholder_pdf:
+            return placeholder_pdf
+        try:
+            p = Path(path_value)
+            if p.exists() and p.is_file() and p.suffix.lower() == ".pdf":
+                return str(p.parent)
+            return str(p)
+        except Exception:
+            return path_value
+
+    def _workspace_string_for_pdf_side(
+        self,
+        *,
+        saved_value: str,
+        placeholder_file: str,
+        session_committed: bool,
+    ) -> str:
+        """Value for ``base_path`` / ``comparison_path`` used by the preview workspace.
+
+        Until the user commits the side, a stored PDF path does not load the workspace
+        (placeholder is used). After commit, the saved path is used. Non-PDF saved
+        paths (e.g. folders) are passed through like before.
+
+        Args:
+            saved_value: Persisted path from user settings.
+            placeholder_file: Localized unset-path token.
+            session_committed: Whether this side was confirmed this session.
+
+        Returns:
+            Path string for ``StringVar`` driving ``_refresh_workspace_state``.
+        """
+        if saved_value == placeholder_file:
+            return placeholder_file
+        if self._is_existing_pdf_path(saved_value, placeholder_file) and not session_committed:
+            return placeholder_file
+        return saved_value
+
+    def _on_row4_comment_frame_configure(self, event: tk.Event) -> None:
+        """Keep the U137 guidance label wrapped to the visible column width.
+
+        Args:
+            event: Tkinter ``Configure`` event from ``_row4_comment_frame``.
+        """
+        if event.widget is not getattr(self, "_row4_comment_frame", None):
+            return
+        label = getattr(self, "_row4_comment_text_label", None)
+        if label is None:
+            return
+        try:
+            # Slight margin only; over-subtracting narrows U137 and adds lines (pushes thresholds down).
+            wrap_px = max(int(event.width) - 6, 80)
+            label.configure(wraplength=wrap_px)
         except Exception:
             pass
-        return saved_value
+
+    def _on_row4_arrow_guidance_frame_configure(self, event: tk.Event) -> None:
+        """Keep the U146 archer-column hint wrapped at the visible column width.
+
+        Args:
+            event: Tkinter ``Configure`` event from ``_row4_arrow_guidance_frame``.
+        """
+        if event.widget is not getattr(self, "_row4_arrow_guidance_frame", None):
+            return
+        label = getattr(self, "_row4_arrow_guidance_label", None)
+        if label is None:
+            return
+        try:
+            wrap_px = max(int(event.width) - 6, 60)
+            label.configure(wraplength=wrap_px)
+        except Exception:
+            pass
 
     def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
         """Synchronize persisted paths into the main tab inputs.
 
         Args:
-            event: Tkinter visibility event.
+            event: Tkinter visibility or notebook tab-change event (unused). Until a
+                side is committed, PDF paths from settings show as the parent folder
+                in the entry; preview loading stays gated by session commit flags.
         """
         _ = event
         placeholder_file = message_manager.get_ui_message("U053")
         placeholder_output = message_manager.get_ui_message("U054")
 
         try:
-            saved_base = self.settings.get_setting("base_file_path")
-            if isinstance(saved_base, str) and saved_base and saved_base != placeholder_file:
-                saved_base_path = Path(saved_base)
-                if saved_base_path.exists() and saved_base_path.is_file():
-                    display_base = self._get_startup_display_path(saved_base)
-                    if self._base_file_path_entry.path_var.get() != display_base:
-                        self._set_path_entry_display(self._base_file_path_entry, display_base)
-                    self.base_path.set("")
+            saved_base = str(self.settings.get_setting("base_file_path", placeholder_file) or placeholder_file)
+            saved_comparison = str(self.settings.get_setting("comparison_file_path", placeholder_file) or placeholder_file)
+            saved_output = str(self.settings.get_setting("output_folder_path", placeholder_output) or placeholder_output)
 
-            saved_comparison = self.settings.get_setting("comparison_file_path")
-            if isinstance(saved_comparison, str) and saved_comparison and saved_comparison != placeholder_file:
-                saved_comparison_path = Path(saved_comparison)
-                if saved_comparison_path.exists() and saved_comparison_path.is_file():
-                    display_comparison = self._get_startup_display_path(saved_comparison)
-                    if self._comparison_file_path_entry.path_var.get() != display_comparison:
-                        self._set_path_entry_display(self._comparison_file_path_entry, display_comparison)
-                    self.comparison_path.set("")
+            output_display = placeholder_output if saved_output == placeholder_output else saved_output
 
-            saved_output = self.settings.get_setting("output_folder_path")
-            if isinstance(saved_output, str) and saved_output and saved_output != placeholder_output:
-                saved_output_path = Path(saved_output)
-                if saved_output_path.exists() and saved_output_path.is_dir():
-                    if self._output_folder_path_entry.path_var.get() != saved_output:
-                        self._output_folder_path_entry.path_var.set(saved_output)
-                        self.output_path.set(saved_output)
+            base_for_workspace = self._workspace_string_for_pdf_side(
+                saved_value=saved_base,
+                placeholder_file=placeholder_file,
+                session_committed=self._base_pdf_session_committed,
+            )
+            comparison_for_workspace = self._workspace_string_for_pdf_side(
+                saved_value=saved_comparison,
+                placeholder_file=placeholder_file,
+                session_committed=self._comparison_pdf_session_committed,
+            )
+
+            base_entry_text = self._path_display_for_main_entry(
+                saved_base, placeholder_file, self._base_pdf_session_committed
+            )
+            comparison_entry_text = self._path_display_for_main_entry(
+                saved_comparison, placeholder_file, self._comparison_pdf_session_committed
+            )
+
+            self.base_path.set(base_for_workspace)
+            self.comparison_path.set(comparison_for_workspace)
+            self.output_path.set(output_display)
+            self._set_path_entry_display(self._base_file_path_entry, base_entry_text)
+            self._set_path_entry_display(self._comparison_file_path_entry, comparison_entry_text)
+            self._set_path_entry_display(self._output_folder_path_entry, output_display)
+
             self._refresh_workspace_state()
+            self._apply_path_entry_activity_style()
         except Exception as exc:
             logger.warning(f"Shared path sync failed in main tab: {exc}")
 
@@ -1836,8 +2266,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Args:
             file_path: Dropped file path.
         """
-        self._base_file_path_entry.path_var.set(file_path)
-        self.base_path.set(file_path)
+        if not self._base_file_path_entry.accept_dialog_path(file_path):
+            return
+        self._base_pdf_session_committed = True
+        resolved = self._base_file_path_entry.path_var.get()
+        self.base_path.set(resolved)
         self.status_var.set("ベースPDFを下のプレビュー用に選択しました。")
         self._refresh_workspace_state()
 
@@ -1847,8 +2280,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Args:
             file_path: Dropped file path.
         """
-        self._comparison_file_path_entry.path_var.set(file_path)
-        self.comparison_path.set(file_path)
+        if not self._comparison_file_path_entry.accept_dialog_path(file_path):
+            return
+        self._comparison_pdf_session_committed = True
+        resolved = self._comparison_file_path_entry.path_var.get()
+        self.comparison_path.set(resolved)
         self.status_var.set("比較PDFを下のプレビュー用に選択しました。")
         self._refresh_workspace_state()
 
@@ -1858,8 +2294,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Args:
             folder_path: Dropped folder path.
         """
-        self._output_folder_path_entry.path_var.set(folder_path)
-        self.output_path.set(folder_path)
+        if not self._output_folder_path_entry.accept_dialog_path(folder_path):
+            return
+        resolved = self._output_folder_path_entry.path_var.get()
+        self.output_path.set(resolved)
         self.status_var.set("Output folder updated for future comparison export.")
         if not self._has_loaded_workspace_pages():
             self._render_comparison_placeholder()
@@ -1914,6 +2352,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._comp_canvas_image_id = None
         self._preview_source_image_cache.clear()
         self._preview_processed_image_cache.clear()
+        self._preview_keyboard_rotation_delta = 0.0
 
     def _remove_temp_directory(self, target_dir: Optional[Path]) -> None:
         """Delete one generated temp directory when it is safe to remove.
@@ -2509,17 +2948,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Returns:
             Unique file path that does not exist yet.
         """
-        parent_dir.mkdir(parents=True, exist_ok=True)
-        candidate_file = parent_dir / f"{base_name}{extension}"
-        if not candidate_file.exists():
-            return candidate_file
-
-        suffix_index = 1
-        while True:
-            numbered_file = parent_dir / f"{base_name}（{suffix_index}）{extension}"
-            if not numbered_file.exists():
-                return numbered_file
-            suffix_index += 1
+        return create_unique_file_path(parent_dir, base_name, extension)
 
     def _create_workspace_temp_dir(self, pdf_path: str, name_flag: str) -> Path:
         """Create a unique temp directory for one side of the comparison workspace.
@@ -3043,11 +3472,20 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_status_feedback("Requested page is out of range.", False)
             return
 
+        if page_index != self.current_page_index:
+            self._commit_preview_keyboard_rotation()
+
         try:
             self.canvas.delete("workspace")
             self.canvas.delete("pdf_image")
+            self.canvas.delete("base_image")
+            self.canvas.delete("comp_image")
         except Exception:
-            self.canvas.delete("all")
+            for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image"):
+                try:
+                    self.canvas.delete(_tag)
+                except Exception:
+                    pass
         self._base_canvas_image_id = None
         self._comp_canvas_image_id = None
 
@@ -3078,9 +3516,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                     pass
 
         if base_image is not None and page_index < len(self.base_transform_data):
-            base_image = self._apply_transform_to_image(base_image, self.base_transform_data[page_index])
+            base_t = self._transform_tuple_for_preview_render(
+                page_index, self.base_transform_data[page_index], is_base_layer=True
+            )
+            base_image = self._apply_transform_to_image(base_image, base_t)
         if comp_image is not None and page_index < len(self.comp_transform_data):
-            comp_image = self._apply_transform_to_image(comp_image, self.comp_transform_data[page_index])
+            comp_t = self._transform_tuple_for_preview_render(
+                page_index, self.comp_transform_data[page_index], is_base_layer=False
+            )
+            comp_image = self._apply_transform_to_image(comp_image, comp_t)
 
         self._base_photo_image = None
         self._comp_photo_image = None
@@ -3131,9 +3575,12 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._draw_canvas_footer_guide()
 
         try:
-            self.canvas.config(scrollregion=self.canvas.bbox("pdf_image"))
+            self._set_main_canvas_scrollregion_from_pdf_image()
         except Exception:
-            self.canvas.config(scrollregion=self.canvas.bbox("all"))
+            try:
+                self.canvas.config(scrollregion=self.canvas.bbox("all"))
+            except Exception:
+                pass
 
         previous_page_index = getattr(self, "current_page_index", None)
         self.current_page_index = page_index
@@ -3149,6 +3596,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             )
             if hasattr(self.mouse_handler, "refresh_overlay_positions"):
                 self.mouse_handler.refresh_overlay_positions()
+
+        try:
+            self.canvas.tag_raise("overlay_shortcut_help")
+        except Exception:
+            pass
 
         if self.page_control_frame is not None:
             if previous_page_index != page_index:
@@ -3167,11 +3619,103 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Returns:
             Transform tuple ``(rotation, tx, ty, scale)``.
         """
-        if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
-            return self.base_transform_data[self.current_page_index]
-        if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
-            return self.comp_transform_data[self.current_page_index]
+        d = float(self._preview_keyboard_rotation_delta) if abs(self._preview_keyboard_rotation_delta) > 1e-9 else 0.0
+        idx = self.current_page_index
+        show_b = bool(self._show_base_layer_var.get())
+        show_c = bool(self._show_comp_layer_var.get())
+        if show_b and self.base_transform_data and idx < len(self.base_transform_data):
+            r, tx, ty, s = self.base_transform_data[idx]
+            return (r + d, tx, ty, s)
+        if show_c and self.comp_transform_data and idx < len(self.comp_transform_data):
+            r, tx, ty, s = self.comp_transform_data[idx]
+            return (r + d, tx, ty, s)
+        if self.base_transform_data and idx < len(self.base_transform_data):
+            return self.base_transform_data[idx]
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            return self.comp_transform_data[idx]
         return (0.0, 0.0, 0.0, 1.0)
+
+    def _transform_tuple_for_preview_render(
+        self,
+        page_index: int,
+        transform_tuple: tuple[float, float, float, float],
+        *,
+        is_base_layer: bool,
+    ) -> tuple[float, float, float, float]:
+        """Build a transform tuple including pending Ctrl+Shift preview rotation for drawing.
+
+        Args:
+            page_index: Page index being rendered.
+            transform_tuple: Stored ``(rotation, tx, ty, scale)``.
+            is_base_layer: True when rendering the base layer.
+
+        Returns:
+            Tuple to pass to :meth:`_apply_transform_to_image` for this draw pass.
+        """
+        r, x, y, s = transform_tuple
+        if page_index != self.current_page_index or abs(self._preview_keyboard_rotation_delta) < 1e-9:
+            return (r, x, y, s)
+        if is_base_layer and not bool(self._show_base_layer_var.get()):
+            return (r, x, y, s)
+        if not is_base_layer and not bool(self._show_comp_layer_var.get()):
+            return (r, x, y, s)
+        return (r + float(self._preview_keyboard_rotation_delta), x, y, s)
+
+    def _commit_preview_keyboard_rotation(self) -> None:
+        """Merge pending Ctrl+Shift preview rotation into stored transform data (then propagate if batch)."""
+        delta = float(self._preview_keyboard_rotation_delta)
+        if abs(delta) < 1e-9:
+            return
+        self._preview_keyboard_rotation_delta = 0.0
+        idx = self.current_page_index
+        if not self._has_loaded_workspace_pages() or idx < 0:
+            return
+        if bool(self._show_base_layer_var.get()) and idx < len(self.base_transform_data):
+            r, x, y, s = self.base_transform_data[idx]
+            self.base_transform_data[idx] = (r + delta, x, y, s)
+        if bool(self._show_comp_layer_var.get()) and idx < len(self.comp_transform_data):
+            r, x, y, s = self.comp_transform_data[idx]
+            self.comp_transform_data[idx] = (r + delta, x, y, s)
+        self._on_transform_update()
+
+    def _clear_preview_keyboard_rotation_only(self) -> None:
+        """Discard pending Ctrl+Shift preview rotation without writing it to transform data."""
+        self._preview_keyboard_rotation_delta = 0.0
+
+    def _on_main_preview_keyboard_rotate_right(self, event: Optional[tk.Event] = None) -> str | None:
+        """Handle Ctrl+Shift+R: preview +90° (committed on click, page change, or other transform shortcuts)."""
+        _ = event
+        if not self._has_loaded_workspace_pages():
+            return "break"
+        if not self._visual_adjustments_enabled or self._copy_protected:
+            return "break"
+        self._preview_keyboard_rotation_delta += 90.0
+        self._refresh_current_page_view()
+        if self.mouse_handler is not None:
+            self.mouse_handler._show_notification(message_manager.get_message("M063"))
+        return "break"
+
+    def _on_main_preview_keyboard_rotate_left(self, event: Optional[tk.Event] = None) -> str | None:
+        """Handle Ctrl+Shift+L: preview −90° (committed on click, page change, or other transform shortcuts)."""
+        _ = event
+        if not self._has_loaded_workspace_pages():
+            return "break"
+        if not self._visual_adjustments_enabled or self._copy_protected:
+            return "break"
+        self._preview_keyboard_rotation_delta -= 90.0
+        self._refresh_current_page_view()
+        if self.mouse_handler is not None:
+            self.mouse_handler._show_notification(message_manager.get_message("M064"))
+        return "break"
+
+    def _on_main_canvas_escape_preview(self, event: Optional[tk.Event] = None) -> str | None:
+        """Discard pending Ctrl+Shift preview rotation when Escape is pressed on the canvas."""
+        _ = event
+        if abs(self._preview_keyboard_rotation_delta) < 1e-9:
+            return "break"
+        self._clear_preview_keyboard_rotation_only()
+        self._refresh_current_page_view()
+        return "break"
 
     def _refresh_workspace_state(self) -> None:
         """Refresh comparison workspace state from the selected paths."""
@@ -3254,14 +3798,17 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if not hasattr(self, "canvas"):
             return
 
-        # Main processing: show selected input state before real page conversion is executed.
-        self.canvas.delete("all")
+        # Main processing: clear workspace drawings only; keep canvas shortcut overlay items.
+        for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image"):
+            try:
+                self.canvas.delete(_tag)
+            except Exception:
+                pass
         canvas_width = max(self.canvas.winfo_width(), 720)
         canvas_height = max(self.canvas.winfo_height(), 420)
         active_theme = ColorThemeManager.get_instance().get_current_theme()
-        notebook_theme = active_theme.get("Notebook", {})
         frame_theme = active_theme.get("Frame", {})
-        canvas_bg = notebook_theme.get("tab_bg", notebook_theme.get("bg", frame_theme.get("bg", "#ffffff")))
+        canvas_bg = CreateComparisonFileApp._PREVIEW_CANVAS_BACKGROUND
         text_fg = frame_theme.get("fg", "#000000")
         accent_fg = active_theme.get("process_button", {}).get("fg", text_fg)
         border_fg = active_theme.get("canvas", {}).get("highlightbackground", "#6c6c6c")
@@ -3292,9 +3839,21 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
         page_display = self.current_page_index + 1 if self.page_count > 0 else 0
         rotation, tx, ty, scale = self._get_active_transform()
+        placeholder_pdf = message_manager.get_ui_message("U053")
+        base_pv = (
+            self._base_file_path_entry.path_var.get().strip()
+            if hasattr(self, "_base_file_path_entry")
+            else self.base_path.get()
+        )
+        comp_pv = (
+            self._comparison_file_path_entry.path_var.get().strip()
+            if hasattr(self, "_comparison_file_path_entry")
+            else self.comparison_path.get()
+        )
+
         body_lines = [
-            f"元PDF: {self.base_path.get()}",
-            f"比較PDF: {self.comparison_path.get()}",
+            f"元PDF: {self._placeholder_status_path_line(base_pv)}",
+            f"比較PDF: {self._placeholder_status_path_line(comp_pv)}",
             f"出力フォルダ: {self.output_path.get()}",
             f"ページ: {page_display} / {self.page_count}",
             f"変形: 回転={rotation:.1f}, X={tx:.1f}, Y={ty:.1f}, 拡大率={scale:.3f}",
@@ -3314,6 +3873,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             tags=("workspace",),
         )
         self._draw_canvas_footer_guide()
+
+        try:
+            self.canvas.tag_raise("overlay_shortcut_help")
+        except Exception:
+            pass
 
     def _create_page_control_frame(self, page_count: int) -> None:
         """Create or recreate the page control frame for the current workspace.
@@ -3348,7 +3912,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             initial_batch_edit_checked=self._batch_edit_selected,
             on_batch_edit_toggle=self._on_batch_edit_toggle,
         )
-        self.page_control_frame.grid(row=0, column=1, padx=(10, 12), pady=12)
+        self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
         self.page_control_frame.set_workspace_controls_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
         self.page_control_frame.set_edit_buttons_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
@@ -3370,6 +3934,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self.canvas.unbind("<Button-5>")
 
         if page_count <= 0:
+            try:
+                self.canvas.delete("overlay_shortcut_help")
+            except Exception:
+                pass
             self.mouse_handler = None
             return
 
@@ -3389,6 +3957,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             on_transform_update=self._on_transform_update,
             on_live_translation_update=self._update_canvas_translation_preview,
             operations_enabled=self._visual_adjustments_enabled,
+            commit_keyboard_preview_rotation=self._commit_preview_keyboard_rotation,
+            clear_keyboard_preview_rotation=self._clear_preview_keyboard_rotation_only,
+            on_transform_commit_no_propagate=self._on_transform_update_skip_batch_propagate,
+            sheet_rotate_guard=self._can_main_sheet_rotate_dual_display,
+            sheet_rotate_blocked_message_code="U177",
         )
         self.mouse_handler.attach_to_canvas(self.canvas)
         self.mouse_handler.update_state(
@@ -3396,16 +3969,56 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             visible_layers=visible_layers,
         )
 
-        self.canvas.bind(
-            "<Button-1>",
-            lambda e: (self.canvas.focus_set() or (self.mouse_handler.on_mouse_down(e) if self.mouse_handler else None)),
-        )
+        def _main_canvas_button1(event: tk.Event) -> None:
+            self._commit_preview_keyboard_rotation()
+            self.canvas.focus_set()
+            if self.mouse_handler is not None:
+                self.mouse_handler.on_mouse_down(event)
+
+        self.canvas.bind("<Button-1>", _main_canvas_button1)
         self.canvas.bind("<B1-Motion>", lambda e: self.mouse_handler.on_mouse_drag(e) if self.mouse_handler else None)
         self.canvas.bind("<ButtonRelease-1>", lambda e: self.mouse_handler.on_mouse_up(e) if self.mouse_handler else None)
         self.canvas.bind("<Button-3>", lambda e: self.mouse_handler.on_right_click(e) if self.mouse_handler and hasattr(self.mouse_handler, "on_right_click") else None)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+        self.canvas.bind("<Configure>", self._on_main_canvas_configure, add="+")
+
+        self.canvas.bind("<Control-Shift-r>", self._on_main_preview_keyboard_rotate_right)
+        self.canvas.bind("<Control-Shift-R>", self._on_main_preview_keyboard_rotate_right)
+        self.canvas.bind("<Control-Shift-l>", self._on_main_preview_keyboard_rotate_left)
+        self.canvas.bind("<Control-Shift-L>", self._on_main_preview_keyboard_rotate_left)
+        self.canvas.bind("<Escape>", self._on_main_canvas_escape_preview)
+
+    def _on_main_canvas_configure(self, event: Any) -> None:
+        """Keep the shortcut footer guide sized and positioned when the canvas resizes.
+
+        Args:
+            event: Tkinter configure event (unused).
+        """
+        _ = event
+        self.schedule_canvas_footer_reposition()
+        try:
+            if self.mouse_handler is not None:
+                self.mouse_handler.refresh_overlay_positions()
+        except Exception:
+            pass
+        try:
+            if self._has_loaded_workspace_pages():
+                self._set_main_canvas_scrollregion_from_pdf_image()
+                self._draw_reference_grid(
+                    self.canvas.bbox("pdf_image"),
+                    raise_above_images=True,
+                )
+            else:
+                cw = max(self.canvas.winfo_width(), 720)
+                ch = max(self.canvas.winfo_height(), 420)
+                self._draw_reference_grid(
+                    (16, 16, cw - 16, ch - 16),
+                    raise_above_images=False,
+                )
+        except Exception:
+            pass
 
     def _on_mouse_wheel(self, event: Any) -> None:
         """Forward mouse wheel events to the current mouse handler.
@@ -3423,6 +4036,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_status_feedback("下のプレビューはまだ準備できていません。", False)
             return
         if self.current_page_index > 0:
+            self._commit_preview_keyboard_rotation()
             self.current_page_index -= 1
             self._ensure_preview_page_available(self.current_page_index)
             self._refresh_current_page_view()
@@ -3433,6 +4047,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_status_feedback("下のプレビューはまだ準備できていません。", False)
             return
         if self.current_page_index < self.page_count - 1:
+            self._commit_preview_keyboard_rotation()
             self.current_page_index += 1
             self._ensure_preview_page_available(self.current_page_index)
             self._refresh_current_page_view()
@@ -3452,6 +4067,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if requested_page < 0 or requested_page >= self.page_count:
             self._show_status_feedback("Requested page is out of range.", False)
             return
+        self._commit_preview_keyboard_rotation()
         self.current_page_index = requested_page
         self._ensure_preview_page_available(self.current_page_index)
         self._refresh_current_page_view()
@@ -3473,6 +4089,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             scale: Scale factor.
             changed_fields: Entry fields explicitly confirmed by the user.
         """
+        self._commit_preview_keyboard_rotation()
         if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
             self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
         if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
@@ -3482,6 +4099,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._apply_export_transform_overrides_for_current_page(tx, ty, scale, explicit_fields)
         self._propagate_current_transform_to_all_pages(visible_only=False)
         self._propagate_export_overrides_to_all_pages(explicit_fields)
+        self._refresh_current_page_view()
+
+    def _on_transform_update_skip_batch_propagate(self) -> None:
+        """Redraw after Ctrl+Alt sheet rotation without copying the current page to all."""
+        self._update_preferred_preview_scale_from_current_page()
         self._refresh_current_page_view()
 
     def _on_transform_update(self) -> None:
@@ -3566,6 +4188,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_status_feedback("空白ページの追加先がありません。", False)
             return
 
+        self._commit_preview_keyboard_rotation()
         self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
         self.comp_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
         self._base_export_transform_overrides.insert(insert_position, {})
@@ -3599,6 +4222,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_status_feedback("削除対象のページが見つかりません。", False)
             return
 
+        self._commit_preview_keyboard_rotation()
         if delete_index < len(self.base_transform_data):
             self.base_transform_data.pop(delete_index)
         if delete_index < len(self.comp_transform_data):
@@ -3626,6 +4250,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if not self._has_loaded_workspace_pages():
             raise ValueError("保存対象のワークスペースがありません。")
 
+        self._commit_preview_keyboard_rotation()
         output_pdf_path = self._build_default_modified_pdf_path()
         pdf_metadata = self._build_export_metadata()
         handler = PDFExportHandler(
@@ -3690,23 +4315,38 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self.frame_main1 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
             self.frame_main1.grid(row=1, column=0, padx=5, pady=1, sticky="nsew")
             self.frame_main1.grid_columnconfigure(1, weight=1)
-            self.frame_main1.grid_columnconfigure(2, weight=0)
-            self.frame_main1.grid_columnconfigure(3, weight=0)
+            self.frame_main1.grid_columnconfigure(2, weight=0, minsize=28)
+            self.frame_main1.grid_columnconfigure(3, weight=0, minsize=76)
 
             self.frame_main2 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
-            self.frame_main2.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
-            self.frame_main2.grid_columnconfigure(0, weight=0, minsize=240)
-            self.frame_main2.grid_columnconfigure(1, weight=0, minsize=168)
-            self.frame_main2.grid_columnconfigure(2, weight=0, minsize=248)
-            self.frame_main2.grid_columnconfigure(3, weight=0, minsize=168)
-            self.frame_main2.grid_columnconfigure(4, weight=1)
-            self.frame_main2.grid_rowconfigure(0, minsize=max(160, self._action_button_square_size + 28))
+            self.frame_main2.grid(row=2, column=0, padx=5, pady=(5, 1), sticky="nsew")
+            # Seven columns: fixed content minsize on 0,2,4,6; equal flexible gutters on 1,3,5 (uniform group).
+            h0 = int(CreateComparisonFileApp._MAIN2_HOST0_WIDTH_PX)
+            h2 = int(CreateComparisonFileApp._MAIN2_HOST2_WIDTH_PX)
+            h4 = int(CreateComparisonFileApp._MAIN2_HOST4_WIDTH_PX)
+            h6 = int(CreateComparisonFileApp._MAIN2_HOST6_WIDTH_PX)
+            gap_u = "main2_mid_gap"
+            self.frame_main2.grid_columnconfigure(0, weight=0, minsize=h0)
+            self.frame_main2.grid_columnconfigure(1, weight=1, minsize=1, uniform=gap_u)
+            self.frame_main2.grid_columnconfigure(2, weight=0, minsize=h2)
+            self.frame_main2.grid_columnconfigure(3, weight=1, minsize=1, uniform=gap_u)
+            self.frame_main2.grid_columnconfigure(4, weight=0, minsize=h4)
+            self.frame_main2.grid_columnconfigure(5, weight=1, minsize=1, uniform=gap_u)
+            self.frame_main2.grid_columnconfigure(6, weight=0, minsize=h6)
+            # Compact row height: extra minsize steals vertical space from the canvas / page sidebar below.
+            # Threshold descenders are handled with modest per-widget pady instead of inflating the whole row.
+            _row4_body_h = max(
+                228,
+                int(self._action_button_square_size) + 108,
+            )
+            self.frame_main2.grid_rowconfigure(0, minsize=_row4_body_h)
 
             self.frame_main3 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
-            self.frame_main3.grid(row=3, column=0, padx=5, pady=5, sticky="nsew")
+            self.frame_main3.grid(row=3, column=0, padx=5, pady=(1, 5), sticky="nsew")
             self.frame_main3.grid_rowconfigure(0, weight=1)
             self.frame_main3.grid_rowconfigure(1, weight=0)
             self.frame_main3.grid_columnconfigure(0, weight=1)
+            self.frame_main3.grid_columnconfigure(1, weight=0)
             # Make canvas area expand more
             self.grid_rowconfigure(3, weight=8)
 
@@ -3768,10 +4408,13 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._base_file_path_entry = BasePathEntry(
                 fr=self.frame_main1,
                 color_key="base_file_path_entry",
-                entry_setting_key="base_file_path"
+                entry_setting_key="base_file_path",
+                allow_files=True,
+                allow_directories=False,
+                allowed_file_extensions={".pdf"},
             )
             self._base_file_path_entry.grid(
-                column=1, row=1, padx=5, pady=8, sticky="ew"
+                column=1, row=1, padx=(2, 4), pady=8, sticky="ew"
             )
             self._base_file_path_entry.path_var.set(self.base_path.get())
             self._base_file_path_entry.path_entry.bind("<Return>", lambda event: self._on_path_entry_submit("base", event))
@@ -3784,7 +4427,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 command=self._on_base_image_color_change,
             )
             self._base_image_color_change_btn.image_color_select_btn.configure(width=2, height=1)
-            self._base_image_color_change_btn.grid(column=2, row=1, padx=(2, 4), pady=6)
+            self._base_image_color_change_btn.grid(column=2, row=1, padx=0, pady=6)
 
             # Base file path select button
             # UI text for Base File Path select button
@@ -3796,7 +4439,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U019"),
                 command=self._on_base_file_select,
             )
-            self._base_file_path_button.grid(column=3, row=1, padx=5, pady=8)
+            self._base_file_path_button.grid(column=3, row=1, padx=(3, 5), pady=8)
 
             # Comparison file path label and entry
             # UI text for Comparison File Path label
@@ -3813,7 +4456,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._comparison_file_path_entry = BasePathEntry(
                 fr=self.frame_main1,
                 color_key="comparison_file_path_entry",
-                entry_setting_key="comparison_file_path"
+                entry_setting_key="comparison_file_path",
+                allow_files=True,
+                allow_directories=False,
+                allowed_file_extensions={".pdf"},
             )
             self._comparison_file_path_entry.grid(
                 column=1, row=2, padx=5, pady=8, sticky="we"
@@ -3829,7 +4475,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 command=self._on_comparison_image_color_change,
             )
             self._comparison_image_color_change_btn.image_color_select_btn.configure(width=2, height=1)
-            self._comparison_image_color_change_btn.grid(column=2, row=2, padx=(2, 4), pady=6)
+            self._comparison_image_color_change_btn.grid(column=2, row=2, padx=(0, 2), pady=6)
 
             # Comparison file path button
             # UI text for Comparison File Path select button
@@ -3841,7 +4487,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U019"),
                 command=self._on_comparison_file_select,
             )
-            self._comparison_file_path_button.grid(column=3, row=2, padx=5, pady=8)
+            self._comparison_file_path_button.grid(column=3, row=2, padx=(3, 5), pady=8)
 
             # Output folder path label and entry
             # UI text for Output Folder Path label
@@ -3858,7 +4504,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._output_folder_path_entry = BasePathEntry(
                 fr=self.frame_main1,
                 color_key="output_folder_path_entry",
-                entry_setting_key="output_folder_path"
+                entry_setting_key="output_folder_path",
+                allow_files=False,
+                allow_directories=True,
             )
             self._output_folder_path_entry.grid(
                 column=1, row=3, padx=5, pady=8, sticky="we"
@@ -3877,10 +4525,22 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U019"),
                 command=self._on_output_folder_select,
             )
-            self._output_folder_path_button.grid(column=3, row=3, padx=5, pady=8)
+            self._output_folder_path_button.grid(column=3, row=3, padx=(1, 4), pady=8)
 
-            self._row4_comment_frame = tk.Frame(self.frame_main2)
-            self._row4_comment_frame.grid(row=0, column=0, padx=(8, 12), pady=6, sticky="nsw")
+            self._row4_fixed_col0_host = tk.Frame(
+                self.frame_main2,
+                width=int(CreateComparisonFileApp._MAIN2_HOST0_WIDTH_PX),
+                highlightthickness=0,
+                bd=0,
+            )
+            _hpad = int(CreateComparisonFileApp._MAIN2_HOST_INNER_PAD_X_PX)
+            self._row4_fixed_col0_host.grid(row=0, column=0, padx=0, pady=0, sticky="nsew")
+            self._row4_fixed_col0_host.grid_propagate(False)
+            self._row4_fixed_col0_host.grid_rowconfigure(0, weight=1)
+            self._row4_fixed_col0_host.grid_columnconfigure(0, weight=1)
+
+            self._row4_comment_frame = tk.Frame(self._row4_fixed_col0_host)
+            self._row4_comment_frame.grid(row=0, column=0, padx=(_hpad, _hpad), pady=6, sticky="nsew")
             self._row4_comment_frame.grid_columnconfigure(0, weight=1)
 
             self._row4_comment_text_label = tk.Label(
@@ -3888,9 +4548,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U137"),
                 anchor="w",
                 justify="left",
-                wraplength=216,
+                wraplength=200,
             )
             self._row4_comment_text_label.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+            self._row4_comment_frame.bind("<Configure>", self._on_row4_comment_frame_configure, add="+")
 
             self._base_file_analyze_btn = CreateSubGraphWindowButton(
                 master=self._row4_comment_frame,
@@ -3919,23 +4580,26 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._comparison_file_analyze_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
             self._threshold_summary_frame = tk.Frame(self._row4_comment_frame)
-            self._threshold_summary_frame.grid(row=3, column=0, columnspan=2, sticky="ew")
-            self._threshold_summary_frame.grid_columnconfigure(2, weight=1)
-            self._threshold_summary_frame.grid_columnconfigure(5, weight=1)
+            self._threshold_summary_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=0)
+            # Spacer column eats space on the left; label+entry stay packed to the right edge.
+            self._threshold_summary_frame.grid_columnconfigure(0, weight=1)
+            self._threshold_summary_frame.grid_columnconfigure(1, weight=0)
+            self._threshold_summary_frame.grid_columnconfigure(2, weight=0)
 
             self._threshold_summary_label = tk.Label(
                 self._threshold_summary_frame,
                 text=message_manager.get_ui_message("U142"),
                 anchor="w",
             )
-            self._threshold_summary_label.grid(row=0, column=0, padx=(0, 4), sticky="w")
+            self._threshold_summary_label.grid(row=0, column=0, columnspan=3, padx=(0, 4), sticky="w")
 
             self._base_threshold_inline_label = tk.Label(
                 self._threshold_summary_frame,
                 text=message_manager.get_ui_message("U143"),
-                anchor="w",
+                anchor="e",
+                width=14,
             )
-            self._base_threshold_inline_label.grid(row=0, column=1, padx=(0, 4), sticky="w")
+            self._base_threshold_inline_label.grid(row=1, column=1, padx=(0, 4), pady=(4, 2), sticky="e")
 
             self._base_threshold_entry = BaseEntryClass(
                 fr=self._threshold_summary_frame,
@@ -3943,14 +4607,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 textvariable=self._base_threshold_value_var,
                 width=6,
             )
-            self._base_threshold_entry.grid(row=0, column=2, padx=(0, 6), sticky="ew")
+            self._base_threshold_entry.grid(row=1, column=2, padx=(0, 0), pady=(4, 2), sticky="w")
 
-            self._threshold_separator_label = tk.Label(
+            self._comparison_threshold_inline_label = tk.Label(
                 self._threshold_summary_frame,
-                text=message_manager.get_ui_message("U144"),
-                anchor="w",
+                text=message_manager.get_ui_message("U176"),
+                anchor="e",
+                width=14,
             )
-            self._threshold_separator_label.grid(row=0, column=3, padx=(0, 4), sticky="w")
+            self._comparison_threshold_inline_label.grid(row=2, column=1, padx=(0, 4), pady=(4, 4), sticky="e")
 
             self._comparison_threshold_entry = BaseEntryClass(
                 fr=self._threshold_summary_frame,
@@ -3958,44 +4623,43 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 textvariable=self._comparison_threshold_value_var,
                 width=6,
             )
-            self._comparison_threshold_entry.grid(row=0, column=5, padx=(0, 6), sticky="ew")
+            self._comparison_threshold_entry.grid(row=2, column=2, padx=(0, 0), pady=(4, 4), sticky="w")
 
-            self._threshold_apply_button = BaseButton(
-                fr=self._threshold_summary_frame,
-                color_key="process_button",
-                text=message_manager.get_ui_message("U069"),
-                command=self._on_threshold_apply_click,
-                relief=tk.RAISED,
-                bd=2,
-                highlightthickness=1,
+            self._row4_fixed_col2_host = tk.Frame(
+                self.frame_main2,
+                width=int(CreateComparisonFileApp._MAIN2_HOST2_WIDTH_PX),
+                highlightthickness=0,
+                bd=0,
             )
-            self._threshold_apply_button.grid(row=0, column=6, sticky="e")
+            self._row4_fixed_col2_host.grid(row=0, column=2, padx=0, pady=0, sticky="nsew")
+            self._row4_fixed_col2_host.grid_propagate(False)
+            self._row4_fixed_col2_host.grid_rowconfigure(0, weight=1)
+            self._row4_fixed_col2_host.grid_columnconfigure(0, weight=1)
 
-            self._row4_auto_column_frame = tk.Frame(self.frame_main2)
-            self._row4_auto_column_frame.grid(row=0, column=1, padx=(10, 14), pady=6, sticky="n")
+            self._row4_auto_column_frame = tk.Frame(self._row4_fixed_col2_host)
+            self._row4_auto_column_frame.grid(row=0, column=0, padx=(_hpad, _hpad), pady=6, sticky="new")
             self._row4_auto_column_frame.grid_columnconfigure(0, weight=1)
 
             self._row4_arrow_guidance_frame = tk.Frame(self._row4_auto_column_frame)
             self._row4_arrow_guidance_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-            self._row4_arrow_guidance_frame.grid_columnconfigure(0, weight=1)
-
             self._row4_arrow_guidance_label = tk.Label(
                 self._row4_arrow_guidance_frame,
                 text=message_manager.get_ui_message("U146"),
-                anchor="center",
-                justify="center",
-                wraplength=156,
-                padx=10,
-                pady=6,
+                anchor="w",
+                justify="left",
+                wraplength=152,
             )
-            self._row4_arrow_guidance_label.grid(row=0, column=0, sticky="ew")
+            self._row4_arrow_guidance_label.pack(fill="x")
+            self._row4_arrow_guidance_frame.bind(
+                "<Configure>", self._on_row4_arrow_guidance_frame_configure, add="+"
+            )
 
             self._row4_arrow_frame = tk.Frame(
                 self._row4_auto_column_frame,
                 width=self._action_button_square_size,
                 height=self._action_button_square_size,
             )
-            self._row4_arrow_frame.grid(row=1, column=0, sticky="n")
+            self._row4_arrow_frame.grid(row=1, column=0, sticky="n", pady=(0, 4))
             self._row4_arrow_frame.grid_propagate(False)
             self._row4_arrow_frame.grid_rowconfigure(0, weight=1)
             self._row4_arrow_frame.grid_columnconfigure(0, weight=1)
@@ -4012,56 +4676,26 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             )
             self._automatic_execute_button.place(x=0, y=0, width=self._action_button_square_size, height=self._action_button_square_size)
 
-            self._row4_action_frame = tk.Frame(self.frame_main2)
-            self._row4_action_frame.grid(row=0, column=2, padx=(10, 14), pady=6, sticky="new")
-            self._row4_action_frame.grid_columnconfigure(0, weight=0)
-
-            self._color_mode_row_frame = tk.Frame(self._row4_action_frame)
-            self._color_mode_row_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-            self._color_mode_row_frame.grid_columnconfigure(1, weight=1)
-            self._color_mode_label = BaseLabelClass(
-                fr=self._color_mode_row_frame,
-                color_key="dpi_label",
-                text=message_manager.get_ui_message("U136"),
+            self._row4_fixed_col4_host = tk.Frame(
+                self.frame_main2,
+                width=int(CreateComparisonFileApp._MAIN2_HOST4_WIDTH_PX),
+                highlightthickness=0,
+                bd=0,
             )
-            self._color_mode_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
-            self._color_processing_mode_combo = BaseValueCombobox(
-                master=self._color_mode_row_frame,
-                color_key="dpi_entry",
-                values=self._get_color_processing_mode_display_values(),
-                default_value=self._color_processing_mode_var.get(),
-                textvariable=self._color_processing_mode_var,
-                width=16,
-                state="disabled",
+            self._row4_fixed_col4_host.grid(row=0, column=4, padx=0, pady=0, sticky="nsew")
+            self._row4_fixed_col4_host.grid_propagate(False)
+            self._row4_fixed_col4_host.grid_rowconfigure(0, weight=1)
+            self._row4_fixed_col4_host.grid_columnconfigure(0, weight=1)
+
+            self._row4_action_frame = tk.Frame(self._row4_fixed_col4_host)
+            self._row4_action_frame.grid(
+                row=0, column=0, padx=(_hpad, 2), pady=6, sticky="nsew"
             )
-            self._color_processing_mode_combo.grid(row=0, column=1, sticky="ew")
-            self._color_processing_mode_combo.bind("<<ComboboxSelected>>", self._on_color_processing_mode_changed)
+            self._row4_action_frame.grid_columnconfigure(0, weight=1)
 
-            self._dpi_row_frame = tk.Frame(self._row4_action_frame)
-            self._dpi_row_frame.grid(row=1, column=0, sticky="ew", pady=(0, 4))
-            self._dpi_row_frame.grid_columnconfigure(1, weight=0)
-
-            self._dpi_label = BaseLabelClass(
-                fr=self._dpi_row_frame,
-                color_key="dpi_label",
-                text=message_manager.get_ui_message("U022"),
-            )
-            self._dpi_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
-
-            self._dpi_combo = BaseValueCombobox(
-                master=self._dpi_row_frame,
-                color_key="dpi_entry",
-                values=[str(value) for value in self._get_configured_dpi_choices()],
-                default_value=str(self.selected_dpi_value),
-                textvariable=self._dpi_choice_var,
-                width=12,
-                state="disabled",
-            )
-            self._dpi_combo.grid(row=0, column=1, sticky="w")
-            self._sync_dpi_combo_choices(preserve_current=False)
-
+            # Row order: toggles, DPI, Color Processing label, combo-only row below label, then Custom Rotation Guide.
             self._layer_toggle_frame = tk.Frame(self._row4_action_frame)
-            self._layer_toggle_frame.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            self._layer_toggle_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
             self._layer_toggle_frame.grid_columnconfigure(0, weight=1)
 
             self._show_base_layer_check = tk.Checkbutton(
@@ -4091,6 +4725,59 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             )
             self._show_reference_grid_check.grid(row=2, column=0, sticky="ew")
 
+            self._dpi_row_frame = tk.Frame(self._row4_action_frame)
+            self._dpi_row_frame.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+            self._dpi_row_frame.grid_columnconfigure(0, weight=0)
+            self._dpi_row_frame.grid_columnconfigure(1, weight=1)
+
+            self._dpi_label = BaseLabelClass(
+                fr=self._dpi_row_frame,
+                color_key="dpi_label",
+                text=message_manager.get_ui_message("U022"),
+            )
+            self._dpi_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
+
+            # ttk.Combobox often ignores grid stretch; pack inside a grid cell to fill column width.
+            self._dpi_combo_holder = tk.Frame(self._dpi_row_frame, bd=0, highlightthickness=0)
+            self._dpi_combo_holder.grid(row=0, column=1, sticky="nsew")
+            self._dpi_combo = BaseValueCombobox(
+                master=self._dpi_combo_holder,
+                color_key="dpi_entry",
+                values=[str(value) for value in self._get_configured_dpi_choices()],
+                default_value=str(self.selected_dpi_value),
+                textvariable=self._dpi_choice_var,
+                width=6,
+                state="disabled",
+            )
+            self._dpi_combo.pack(fill=tk.X, expand=True)
+            self._sync_dpi_combo_choices(preserve_current=False)
+
+            self._color_mode_label_row_frame = tk.Frame(self._row4_action_frame)
+            self._color_mode_label_row_frame.grid(row=2, column=0, sticky="ew", pady=(0, 2))
+            self._color_mode_label_row_frame.grid_columnconfigure(0, weight=1)
+            self._color_mode_label = BaseLabelClass(
+                fr=self._color_mode_label_row_frame,
+                color_key="dpi_label",
+                text=message_manager.get_ui_message("U136"),
+            )
+            self._color_mode_label.grid(row=0, column=0, sticky="w")
+
+            self._color_combo_only_row_frame = tk.Frame(self._row4_action_frame)
+            self._color_combo_only_row_frame.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+            self._color_combo_only_row_frame.grid_columnconfigure(0, weight=1)
+
+            self._color_processing_mode_combo = BaseValueCombobox(
+                master=self._color_combo_only_row_frame,
+                color_key="dpi_entry",
+                values=self._get_color_processing_mode_display_values(),
+                default_value=self._color_processing_mode_var.get(),
+                textvariable=self._color_processing_mode_var,
+                width=8,
+                state="disabled",
+            )
+            self._color_processing_mode_combo.pack(fill=tk.X, expand=True)
+            self._color_processing_mode_combo.bind("<<ComboboxSelected>>", self._on_color_processing_mode_changed)
+
             self._custom_rotation_guide_button = BaseButton(
                 fr=self._row4_action_frame,
                 color_key="process_button",
@@ -4100,26 +4787,50 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 bd=2,
                 highlightthickness=1,
             )
-            self._custom_rotation_guide_button.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+            self._custom_rotation_guide_button.grid(row=4, column=0, sticky="ew", pady=(8, 0))
 
-            self._row4_custom_column_frame = tk.Frame(self.frame_main2)
-            self._row4_custom_column_frame.grid(row=0, column=3, padx=(10, 8), pady=6, sticky="n")
+            self._row4_fixed_col6_host = tk.Frame(
+                self.frame_main2,
+                width=int(CreateComparisonFileApp._MAIN2_HOST6_WIDTH_PX),
+                highlightthickness=0,
+                bd=0,
+            )
+            self._row4_fixed_col6_host.grid(row=0, column=6, padx=0, pady=0, sticky="nsew")
+            self._row4_fixed_col6_host.grid_propagate(False)
+            self._row4_fixed_col6_host.grid_columnconfigure(0, weight=1)
+
+            self._row4_custom_column_frame = tk.Frame(self._row4_fixed_col6_host)
+            _h6x, _h6y = CreateComparisonFileApp._MAIN2_HOST6_CUSTOM_COLUMN_PADX_PX
+            self._row4_custom_column_frame.grid(
+                row=0, column=0, padx=(_h6x, _h6y), pady=(6, 8), sticky="nsew"
+            )
             self._row4_custom_column_frame.grid_columnconfigure(0, weight=1)
+            self._row4_fixed_col6_host.grid_rowconfigure(0, weight=1)
 
+            # Gutter columns center a narrow label over the square custom button (same column, row below).
             self._row4_custom_guidance_frame = tk.Frame(self._row4_custom_column_frame)
             self._row4_custom_guidance_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
             self._row4_custom_guidance_frame.grid_columnconfigure(0, weight=1)
+            self._row4_custom_guidance_frame.grid_columnconfigure(1, weight=0)
+            self._row4_custom_guidance_frame.grid_columnconfigure(2, weight=1)
+
+            self._row4_custom_guidance_inner = tk.Frame(
+                self._row4_custom_guidance_frame,
+                highlightthickness=0,
+                bd=0,
+            )
+            self._row4_custom_guidance_inner.grid(row=0, column=1, sticky="")
 
             self._row4_custom_guidance_label = tk.Label(
-                self._row4_custom_guidance_frame,
+                self._row4_custom_guidance_inner,
                 text=message_manager.get_ui_message("U147"),
-                anchor="center",
-                justify="center",
-                wraplength=156,
-                padx=10,
+                anchor="nw",
+                justify="left",
+                wraplength=0,
+                padx=4,
                 pady=6,
             )
-            self._row4_custom_guidance_label.grid(row=0, column=0, sticky="ew")
+            self._row4_custom_guidance_label.pack(anchor="w")
 
             self._row4_custom_frame = tk.Frame(
                 self._row4_custom_column_frame,
@@ -4131,32 +4842,14 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._row4_custom_frame.grid_rowconfigure(0, weight=1)
             self._row4_custom_frame.grid_columnconfigure(0, weight=1)
 
-            # Canvas for PDF comparison display with fallback for tab_bg
-            notebook_theme = ColorThemeManager.get_instance().get_current_theme().get("Notebook", {})
+            # Canvas uses a fixed white surface so preview linework stays visible in dark themes.
             self.canvas = tk.Canvas(
                 self.frame_main3,
-                bg=notebook_theme.get("tab_bg", notebook_theme.get("bg", "#1d1d29")),
+                bg=CreateComparisonFileApp._PREVIEW_CANVAS_BACKGROUND,
                 relief=tk.SUNKEN,
                 bd=2,
             )
-            self.canvas.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-
-            self._shortcut_guide_frame = tk.Frame(self.frame_main3)
-            self._shortcut_guide_frame.grid(row=1, column=0, padx=(6, 6), pady=(0, 6), sticky="ew")
-            self._shortcut_guide_frame.grid_columnconfigure(0, weight=1)
-
-            self._shortcut_guide_label = tk.Label(
-                self._shortcut_guide_frame,
-                text=message_manager.get_ui_message("U150"),
-                anchor="w",
-                justify="left",
-                wraplength=760,
-                padx=8,
-                pady=4,
-                font=("Helvetica", 9),
-            )
-            self._shortcut_guide_label.grid(row=0, column=0, sticky="ew")
-            self._shortcut_guide_frame.grid_remove()
+            self.canvas.grid(row=0, column=0, padx=5, pady=(1, 5), sticky="nsew")
 
             self._create_page_control_frame(self.page_count)
             self._render_comparison_placeholder()
@@ -4172,6 +4865,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 highlightcolor="#ffffff",
             )
             self._custom_execute_button.place(x=0, y=0, width=self._action_button_square_size, height=self._action_button_square_size)
+            self._custom_execute_button.bind("<ButtonPress-1>", self._prepare_custom_button_press_visual, add="+")
 
             self._apply_action_button_visual("automatic", False)
             self._apply_action_button_visual("custom", False)
@@ -4211,6 +4905,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             filetypes=[("PDF files", "*.pdf")],
         )
         if file_path:
+            self._base_pdf_session_committed = True
             self._base_file_path_entry.path_var.set(file_path)
             self.base_path.set(file_path)
             self.status_var.set("Base PDF route has been prepared. Use Analyze to validate the input side.")
@@ -4226,6 +4921,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             filetypes=[("PDF files", "*.pdf")],
         )
         if file_path:
+            self._comparison_pdf_session_committed = True
             self._comparison_file_path_entry.path_var.set(file_path)
             self.comparison_path.set(file_path)
             self.status_var.set("Comparison PDF route has been prepared. Use Analyze to validate the comparison side.")
@@ -4262,12 +4958,20 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """
         _ = event
         if target == "base":
+            if not self._base_file_path_entry.validate_current_path(show_warning=True):
+                return "break"
+            self._base_pdf_session_committed = True
             self.base_path.set(self._base_file_path_entry.path_var.get().strip())
             self._refresh_workspace_state()
         elif target == "comparison":
+            if not self._comparison_file_path_entry.validate_current_path(show_warning=True):
+                return "break"
+            self._comparison_pdf_session_committed = True
             self.comparison_path.set(self._comparison_file_path_entry.path_var.get().strip())
             self._refresh_workspace_state()
         else:
+            if not self._output_folder_path_entry.validate_current_path(show_warning=True):
+                return "break"
             self.output_path.set(self._output_folder_path_entry.path_var.get().strip())
             if self._has_loaded_workspace_pages():
                 self._display_page(self.current_page_index)
@@ -4278,9 +4982,26 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
     def _on_pdf_save_click(self) -> None:
         """Handle PDF save button click event."""
+        if not self._output_folder_path_entry.validate_current_path(show_warning=False):
+            messagebox.showwarning(
+                message_manager.get_ui_message("U033"),
+                message_manager.get_ui_message("U011"),
+                parent=self.winfo_toplevel(),
+            )
+            self._show_status_feedback(message_manager.get_ui_message("U011"), False)
+            return
+
+        self.output_path.set(self._output_folder_path_entry.path_var.get().strip())
         try:
             output_pdf_path = self._on_save_workspace_pdf()
             self._show_status_feedback(f"PDFを保存しました: {output_pdf_path}", True)
+        except ValueError as e:
+            messagebox.showwarning(
+                message_manager.get_ui_message("U033"),
+                str(e),
+                parent=self.winfo_toplevel(),
+            )
+            self._show_status_feedback(str(e), False)
         except Exception as e:
             logger.error(message_manager.get_log_message("L124", str(e)))
             self._show_status_feedback(f"PDFの保存に失敗しました: {e}", False)

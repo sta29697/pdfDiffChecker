@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import colorsys
 import tkinter as tk
+from tkinter import messagebox
 from logging import getLogger
 from typing import List, Tuple, Dict, Any, TypeAlias, Final, Optional
 from PIL import Image
@@ -82,6 +83,9 @@ def apply_color_processing_to_image(
         Processed ``RGBA`` image.
     """
     rgba_image = page_image.convert("RGBA") if page_image.mode != "RGBA" else page_image.copy()
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode in {"original", "none", "off", "raw"}:
+        return rgba_image
     pixel_array = np.asarray(rgba_image, dtype=np.uint8)
     rgb_total = pixel_array[:, :, 0].astype(np.uint16) + pixel_array[:, :, 1].astype(np.uint16) + pixel_array[:, :, 2].astype(np.uint16)
     alpha_channel = pixel_array[:, :, 3]
@@ -228,6 +232,96 @@ class PDFExportHandler:
                 "Failed to initialize export handler", {"error": str(e)}
             )
 
+    def _export_source_page_size(
+        self, page_index: int, fallback_w: int, fallback_h: int
+    ) -> tuple[int, int]:
+        """Return raster width/height for one page index from disk, or metadata fallback."""
+        if page_index < len(self.__base_pages):
+            try:
+                with Image.open(self.__base_pages[page_index]) as im:
+                    return int(im.width), int(im.height)
+            except Exception:
+                pass
+        if page_index < len(self.__comp_pages):
+            try:
+                with Image.open(self.__comp_pages[page_index]) as im:
+                    return int(im.width), int(im.height)
+            except Exception:
+                pass
+        return int(fallback_w), int(fallback_h)
+
+    def _compose_one_export_page(self, page_index: int, fallback_w: int, fallback_h: int) -> PILImage:
+        """Composite visible layers for one page using a tight canvas (handles sheet rotation).
+
+        Args:
+            page_index: Zero-based page index.
+            fallback_w: Default canvas width when no layer is drawn.
+            fallback_h: Default canvas height when no layer is drawn.
+
+        Returns:
+            RGB image for that PDF page.
+        """
+        pw, ph = self._export_source_page_size(page_index, fallback_w, fallback_h)
+        boxes: List[tuple[int, int, int, int]] = []
+        base_paste: Optional[tuple[PILImage, int, int]] = None
+        comp_paste: Optional[tuple[PILImage, int, int]] = None
+
+        if self.__show_base_layer and page_index < len(self.__base_pages):
+            r, offx, offy, scale = self.__base_transform_data[page_index]
+            base_img = Image.open(self.__base_pages[page_index]).convert("RGBA")
+            base_img = apply_color_processing_to_image(
+                base_img,
+                self.__color_processing_mode,
+                self.__base_selected_color,
+                self.__base_threshold,
+            )
+            new_w = int(base_img.width * scale)
+            new_h = int(base_img.height * scale)
+            base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            base_img = base_img.rotate(r, expand=True)
+            ox, oy = int(round(offx)), int(round(offy))
+            boxes.append((ox, oy, ox + base_img.width, oy + base_img.height))
+            base_paste = (base_img, ox, oy)
+
+        if self.__show_comp_layer and page_index < len(self.__comp_pages):
+            r, offx, offy, scale = self.__comp_transform_data[page_index]
+            comp_img = Image.open(self.__comp_pages[page_index]).convert("RGBA")
+            comp_img = apply_color_processing_to_image(
+                comp_img,
+                self.__color_processing_mode,
+                self.__comparison_selected_color,
+                self.__comparison_threshold,
+            )
+            new_w = int(comp_img.width * scale)
+            new_h = int(comp_img.height * scale)
+            comp_img = comp_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            comp_img = comp_img.rotate(r, expand=True)
+            if self.__show_base_layer:
+                alpha_channel = comp_img.getchannel("A")
+                softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))
+                comp_img.putalpha(softened_alpha)
+            ox, oy = int(round(offx)), int(round(offy))
+            boxes.append((ox, oy, ox + comp_img.width, oy + comp_img.height))
+            comp_paste = (comp_img, ox, oy)
+
+        if not boxes:
+            return Image.new("RGBA", (pw, ph), (255, 255, 255, 255)).convert("RGB")
+
+        min_x = min(b[0] for b in boxes)
+        min_y = min(b[1] for b in boxes)
+        max_x = max(b[2] for b in boxes)
+        max_y = max(b[3] for b in boxes)
+        bw = max(1, max_x - min_x)
+        bh = max(1, max_y - min_y)
+        blank_img = Image.new("RGBA", (bw, bh), (255, 255, 255, 255))
+        if base_paste is not None:
+            bi, bx, by = base_paste
+            blank_img.paste(bi, (bx - min_x, by - min_y), bi)
+        if comp_paste is not None:
+            ci, cx, cy = comp_paste
+            blank_img.paste(ci, (cx - min_x, cy - min_y), ci)
+        return blank_img.convert("RGB")
+
     def export_to_pdf(self, filename: str, parent_widget: tk.Widget) -> None:
         """Export all pages to a single PDF file. Warn if file exists (balloon message, multilingual).
 
@@ -244,6 +338,12 @@ class PDFExportHandler:
             # Get page size from metadata or use default values
             pdf_w = int(self.__pdf_metadata.get("page_width", DEFAULT_WIDTH))
             pdf_h = int(self.__pdf_metadata.get("page_height", DEFAULT_HEIGHT))
+            try:
+                pdf_resolution = float(self.__pdf_metadata.get("dpi", 72) or 72)
+            except (TypeError, ValueError):
+                pdf_resolution = 72.0
+            if pdf_resolution <= 0:
+                pdf_resolution = 72.0
 
             max_pages = max(len(self.__base_pages), len(self.__comp_pages))
             if max_pages == 0:
@@ -252,50 +352,7 @@ class PDFExportHandler:
 
             sample_pages: List[PILImage] = []
             for i in range(max_pages):
-                # Create a blank image with the specified size
-                blank_img = Image.new("RGBA", (pdf_w, pdf_h), (255, 255, 255, 255))
-
-                # Add base page if it exists
-                if self.__show_base_layer and i < len(self.__base_pages):
-                    r, offx, offy, scale = self.__base_transform_data[i]
-                    b_path = self.__base_pages[i]
-                    base_img = Image.open(b_path).convert("RGBA")
-                    base_img = apply_color_processing_to_image(
-                        base_img,
-                        self.__color_processing_mode,
-                        self.__base_selected_color,
-                        self.__base_threshold,
-                    )
-                    new_w = int(base_img.width * scale)
-                    new_h = int(base_img.height * scale)
-                    base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    base_img = base_img.rotate(r, expand=True)
-                    blank_img.paste(base_img, (int(offx), int(offy)), base_img)
-
-                # Add comparison page if it exists
-                if self.__show_comp_layer and i < len(self.__comp_pages):
-                    r, offx, offy, scale = self.__comp_transform_data[i]
-                    c_path = self.__comp_pages[i]
-                    comp_img = Image.open(c_path).convert("RGBA")
-                    comp_img = apply_color_processing_to_image(
-                        comp_img,
-                        self.__color_processing_mode,
-                        self.__comparison_selected_color,
-                        self.__comparison_threshold,
-                    )
-                    new_w = int(comp_img.width * scale)
-                    new_h = int(comp_img.height * scale)
-                    comp_img = comp_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    comp_img = comp_img.rotate(r, expand=True)
-                    if self.__show_base_layer:
-                        alpha_channel = comp_img.getchannel("A")
-                        softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))
-                        comp_img.putalpha(softened_alpha)
-                    blank_img.paste(comp_img, (int(offx), int(offy)), comp_img)
-
-                # Convert to RGB
-                final_page = blank_img.convert("RGB")
-                sample_pages.append(final_page)
+                sample_pages.append(self._compose_one_export_page(i, pdf_w, pdf_h))
 
             # Create output directory if it doesn't exist
             if not os.path.isdir(self.__output_folder):
@@ -303,13 +360,22 @@ class PDFExportHandler:
 
             output_pdf_path = os.path.join(self.__output_folder, filename)
 
-            # Overwrite warning (balloon, multilingual)
+            # Main processing: warn immediately before overwriting an existing file.
             if os.path.exists(output_pdf_path):
-                # U_OVERWRITE_WARN: Show overwrite warning message (multilingual)
-                show_balloon_message(parent_widget, message_manager.get_ui_message("U_OVERWRITE_WARN"))
+                messagebox.showwarning(
+                    message_manager.get_ui_message("U033"),
+                    message_manager.get_ui_message("U_OVERWRITE_WARN"),
+                    parent=parent_widget.winfo_toplevel(),
+                )
 
             first_page, *rest = sample_pages
-            first_page.save(output_pdf_path, save_all=True, append_images=rest)
+            # Main processing: preserve the original raster DPI so scale changes stay consistent after re-opening the PDF.
+            first_page.save(
+                output_pdf_path,
+                save_all=True,
+                append_images=rest,
+                resolution=pdf_resolution,
+            )
             logger.info(f"Successfully exported PDF to: {output_pdf_path}")
 
         except Exception as e:

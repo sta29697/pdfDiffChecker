@@ -201,6 +201,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
     def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
         """Synchronize shared base/output paths from persisted settings.
 
+        On idle (startup), if base points to an existing file, this tab shows the parent
+        folder locally only; shared settings keep the stored path unchanged.
+
         Args:
             event: Tkinter visibility event (unused).
         """
@@ -219,9 +222,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 base_value_to_apply = saved_base
                 saved_base_path = Path(saved_base)
                 if use_startup_normalization and saved_base_path.exists() and saved_base_path.is_file():
-                    # Main processing: avoid startup-time preview load by restoring only folder path.
+                    # Main processing: avoid startup-time preview load; do not persist folder to settings.
                     base_value_to_apply = str(saved_base_path.parent)
-                    UserSettingManager().update_setting("base_file_path", base_value_to_apply)
 
                 if self._base_file_path_entry.path_var.get() != base_value_to_apply:
                     self._base_file_path_entry.path_var.set(base_value_to_apply)
@@ -1052,6 +1054,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             fr=self.frame_main1,
             color_key="base_file_path_entry",
             entry_setting_key="base_file_path",
+            allow_files=True,
+            allow_directories=False,
         )
         self._base_file_path_entry.grid(column=1, row=0, padx=5, pady=8, sticky="ew")
         # Main processing: set placeholder on startup
@@ -1081,6 +1085,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             fr=self.frame_main1,
             color_key="output_folder_path_entry",
             entry_setting_key="output_folder_path",
+            allow_files=False,
+            allow_directories=True,
         )
         self._output_folder_path_entry.grid(column=1, row=1, padx=5, pady=8, sticky="ew")
         # Main processing: set placeholder on startup

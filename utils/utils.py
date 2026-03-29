@@ -77,6 +77,33 @@ def get_temp_dir() -> str:
         raise
 
 
+def create_unique_file_path(parent_dir: Path, base_name: str, extension: str) -> Path:
+    """Return a path to a new file that does not yet exist under ``parent_dir``.
+
+    If ``base_name + extension`` already exists, appends ``（1）``, ``（2）``, …
+    before the extension (full-width parentheses), matching main-tab export behavior.
+
+    Args:
+        parent_dir: Directory that will contain the file.
+        base_name: Filename stem without extension.
+        extension: Extension including the leading dot (e.g. ``".pdf"``).
+
+    Returns:
+        A non-existing file path (file is not created).
+    """
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    candidate_file = parent_dir / f"{base_name}{extension}"
+    if not candidate_file.exists():
+        return candidate_file
+
+    suffix_index = 1
+    while True:
+        numbered_file = parent_dir / f"{base_name}（{suffix_index}）{extension}"
+        if not numbered_file.exists():
+            return numbered_file
+        suffix_index += 1
+
+
 def create_directories(file_name: str | None = None) -> str:
     """Create necessary directories for the application.
 

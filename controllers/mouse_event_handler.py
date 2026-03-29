@@ -1,6 +1,8 @@
 from __future__ import annotations
 import sys
 import tkinter as tk
+from tkinter import messagebox
+import tkinter.font as tkfont
 import math
 import time
 from logging import getLogger
@@ -27,6 +29,11 @@ class MouseEventHandler:
             on_live_translation_update: Optional[Callable[[], None]] = None,
             operations_enabled: bool = True,
             blocked_message_code: str = "M055",
+            commit_keyboard_preview_rotation: Optional[Callable[[], None]] = None,
+            clear_keyboard_preview_rotation: Optional[Callable[[], None]] = None,
+            on_transform_commit_no_propagate: Optional[Callable[[], None]] = None,
+            sheet_rotate_guard: Optional[Callable[[], bool]] = None,
+            sheet_rotate_blocked_message_code: str = "U177",
         ) -> None:
         """Initialize the MouseEventHandler.
 
@@ -39,6 +46,12 @@ class MouseEventHandler:
             on_live_translation_update: Optional lightweight callback used during drag-only translation
             operations_enabled: Whether canvas operations (zoom/pan/rotate/transform) are enabled
             blocked_message_code: Message code to display when an operation is blocked
+            commit_keyboard_preview_rotation: Merge pending Ctrl+Shift preview rotation into layer data
+                before other transform shortcuts run.
+            clear_keyboard_preview_rotation: Drop pending Ctrl+Shift preview without merging (e.g. reset).
+            on_transform_commit_no_propagate: Optional refresh after per-page sheet rotation (skip batch copy).
+            sheet_rotate_guard: If set, Ctrl+Alt+R/L runs only when this returns True (e.g. dual-PDF main tab).
+            sheet_rotate_blocked_message_code: UI message code when the guard fails.
         """
         # Transform data and callbacks
         self.__layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]] = layer_transform_data
@@ -46,6 +59,13 @@ class MouseEventHandler:
         self.__visible_layers: Dict[int, bool] = visible_layers
         self.__on_transform_update: Callable[[], None] = on_transform_update
         self.__on_live_translation_update: Optional[Callable[[], None]] = on_live_translation_update
+        self.__commit_keyboard_preview_rotation: Optional[Callable[[], None]] = commit_keyboard_preview_rotation
+        self.__clear_keyboard_preview_rotation: Optional[Callable[[], None]] = clear_keyboard_preview_rotation
+        self.__on_transform_commit_no_propagate: Optional[Callable[[], None]] = (
+            on_transform_commit_no_propagate
+        )
+        self.__sheet_rotate_guard: Optional[Callable[[], bool]] = sheet_rotate_guard
+        self.__sheet_rotate_blocked_message_code: str = sheet_rotate_blocked_message_code
 
         # Tracking variables
         self.__dragging: bool = False
@@ -97,6 +117,7 @@ class MouseEventHandler:
         self.__notification_after_id: Optional[str] = None
         self.__shortcut_help_id: Optional[Union[int, tuple[int, ...]]] = None
         self.__help_display_id: Optional[int] = None
+        self.__help_footnote_id: Optional[int] = None
         self.__help_background_id: Optional[int] = None
         
         # UI state (M1-011: single source of truth for shortcut help visibility)
@@ -161,9 +182,12 @@ class MouseEventHandler:
         Args:
             visible: True to show, False to hide.
         """
-        if visible and not self.__shortcut_help_visible:
-            self._show_shortcut_help()
-        elif not visible and self.__shortcut_help_visible:
+        if visible:
+            if not self.__shortcut_help_visible:
+                self._show_shortcut_help()
+        else:
+            # Always remove canvas items tagged ``overlay_shortcut_help`` so orphaned
+            # overlays (e.g. after handler recreation) cannot stay visible or toggle oddly.
             self._hide_shortcut_help()
 
     def clear_overlays(self) -> None:
@@ -199,6 +223,7 @@ class MouseEventHandler:
         self.__notification_text_id = None
         self.__notification_border_id = None
         self.__help_display_id = None
+        self.__help_footnote_id = None
         self.__help_background_id = None
         self.__blocked_warning_ids = None
         self.__shortcut_help_visible = False
@@ -253,30 +278,16 @@ class MouseEventHandler:
             if not items_exist:
                 # Sync flag: items were deleted externally, reset state.
                 self.__help_display_id = None
+                self.__help_footnote_id = None
                 self.__help_background_id = None
                 self.__shortcut_help_visible = False
             else:
                 try:
-                    outer_pad = 12
-                    inner_pad = 10
-                    # Measure text size at current position (no temp move to avoid flicker).
-                    bbox = self.__canvas_ref.bbox(self.__help_display_id)
-                    if bbox is not None:
-                        text_w = bbox[2] - bbox[0]
-                        text_h = bbox[3] - bbox[1]
-                        rect_x2 = x0 + width - outer_pad
-                        rect_y1 = y0 + outer_pad
-                        rect_x1 = rect_x2 - text_w - 2 * inner_pad
-                        text_x = rect_x1 + inner_pad
-                        text_y = rect_y1 + inner_pad
-                        self.__canvas_ref.coords(self.__help_display_id, text_x, text_y)
-                        self.__canvas_ref.coords(
-                            self.__help_background_id,
-                            rect_x1,
-                            rect_y1,
-                            rect_x2,
-                            rect_y1 + text_h + 2 * inner_pad,
-                        )
+                    try:
+                        self.__canvas_ref.update_idletasks()
+                    except Exception:
+                        pass
+                    self._relayout_shortcut_help_overlay(x0, y0, width)
                 except Exception:
                     pass
 
@@ -322,6 +333,13 @@ class MouseEventHandler:
                         x0 + width - 10,
                         bottom - 10,
                     )
+            except Exception:
+                pass
+
+        # Main processing: shortcut help must stay above other overlay items.
+        if self.__shortcut_help_visible:
+            try:
+                self.__canvas_ref.tag_raise("overlay_shortcut_help")
             except Exception:
                 pass
 
@@ -551,17 +569,33 @@ class MouseEventHandler:
             canvas_widget: Canvas to attach to
         """
         self.__canvas_ref = canvas_widget
-        
+
+        if canvas_widget is not None:
+            try:
+                canvas_widget.delete("overlay_shortcut_help")
+            except Exception:
+                pass
+            self.__help_footnote_id = None
+            self.__help_display_id = None
+            self.__help_background_id = None
+            self.__shortcut_help_visible = False
+
         if canvas_widget is not None:
             # Set up keyboard bindings
             
             # Rotate 90 degrees to the right
             canvas_widget.bind('<Control-r>', self._on_rotate_right)
             canvas_widget.bind('<Control-R>', self._on_rotate_right)
-            
+
             # Rotate 90 degrees to the left
             canvas_widget.bind('<Control-l>', self._on_rotate_left)
             canvas_widget.bind('<Control-L>', self._on_rotate_left)
+
+            # Rotate every page sheet ±90° (Ctrl+Alt+R/L)
+            canvas_widget.bind('<Control-Alt-r>', self._on_rotate_sheet_right)
+            canvas_widget.bind('<Control-Alt-R>', self._on_rotate_sheet_right)
+            canvas_widget.bind('<Control-Alt-l>', self._on_rotate_sheet_left)
+            canvas_widget.bind('<Control-Alt-L>', self._on_rotate_sheet_left)
             
             # Flip vertically
             canvas_widget.bind('<Control-v>', self._on_flip_vertical)
@@ -574,7 +608,7 @@ class MouseEventHandler:
             # Reset to initial state
             canvas_widget.bind('<Control-b>', self._on_reset_transform)
             canvas_widget.bind('<Control-B>', self._on_reset_transform)
-            
+
             # Toggle shortcut help (Ctrl+? or Ctrl+Shift+H for help)
             canvas_widget.bind('<Control-question>', self._toggle_shortcut_help)
             canvas_widget.bind('<Control-slash>', self._toggle_shortcut_help)
@@ -795,9 +829,9 @@ class MouseEventHandler:
         """Handle mouse drag.
         
         Performs different operations based on modifier keys:
-        - Ctrl+drag: Rotate image around defined center point
+        - Ctrl+drag (rotation mode): Rotate around the pivot.
         - Drag: Move/pan image
-        - Ctrl+Shift+drag: Move/pan only the currently isolated visible layer
+        - Ctrl+Shift+drag (when not in rotation mode): Move/pan only the isolated visible layer
         
         Args:
             event: Mouse event
@@ -815,8 +849,8 @@ class MouseEventHandler:
         ctrl_shift_pressed = self._is_ctrl_shift_pressed(state)
         target_layer_ids = self._get_transform_target_layer_ids(ctrl_pressed=ctrl_pressed)
 
-        # Check if we're in rotation mode with Ctrl key
-        if ctrl_pressed and not ctrl_shift_pressed and self.__rotation_mode:
+        # Check if we're in rotation mode.
+        if ctrl_pressed and self.__rotation_mode:
             # Discard stale queued events: check real-time Ctrl state (M1-006).
             if not self._is_ctrl_physically_pressed():
                 self._on_ctrl_key_release(event)
@@ -974,12 +1008,11 @@ class MouseEventHandler:
         # Check if Ctrl is still pressed
         state = int(event.state)
         ctrl_pressed = self._is_ctrl_pressed(state)
-        ctrl_shift_pressed = self._is_ctrl_shift_pressed(state)
-        
+
         # Handle rotation mode completion
         if self.__rotation_mode:
             # Main processing: keep M042 visible until Ctrl is released.
-            if ctrl_pressed and not ctrl_shift_pressed:
+            if ctrl_pressed:
                 self.__rotation_active = False
                 self.__rotation_drag_base_rotations = {}
                 self.__rotation_drag_base_transforms = {}
@@ -1078,6 +1111,8 @@ class MouseEventHandler:
         ctrl_pressed = self._is_ctrl_pressed(state)
         if not self.__operations_enabled:
             return
+
+        self._maybe_commit_keyboard_preview_rotation()
 
         # Apply zoom to visible layers
         zoom_factor = 1.1 if direction > 0 else 0.9
@@ -1299,18 +1334,75 @@ class MouseEventHandler:
     def _hide_shortcut_help(self) -> None:
         """Hide the shortcut help display."""
         if self.__canvas_ref is None:
-            return
-            
-        if self.__help_display_id is not None:
-            self.__canvas_ref.delete(self.__help_display_id)
+            self.__help_footnote_id = None
             self.__help_display_id = None
-            
-        if self.__help_background_id is not None:
-            self.__canvas_ref.delete(self.__help_background_id)
             self.__help_background_id = None
-            
+            self.__shortcut_help_visible = False
+            return
+
+        try:
+            self.__canvas_ref.delete("overlay_shortcut_help")
+        except Exception:
+            pass
+        self.__help_footnote_id = None
+        self.__help_display_id = None
+        self.__help_background_id = None
         self.__shortcut_help_visible = False
         
+    def _apply_rotation_delta_current_page_visible_layers(self, delta_deg: float) -> None:
+        """Add ``delta_deg`` to rotation for the current page on each visible layer.
+
+        Args:
+            delta_deg: Degrees to add (may be negative).
+        """
+        for layer_id, visible in self.__visible_layers.items():
+            if not visible:
+                continue
+            if (
+                layer_id in self.__layer_transform_data
+                and self.__current_page_index < len(self.__layer_transform_data[layer_id])
+            ):
+                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
+                self.__layer_transform_data[layer_id][self.__current_page_index] = (
+                    r + float(delta_deg),
+                    x,
+                    y,
+                    s,
+                )
+        self.__on_transform_update()
+
+    def _apply_rotation_delta_all_pages_visible_layers(self, delta_deg: float) -> None:
+        """Add ``delta_deg`` to rotation on every page for each visible layer.
+
+        Used for Ctrl+Alt+R/L (per-sheet rotation) without copying one page to all.
+
+        Args:
+            delta_deg: Degrees to add (may be negative).
+        """
+        for layer_id, visible in self.__visible_layers.items():
+            if not visible:
+                continue
+            if layer_id not in self.__layer_transform_data:
+                continue
+            page_list = self.__layer_transform_data[layer_id]
+            for page_index in range(len(page_list)):
+                r, x, y, s = page_list[page_index]
+                page_list[page_index] = (r + float(delta_deg), x, y, s)
+        if self.__on_transform_commit_no_propagate is not None:
+            self.__on_transform_commit_no_propagate()
+        else:
+            self.__on_transform_update()
+
+    def _maybe_commit_keyboard_preview_rotation(self) -> None:
+        """Merge pending Ctrl+Shift preview rotation before another transform shortcut."""
+        if self.__commit_keyboard_preview_rotation is not None:
+            self.__commit_keyboard_preview_rotation()
+
+    def _maybe_clear_keyboard_preview_rotation(self) -> None:
+        """Discard pending Ctrl+Shift preview without merging (e.g. reset shortcut)."""
+        if self.__clear_keyboard_preview_rotation is not None:
+            self.__clear_keyboard_preview_rotation()
+
     def _on_rotate_right(self, event: tk.Event) -> str | None:
         """Handle Ctrl+R keyboard shortcut.
         
@@ -1320,25 +1412,10 @@ class MouseEventHandler:
         if not self.__operations_enabled:
             return "break"
 
-        # Rotate visible layers 90 degrees clockwise
-        for layer_id, visible in self.__visible_layers.items():
-            if not visible:
-                continue
-                
-            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                new_r = r + 90
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
-                
-        # Update display
-        self.__on_transform_update()
-        
-        # Show notification
+        self._maybe_commit_keyboard_preview_rotation()
+        self._apply_rotation_delta_current_page_visible_layers(90.0)
         self._show_notification(self.__msg_mgr.get_message('M044'))  # M044: Rotated right 90°
-        
-        # Log rotation
         logger.debug(message_manager.get_log_message("L337", "right"))
-        
         return "break"  # Prevent default handling
         
     def _on_rotate_left(self, event: tk.Event) -> str | None:
@@ -1350,26 +1427,53 @@ class MouseEventHandler:
         if not self.__operations_enabled:
             return "break"
 
-        # Rotate visible layers 90 degrees counter-clockwise
-        for layer_id, visible in self.__visible_layers.items():
-            if not visible:
-                continue
-                
-            if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                new_r = r - 90
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
-                
-        # Update display
-        self.__on_transform_update()
-        
-        # Show notification
+        self._maybe_commit_keyboard_preview_rotation()
+        self._apply_rotation_delta_current_page_visible_layers(-90.0)
         self._show_notification(self.__msg_mgr.get_message('M045'))  # M045: Rotated left 90°
-        
-        # Log rotation
         logger.debug(message_manager.get_log_message("L337", "left"))
-        
         return "break"  # Prevent default handling
+
+    def _on_rotate_sheet_right(self, event: tk.Event) -> str | None:
+        """Handle Ctrl+Alt+R: +90° on every page (visible layers)."""
+        if not self.__operations_enabled:
+            return "break"
+        if self.__sheet_rotate_guard is not None and not self.__sheet_rotate_guard():
+            try:
+                top = event.widget.winfo_toplevel()
+            except Exception:
+                top = None
+            messagebox.showinfo(
+                message_manager.get_ui_message("U056"),
+                message_manager.get_ui_message(self.__sheet_rotate_blocked_message_code),
+                parent=top,
+            )
+            return "break"
+        self._maybe_commit_keyboard_preview_rotation()
+        self._apply_rotation_delta_all_pages_visible_layers(90.0)
+        self._show_notification(self.__msg_mgr.get_message("M061"))
+        logger.debug(message_manager.get_log_message("L337", "sheet_right"))
+        return "break"
+
+    def _on_rotate_sheet_left(self, event: tk.Event) -> str | None:
+        """Handle Ctrl+Alt+L: −90° on every page (visible layers)."""
+        if not self.__operations_enabled:
+            return "break"
+        if self.__sheet_rotate_guard is not None and not self.__sheet_rotate_guard():
+            try:
+                top = event.widget.winfo_toplevel()
+            except Exception:
+                top = None
+            messagebox.showinfo(
+                message_manager.get_ui_message("U056"),
+                message_manager.get_ui_message(self.__sheet_rotate_blocked_message_code),
+                parent=top,
+            )
+            return "break"
+        self._maybe_commit_keyboard_preview_rotation()
+        self._apply_rotation_delta_all_pages_visible_layers(-90.0)
+        self._show_notification(self.__msg_mgr.get_message("M062"))
+        logger.debug(message_manager.get_log_message("L337", "sheet_left"))
+        return "break"
         
     def _on_flip_vertical(self, event: tk.Event) -> str | None:
         """Handle Ctrl+V keyboard shortcut.
@@ -1380,6 +1484,7 @@ class MouseEventHandler:
         if not self.__operations_enabled:
             return "break"
 
+        self._maybe_commit_keyboard_preview_rotation()
         # Flip visible layers vertically (180° rotation)
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -1410,6 +1515,7 @@ class MouseEventHandler:
         if not self.__operations_enabled:
             return "break"
 
+        self._maybe_commit_keyboard_preview_rotation()
         # Flip visible layers horizontally (horizontal mirror)
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
@@ -1440,6 +1546,7 @@ class MouseEventHandler:
         if not self.__operations_enabled:
             return "break"
 
+        self._maybe_clear_keyboard_preview_rotation()
         # Reset all transforms to identity
         for layer_id, visible in self.__visible_layers.items():
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
@@ -1455,7 +1562,100 @@ class MouseEventHandler:
         logger.debug(message_manager.get_log_message("L339", "reset_transform"))
         
         return "break"  # Prevent default handling
-        
+
+    def _relayout_shortcut_help_overlay(self, x0: int, y0: int, canvas_width: int) -> None:
+        """Place M049 header, optional M049F footnotes, and shared background (top-right box)."""
+        if self.__canvas_ref is None or self.__help_display_id is None:
+            return
+        outer_pad = 12
+        inner_pad = 10
+        wrap_w = self._shortcut_help_wrap_width(canvas_width)
+        try:
+            self.__canvas_ref.itemconfigure(self.__help_display_id, width=wrap_w)
+            if self.__help_footnote_id is not None:
+                self.__canvas_ref.itemconfigure(self.__help_footnote_id, width=wrap_w)
+        except Exception:
+            pass
+        self.__canvas_ref.update_idletasks()
+        bm = self.__canvas_ref.bbox(self.__help_display_id)
+        if bm is None:
+            return
+        mw, mh = bm[2] - bm[0], bm[3] - bm[1]
+        bf = (
+            self.__canvas_ref.bbox(self.__help_footnote_id)
+            if self.__help_footnote_id is not None
+            else None
+        )
+        fw = (bf[2] - bf[0]) if bf is not None else 0
+        fh = (bf[3] - bf[1]) if bf is not None else 0
+        maxw = max(mw, fw, 1)
+        rect_x2 = x0 + canvas_width - outer_pad
+        rect_y1 = y0 + outer_pad
+        text_x = rect_x2 - maxw - 2 * inner_pad
+        text_y = rect_y1 + inner_pad
+        self.__canvas_ref.coords(self.__help_display_id, text_x, text_y)
+        gap = 10
+        if self.__help_footnote_id is not None and fh > 0:
+            self.__canvas_ref.coords(
+                self.__help_footnote_id,
+                text_x,
+                text_y + mh + gap,
+            )
+        self.__canvas_ref.update_idletasks()
+        bm2 = self.__canvas_ref.bbox(self.__help_display_id)
+        if bm2 is None or self.__help_background_id is None:
+            return
+        ul, ut, ur, ubt = bm2[0], bm2[1], bm2[2], bm2[3]
+        if self.__help_footnote_id is not None:
+            bf2 = self.__canvas_ref.bbox(self.__help_footnote_id)
+            if bf2 is not None:
+                ul = min(ul, bf2[0])
+                ut = min(ut, bf2[1])
+                ur = max(ur, bf2[2])
+                ubt = max(ubt, bf2[3])
+        self.__canvas_ref.coords(
+            self.__help_background_id,
+            ul - inner_pad,
+            ut - inner_pad,
+            ur + inner_pad,
+            ubt + inner_pad,
+        )
+        try:
+            self.__canvas_ref.tag_raise(self.__help_display_id, self.__help_background_id)
+            if self.__help_footnote_id is not None:
+                self.__canvas_ref.tag_raise(self.__help_footnote_id, self.__help_background_id)
+                self.__canvas_ref.tag_raise(self.__help_footnote_id, self.__help_display_id)
+        except Exception:
+            pass
+
+    def _shortcut_help_wrap_width(self, canvas_width: int) -> int:
+        """Width for M049 overlay: fit shortcut block; M049F uses the same width on a separate item.
+
+        Args:
+            canvas_width: Visible canvas width in pixels.
+
+        Returns:
+            Width argument for ``Canvas.create_text`` / ``itemconfigure(..., width=...)``.
+        """
+        outer_pad = 12
+        inner_pad = 10
+        measure_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
+        max_px = 0.0
+        for block in (
+            self.__msg_mgr.get_message("M049"),
+            self.__msg_mgr.get_message("M049F"),
+        ):
+            for raw in block.split("\n"):
+                line = raw.replace("\r", "")
+                if not line.strip():
+                    continue
+                m = float(measure_font.measure(line))
+                if m > max_px:
+                    max_px = m
+        desired = int(max_px) + 20
+        avail = max(canvas_width - outer_pad * 2 - 2 * inner_pad - 8, 120)
+        return max(min(desired, avail), 120)
+
     def _toggle_shortcut_help(self, event: tk.Event) -> str | None:
         """Handle Ctrl+? keyboard shortcut to show/hide keyboard shortcuts.
         
@@ -1484,51 +1684,58 @@ class MouseEventHandler:
         # First hide if already displayed
         self._hide_shortcut_help()
         
+        try:
+            self.__canvas_ref.update_idletasks()
+        except Exception:
+            pass
         x0, y0 = self._get_visible_origin()
         canvas_width = self.__canvas_ref.winfo_width()
-        outer_pad = 12
-        inner_pad = 10
+        wrap_w = self._shortcut_help_wrap_width(canvas_width)
 
-        # Main processing: create help text in green, measure, then position at top-right.
-        help_text = self.__msg_mgr.get_message('M049')  # M049: Keyboard Shortcuts (help overlay)
-        self.__help_display_id = self.__canvas_ref.create_text(
-            0, 0,  # temporary position
-            text=help_text,
-            fill="#008000",
-            font=("Helvetica", 12, "bold"),
-            justify=tk.LEFT,
-            anchor="nw",
-            tags=("overlay", "overlay_shortcut_help"),
-        )
+        header_text = self.__msg_mgr.get_message("M049")
+        foot_text = self.__msg_mgr.get_message("M049F").strip()
 
-        # Measure text size, then compute top-right position
-        self.__canvas_ref.update_idletasks()
-        bbox = self.__canvas_ref.bbox(self.__help_display_id)
-        if bbox is None:
-            bbox = (0, 0, 200, 80)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-
-        rect_x2 = x0 + canvas_width - outer_pad
-        rect_y1 = y0 + outer_pad
-        rect_x1 = rect_x2 - text_w - 2 * inner_pad
-        text_x = rect_x1 + inner_pad
-        text_y = rect_y1 + inner_pad
-
-        self.__canvas_ref.coords(self.__help_display_id, text_x, text_y)
-
-        # Main processing: create a light yellow background with a darker yellow border.
+        # Background first so header/footnote text stacks above it.
         self.__help_background_id = self.__canvas_ref.create_rectangle(
-            rect_x1,
-            rect_y1,
-            rect_x2,
-            rect_y1 + text_h + 2 * inner_pad,
+            0,
+            0,
+            1,
+            1,
             fill="#fff2a8",
             outline="#e6c200",
             width=2,
             tags=("overlay", "overlay_shortcut_help"),
         )
-        self.__canvas_ref.tag_raise(self.__help_display_id, self.__help_background_id)
-        
+        self.__help_display_id = self.__canvas_ref.create_text(
+            0,
+            0,
+            text=header_text,
+            width=wrap_w,
+            fill="#008000",
+            font=("Helvetica", 10, "bold"),
+            justify=tk.LEFT,
+            anchor="nw",
+            tags=("overlay", "overlay_shortcut_help"),
+        )
+        self.__help_footnote_id = None
+        if foot_text:
+            self.__help_footnote_id = self.__canvas_ref.create_text(
+                0,
+                0,
+                text=foot_text,
+                width=wrap_w,
+                fill="#008000",
+                font=("Helvetica", 10, "bold"),
+                justify=tk.LEFT,
+                anchor="nw",
+                tags=("overlay", "overlay_shortcut_help"),
+            )
+
+        self._relayout_shortcut_help_overlay(x0, y0, canvas_width)
+        try:
+            self.__canvas_ref.tag_raise("overlay_shortcut_help")
+        except Exception:
+            pass
+
         self.__shortcut_help_visible = True
         self.refresh_overlay_positions()

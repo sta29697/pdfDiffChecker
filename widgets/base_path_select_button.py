@@ -109,9 +109,8 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
                     title=message_manager.get_ui_message("U003"),
                     filetypes=[("PDF files", "*.pdf"), ("TIFF files", "*.tif")],
                 )
-                if file_path:
+                if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)
-                    self.__share_path_entry.path_var.set(str(path))
                     self.__path_info = FilePathInfo(path)
             elif self.__entry_setting_key == "comparison_file_path":
                 # Dialog title for selecting comparison file
@@ -119,18 +118,16 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
                     title=message_manager.get_ui_message("U003"),
                     filetypes=[("PDF files", "*.pdf"), ("TIFF files", "*.tif")],
                 )
-                if file_path:
+                if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)
-                    self.__share_path_entry.path_var.set(str(path))
                     self.__path_info = FilePathInfo(path)
             else:
                 # Dialog title for selecting folder
                 folder_path = fd.askdirectory(
                     title=message_manager.get_ui_message("U032")
                 )
-                if folder_path:
+                if folder_path and self.__share_path_entry.accept_dialog_path(str(Path(folder_path))):
                     path = Path(folder_path)
-                    self.__share_path_entry.path_var.set(str(path))
                     self.__path_info = FolderPathInfo(path)
         except Exception as e:
             # Failed to select path: use specific log code based on entry_setting_key
