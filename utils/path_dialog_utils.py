@@ -5,6 +5,7 @@ from tkinter import filedialog
 from typing import Any, List, Tuple, Optional
 from logging import getLogger
 from configurations.message_manager import get_message_manager
+from utils.path_normalization import normalize_host_path
 
 logger = getLogger(__name__)
 # Obtain the singleton message manager instance
@@ -40,7 +41,9 @@ def ask_file_dialog(
         file_path = filedialog.askopenfilename(
             **dialog_kwargs,
         )
-        return file_path or None
+        if not file_path:
+            return None
+        return normalize_host_path(file_path)
     except Exception as e:
         logger.error(message_manager.get_log_message("L067", str(e)))
         return None
@@ -65,7 +68,9 @@ def ask_folder_dialog(
             initialdir=initialdir,
             title=title,
         )
-        return folder_path or None
+        if not folder_path:
+            return None
+        return normalize_host_path(folder_path)
     except Exception as e:
         logger.error(message_manager.get_log_message("L067", str(e)))
         return None

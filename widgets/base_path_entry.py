@@ -11,6 +11,7 @@ from configurations.user_setting_manager import UserSettingManager
 from controllers.color_theme_manager import ColorThemeManager
 from models.class_dictionary import FilePathInfo, FolderPathInfo
 from configurations.message_manager import get_message_manager
+from utils.path_normalization import normalize_host_path
 from widgets.base_entry import BaseEntry
 from themes.coloring_theme_interface import ColoringThemeIF
 from controllers.app_state import AppState
@@ -263,10 +264,11 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
         Returns:
             bool: ``True`` when the path was accepted and persisted; ``False`` otherwise.
         """
+        normalized = normalize_host_path(path_str)
         previous = self.path_var.get()
         self._suppress_callback = True
         try:
-            self.path_var.set(path_str)
+            self.path_var.set(normalized)
         finally:
             self._suppress_callback = False
         ok = self._set_path_obj_from_entry(self.path_var, show_warning=True)
@@ -291,7 +293,13 @@ class BasePathEntry(tk.Frame, ColoringThemeIF):
             bool: ``True`` when the current value points to a valid file or folder.
         """
         try:
-            path_str = path_var.get()
+            path_str = normalize_host_path(path_var.get())
+            if path_str != path_var.get():
+                self._suppress_callback = True
+                try:
+                    path_var.set(path_str)
+                finally:
+                    self._suppress_callback = False
             if not path_str:
                 self.path_obj = None
                 return False

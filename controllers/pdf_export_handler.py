@@ -6,17 +6,17 @@ from tkinter import messagebox
 from logging import getLogger
 from typing import List, Tuple, Dict, Any, TypeAlias, Final, Optional
 from PIL import Image
-from PIL.Image import Image as PILImage
+from PIL.Image import Image as PILImage, Transpose
 import numpy as np
 from configurations.message_manager import get_message_manager
+from utils.transform_tuple import as_transform6
+
 message_manager = get_message_manager()
 
 logger = getLogger(__name__)
 
 # Type aliases for better readability
-TransformData: TypeAlias = Tuple[
-    float, float, float, float
-]  # (rotation, offset_x, offset_y, scale)
+TransformData: TypeAlias = Tuple[float, ...]  # (r, offx, offy, scale[, flip_h, flip_v])
 ImagePath: TypeAlias = str
 PDFMetadata: TypeAlias = Dict[str, Any]
 
@@ -267,7 +267,7 @@ class PDFExportHandler:
         comp_paste: Optional[tuple[PILImage, int, int]] = None
 
         if self.__show_base_layer and page_index < len(self.__base_pages):
-            r, offx, offy, scale = self.__base_transform_data[page_index]
+            r, offx, offy, scale, flip_h, flip_v = as_transform6(self.__base_transform_data[page_index])
             base_img = Image.open(self.__base_pages[page_index]).convert("RGBA")
             base_img = apply_color_processing_to_image(
                 base_img,
@@ -275,16 +275,20 @@ class PDFExportHandler:
                 self.__base_selected_color,
                 self.__base_threshold,
             )
+            if flip_v:
+                base_img = base_img.transpose(Transpose.FLIP_TOP_BOTTOM)
+            if flip_h:
+                base_img = base_img.transpose(Transpose.FLIP_LEFT_RIGHT)
+            base_img = base_img.rotate(r, expand=True)
             new_w = int(base_img.width * scale)
             new_h = int(base_img.height * scale)
             base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            base_img = base_img.rotate(r, expand=True)
             ox, oy = int(round(offx)), int(round(offy))
             boxes.append((ox, oy, ox + base_img.width, oy + base_img.height))
             base_paste = (base_img, ox, oy)
 
         if self.__show_comp_layer and page_index < len(self.__comp_pages):
-            r, offx, offy, scale = self.__comp_transform_data[page_index]
+            r, offx, offy, scale, flip_h, flip_v = as_transform6(self.__comp_transform_data[page_index])
             comp_img = Image.open(self.__comp_pages[page_index]).convert("RGBA")
             comp_img = apply_color_processing_to_image(
                 comp_img,
@@ -292,10 +296,14 @@ class PDFExportHandler:
                 self.__comparison_selected_color,
                 self.__comparison_threshold,
             )
+            if flip_v:
+                comp_img = comp_img.transpose(Transpose.FLIP_TOP_BOTTOM)
+            if flip_h:
+                comp_img = comp_img.transpose(Transpose.FLIP_LEFT_RIGHT)
+            comp_img = comp_img.rotate(r, expand=True)
             new_w = int(comp_img.width * scale)
             new_h = int(comp_img.height * scale)
             comp_img = comp_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            comp_img = comp_img.rotate(r, expand=True)
             if self.__show_base_layer:
                 alpha_channel = comp_img.getchannel("A")
                 softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))

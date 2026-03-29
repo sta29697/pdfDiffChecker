@@ -11,8 +11,10 @@ import tkinter.font as tkfont
 from tkinter import messagebox
 from typing import Optional, Any, List, Dict, Literal
 from PIL import Image, ImageTk, ImageFile
-from PIL.Image import Resampling
+from PIL.Image import Resampling, Transpose
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+from utils.path_normalization import normalize_host_path
+from utils.transform_tuple import as_transform6, pack_transform6
 from utils.utils import (
     create_unique_file_path,
     get_resource_path,
@@ -796,14 +798,18 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             return
 
         if self._base_canvas_image_id is not None and self.current_page_index < len(self.base_transform_data):
-            _rotation, translate_x, translate_y, _scale = self.base_transform_data[self.current_page_index]
+            _rotation, translate_x, translate_y, _scale, _fh, _fv = as_transform6(
+                self.base_transform_data[self.current_page_index]
+            )
             try:
                 self.canvas.coords(self._base_canvas_image_id, int(translate_x), int(translate_y))
             except Exception:
                 pass
 
         if self._comp_canvas_image_id is not None and self.current_page_index < len(self.comp_transform_data):
-            _rotation, translate_x, translate_y, _scale = self.comp_transform_data[self.current_page_index]
+            _rotation, translate_x, translate_y, _scale, _fh, _fv = as_transform6(
+                self.comp_transform_data[self.current_page_index]
+            )
             try:
                 self.canvas.coords(self._comp_canvas_image_id, int(translate_x), int(translate_y))
             except Exception:
@@ -900,8 +906,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         for transform_data in (self.base_transform_data, self.comp_transform_data):
             if not transform_data or not (0 <= page_index < len(transform_data)):
                 continue
-            rotation, tx, ty, _scale = transform_data[page_index]
-            transform_data[page_index] = (rotation, tx, ty, self._preferred_preview_scale)
+            r, tx, ty, _scale, fh, fv = as_transform6(transform_data[page_index])
+            transform_data[page_index] = pack_transform6(r, tx, ty, self._preferred_preview_scale, fh, fv)
 
     def _update_preferred_preview_scale_from_current_page(self) -> None:
         """Refresh the persisted preview scale from the currently displayed page."""
@@ -2200,9 +2206,12 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         placeholder_output = message_manager.get_ui_message("U054")
 
         try:
-            saved_base = str(self.settings.get_setting("base_file_path", placeholder_file) or placeholder_file)
-            saved_comparison = str(self.settings.get_setting("comparison_file_path", placeholder_file) or placeholder_file)
-            saved_output = str(self.settings.get_setting("output_folder_path", placeholder_output) or placeholder_output)
+            _rb = str(self.settings.get_setting("base_file_path", placeholder_file) or placeholder_file)
+            _rc = str(self.settings.get_setting("comparison_file_path", placeholder_file) or placeholder_file)
+            _ro = str(self.settings.get_setting("output_folder_path", placeholder_output) or placeholder_output)
+            saved_base = _rb if _rb == placeholder_file else normalize_host_path(_rb)
+            saved_comparison = _rc if _rc == placeholder_file else normalize_host_path(_rc)
+            saved_output = _ro if _ro == placeholder_output else normalize_host_path(_ro)
 
             output_display = placeholder_output if saved_output == placeholder_output else saved_output
 
@@ -2750,7 +2759,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         Args:
             target_length: Required transform list length.
         """
-        default_transform = (0.0, 0.0, 0.0, self._preferred_preview_scale)
+        default_transform = pack_transform6(0.0, 0.0, 0.0, self._preferred_preview_scale, 0, 0)
         while len(self.base_transform_data) < len(self.base_pages):
             self.base_transform_data.append(default_transform)
         while len(self.comp_transform_data) < len(self.comp_pages):
@@ -2842,7 +2851,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             Export transform tuples.
         """
         resolved_export_transforms: List[tuple[float, float, float, float]] = []
-        for page_index, (rotation, _tx, _ty, _scale) in enumerate(preview_transform_data):
+        for page_index, raw_t in enumerate(preview_transform_data):
+            rotation, _tx, _ty, _scale, _fh, _fv = as_transform6(raw_t)
             export_override = export_override_data[page_index] if page_index < len(export_override_data) else {}
             resolved_export_transforms.append(
                 (
@@ -3346,21 +3356,25 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
     def _apply_transform_to_image(
         self,
         pil_image: Image.Image,
-        transform: tuple[float, float, float, float],
+        transform: tuple[float, ...],
     ) -> Image.Image:
-        """Apply rotation and scale to a rendered page image.
+        """Apply mirror, rotation, and scale to a rendered page image.
 
         Args:
             pil_image: Source page image.
-            transform: Transform tuple ``(rotation, tx, ty, scale)``.
+            transform: Transform tuple ``(rotation, tx, ty, scale[, flip_h, flip_v])``.
 
         Returns:
             Transformed PIL image.
         """
-        rotation, _translate_x, _translate_y, scale = transform
+        rotation, _translate_x, _translate_y, scale, flip_h, flip_v = as_transform6(transform)
         dpi_normalization = float(_MAIN_TAB_DEFAULT_DPI) / float(max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI)))
         effective_scale = max(0.01, float(scale) * dpi_normalization)
         transformed_image = pil_image
+        if flip_v:
+            transformed_image = transformed_image.transpose(Transpose.FLIP_TOP_BOTTOM)
+        if flip_h:
+            transformed_image = transformed_image.transpose(Transpose.FLIP_LEFT_RIGHT)
         if rotation != 0:
             transformed_image = transformed_image.rotate(rotation, resample=Resampling.BICUBIC, expand=True)
         if abs(effective_scale - 1.0) > 1e-6:
@@ -3530,7 +3544,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._comp_photo_image = None
 
         if base_image is not None and show_base_layer:
-            _, translate_x, translate_y, _ = self.base_transform_data[page_index]
+            _, translate_x, translate_y, _, _, _ = as_transform6(self.base_transform_data[page_index])
             self._base_photo_image = ImageTk.PhotoImage(base_image)
             self._base_canvas_image_id = self.canvas.create_image(
                 int(translate_x),
@@ -3549,7 +3563,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 alpha_channel = overlay_image.getchannel("A")
                 softened_alpha = alpha_channel.point(lambda value: int(value * 150 / 255))
                 overlay_image.putalpha(softened_alpha)
-            _, translate_x, translate_y, _ = self.comp_transform_data[page_index]
+            _, translate_x, translate_y, _, _, _ = as_transform6(self.comp_transform_data[page_index])
             self._comp_photo_image = ImageTk.PhotoImage(overlay_image)
             self._comp_canvas_image_id = self.canvas.create_image(
                 int(translate_x),
@@ -3617,49 +3631,51 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """Return the transform currently shown in the placeholder canvas.
 
         Returns:
-            Transform tuple ``(rotation, tx, ty, scale)``.
+            Transform tuple ``(rotation, tx, ty, scale)`` for the page-control UI (mirrors omitted).
         """
         d = float(self._preview_keyboard_rotation_delta) if abs(self._preview_keyboard_rotation_delta) > 1e-9 else 0.0
         idx = self.current_page_index
         show_b = bool(self._show_base_layer_var.get())
         show_c = bool(self._show_comp_layer_var.get())
         if show_b and self.base_transform_data and idx < len(self.base_transform_data):
-            r, tx, ty, s = self.base_transform_data[idx]
+            r, tx, ty, s, _fh, _fv = as_transform6(self.base_transform_data[idx])
             return (r + d, tx, ty, s)
         if show_c and self.comp_transform_data and idx < len(self.comp_transform_data):
-            r, tx, ty, s = self.comp_transform_data[idx]
+            r, tx, ty, s, _fh, _fv = as_transform6(self.comp_transform_data[idx])
             return (r + d, tx, ty, s)
         if self.base_transform_data and idx < len(self.base_transform_data):
-            return self.base_transform_data[idx]
+            r, tx, ty, s, _fh, _fv = as_transform6(self.base_transform_data[idx])
+            return (r, tx, ty, s)
         if self.comp_transform_data and idx < len(self.comp_transform_data):
-            return self.comp_transform_data[idx]
+            r, tx, ty, s, _fh, _fv = as_transform6(self.comp_transform_data[idx])
+            return (r, tx, ty, s)
         return (0.0, 0.0, 0.0, 1.0)
 
     def _transform_tuple_for_preview_render(
         self,
         page_index: int,
-        transform_tuple: tuple[float, float, float, float],
+        transform_tuple: tuple[float, ...],
         *,
         is_base_layer: bool,
-    ) -> tuple[float, float, float, float]:
+    ) -> tuple[float, float, float, float, int, int]:
         """Build a transform tuple including pending Ctrl+Shift preview rotation for drawing.
 
         Args:
             page_index: Page index being rendered.
-            transform_tuple: Stored ``(rotation, tx, ty, scale)``.
+            transform_tuple: Stored transform (4- or 6-tuple).
             is_base_layer: True when rendering the base layer.
 
         Returns:
             Tuple to pass to :meth:`_apply_transform_to_image` for this draw pass.
         """
-        r, x, y, s = transform_tuple
+        r, x, y, s, fh, fv = as_transform6(transform_tuple)
         if page_index != self.current_page_index or abs(self._preview_keyboard_rotation_delta) < 1e-9:
-            return (r, x, y, s)
+            return pack_transform6(r, x, y, s, fh, fv)
         if is_base_layer and not bool(self._show_base_layer_var.get()):
-            return (r, x, y, s)
+            return pack_transform6(r, x, y, s, fh, fv)
         if not is_base_layer and not bool(self._show_comp_layer_var.get()):
-            return (r, x, y, s)
-        return (r + float(self._preview_keyboard_rotation_delta), x, y, s)
+            return pack_transform6(r, x, y, s, fh, fv)
+        return pack_transform6(r + float(self._preview_keyboard_rotation_delta), x, y, s, fh, fv)
 
     def _commit_preview_keyboard_rotation(self) -> None:
         """Merge pending Ctrl+Shift preview rotation into stored transform data (then propagate if batch)."""
@@ -3671,11 +3687,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if not self._has_loaded_workspace_pages() or idx < 0:
             return
         if bool(self._show_base_layer_var.get()) and idx < len(self.base_transform_data):
-            r, x, y, s = self.base_transform_data[idx]
-            self.base_transform_data[idx] = (r + delta, x, y, s)
+            r, x, y, s, fh, fv = as_transform6(self.base_transform_data[idx])
+            self.base_transform_data[idx] = pack_transform6(r + delta, x, y, s, fh, fv)
         if bool(self._show_comp_layer_var.get()) and idx < len(self.comp_transform_data):
-            r, x, y, s = self.comp_transform_data[idx]
-            self.comp_transform_data[idx] = (r + delta, x, y, s)
+            r, x, y, s, fh, fv = as_transform6(self.comp_transform_data[idx])
+            self.comp_transform_data[idx] = pack_transform6(r + delta, x, y, s, fh, fv)
         self._on_transform_update()
 
     def _clear_preview_keyboard_rotation_only(self) -> None:
@@ -3941,7 +3957,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self.mouse_handler = None
             return
 
-        layer_transform_data: dict[int, list[tuple[float, float, float, float]]] = {}
+        layer_transform_data: dict[int, list[tuple[float, ...]]] = {}
         visible_layers: dict[int, bool] = {}
         if self.base_transform_data:
             layer_transform_data[0] = self.base_transform_data
@@ -4091,9 +4107,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """
         self._commit_preview_keyboard_rotation()
         if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
-            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+            _r, _x, _y, _s, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
+            self.base_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
         if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
-            self.comp_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+            _r, _x, _y, _s, fh, fv = as_transform6(self.comp_transform_data[self.current_page_index])
+            self.comp_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
         self._persist_preview_scale(scale)
         explicit_fields = set(changed_fields or set())
         self._apply_export_transform_overrides_for_current_page(tx, ty, scale, explicit_fields)
@@ -4189,8 +4207,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             return
 
         self._commit_preview_keyboard_rotation()
-        self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
-        self.comp_transform_data.insert(insert_position, (0.0, 0.0, 0.0, 1.0))
+        self.base_transform_data.insert(insert_position, pack_transform6(0.0, 0.0, 0.0, 1.0, 0, 0))
+        self.comp_transform_data.insert(insert_position, pack_transform6(0.0, 0.0, 0.0, 1.0, 0, 0))
         self._base_export_transform_overrides.insert(insert_position, {})
         self._comp_export_transform_overrides.insert(insert_position, {})
         self._sync_workspace_page_lists()
@@ -4906,11 +4924,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         )
         if file_path:
             self._base_pdf_session_committed = True
-            self._base_file_path_entry.path_var.set(file_path)
-            self.base_path.set(file_path)
+            norm = normalize_host_path(file_path)
+            self._base_file_path_entry.path_var.set(norm)
+            if not self._base_file_path_entry.validate_current_path(show_warning=True):
+                return
+            resolved = self._base_file_path_entry.path_var.get().strip()
+            self.base_path.set(resolved)
             self.status_var.set("Base PDF route has been prepared. Use Analyze to validate the input side.")
             self._refresh_workspace_state()
-            logger.debug(message_manager.get_log_message("L070", file_path))
+            logger.debug(message_manager.get_log_message("L070", resolved))
 
     def _on_comparison_file_select(self) -> None:
         """Handle comparison file selection event using common dialog."""
@@ -4922,11 +4944,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         )
         if file_path:
             self._comparison_pdf_session_committed = True
-            self._comparison_file_path_entry.path_var.set(file_path)
-            self.comparison_path.set(file_path)
+            norm = normalize_host_path(file_path)
+            self._comparison_file_path_entry.path_var.set(norm)
+            if not self._comparison_file_path_entry.validate_current_path(show_warning=True):
+                return
+            resolved = self._comparison_file_path_entry.path_var.get().strip()
+            self.comparison_path.set(resolved)
             self.status_var.set("Comparison PDF route has been prepared. Use Analyze to validate the comparison side.")
             self._refresh_workspace_state()
-            logger.debug(message_manager.get_log_message("L071", file_path))
+            logger.debug(message_manager.get_log_message("L071", resolved))
 
     def _on_output_folder_select(self) -> None:
         """Handle output folder selection event using common dialog."""
@@ -4936,15 +4962,19 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             title_code="U024",
         )
         if folder_path:
-            self._output_folder_path_entry.path_var.set(folder_path)
-            self.output_path.set(folder_path)
+            norm = normalize_host_path(folder_path)
+            self._output_folder_path_entry.path_var.set(norm)
+            if not self._output_folder_path_entry.validate_current_path(show_warning=True):
+                return
+            resolved = self._output_folder_path_entry.path_var.get().strip()
+            self.output_path.set(resolved)
             self.status_var.set("Output folder is ready for later comparison export.")
             if self._has_loaded_workspace_pages():
                 self._display_page(self.current_page_index)
             else:
                 self._render_comparison_placeholder()
             self._refresh_interaction_state()
-            logger.debug(message_manager.get_log_message("L072", folder_path))
+            logger.debug(message_manager.get_log_message("L072", resolved))
 
     def _on_path_entry_submit(self, target: str, event: Optional[tk.Event] = None) -> str:
         """Handle Enter-key submission from a path entry field.

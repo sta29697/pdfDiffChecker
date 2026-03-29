@@ -1,54 +1,68 @@
 # pdfDiffChecker
 
-A Tkinter-based application for comparing PDF files page by page, supporting advanced PDF/image operations, multi-language logging, and customizable color themes.
+Tkinter / ttk desktop app to compare two PDFs side by side, with extra tabs for PDF utilities, image and file-extension/size workflows, in-app help, and license documents. UI strings and logs support **Japanese and English**; **dark / light / pastel** themes are built from JSON under `themes/`.
 
 ## Features
-- Compare two PDF files visually, highlight differences
-- GUI built with Tkinter (ttk)
-- PDF rendering via pypdfium2
-- Image processing with Pillow
-- Multi-language support (Japanese/English) for UI and logs
-- Color theme selection and instant theme switching
-- Tabbed interface: PDF comparison, PDF operations, file extension/size tools, description, licenses
-- User settings saved to JSON
-- Logging with throttling and debug log output
-- Temporary files managed in a dedicated directory
-- Pytest-based testing ("tests" directory)
-- ER diagrams in "docs" directory
+
+- **Main** — Compare two PDFs, page navigation, canvas overlays, export-oriented actions (see `views/main_tab.py`).
+- **PDF operation** — PDF-focused tools (`views/pdf_ope_tab.py`).
+- **Image / file extension & size (U006)** — Image and conversion-style tools (`views/image_ope_tab.py`).
+- **Description** — Operational notes and links (`views/description.py`).
+- **Licenses** — Reads `licences_tree.txt` and `licences.txt` from the workspace (`views/licenses.py`).
+- PDF rendering via **pypdfium2**; raster work with **Pillow**; charts where used via **matplotlib**.
+- User settings persist as JSON (development: under the repo; **frozen / .exe**: under `%LocalAppData%\pdfDiffChecker\` — see `configurations/tool_settings.py`).
+- Throttled logging and optional `logs/debug.log` in development layout.
+- Tests under `tests/` (pytest). Additional diagrams under `docs/` (drawio, architecture markdown).
 
 ## Requirements
-- Python 3.12
-- uv
-- numpy
-- pillow
-- pdf2image
-- tkinterdnd2
-- matplotlib
-- pypdfium2
-- pypdf
 
-## Usage
-1. Install uv (if needed):
-   ```sh
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/)** for environments and runs  
+- Runtime Python packages are declared in **`pyproject.toml`** (e.g. numpy, pillow, pypdfium2, pypdf, pdf2image, matplotlib, tkinterdnd2, reportlab, svglib, typing-extensions). Prefer that file as the source of truth rather than duplicating full lists here.
+
+System packages may be needed for some PDF/raster paths (e.g. Poppler for `pdf2image` on some setups); adjust per your OS.
+
+## Usage (development)
+
+1. Install uv (Windows PowerShell example):
+
+   ```powershell
    irm https://astral.sh/uv/install.ps1 | iex
    ```
+
 2. Install dependencies:
+
    ```sh
    uv sync
    ```
+
 3. Run the application:
+
    ```sh
    uv run python main.py
    ```
 
-## Coding Guidelines
-- Comments and documentation: English
-- Variable and function names: English (snake_case)
-- Class names: PascalCase
-- Constants: UPPER_SNAKE_CASE
+## Windows onefile executable (optional)
+
+The repository includes **`build_nuitka.ps1`**, which builds **`pdfDiffChecker.exe`** (Nuitka standalone/onefile) under `build/nuitka/`. The `build/` directory is gitignored; distribute binaries via **GitHub Releases** (or similar), not by committing large `.exe` files to git.
+
+Example:
+
+```powershell
+.\build_nuitka.ps1 -OneFile
+```
+
+## Documentation
+
+- **Milestone / task plans**: `docs/milestone/`, `docs/tasks/`
+- **Architecture overview (Mermaid)**: `docs/architecture.md`
+- **License text**: `licences.txt`, `licences_tree.txt`
+
+## Coding guidelines
+
+- Comments and docstrings in code: **English** (project convention).
+- Names: `snake_case` functions, `PascalCase` classes, `UPPER_SNAKE_CASE` constants.
 
 ## License
-See `licences.txt` for license details.
 
----
-For more details, refer to the in-app description tab or documentation in the `docs` directory.
+See `licences.txt` for third-party and project license notes.

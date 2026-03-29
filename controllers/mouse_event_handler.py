@@ -9,6 +9,7 @@ from logging import getLogger
 from typing import Dict, List, Tuple, Optional, Callable, Union
 from configurations.message_manager import get_message_manager
 from utils.log_throttle import LogThrottle
+from utils.transform_tuple import as_transform6, pack_transform6
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
@@ -22,7 +23,7 @@ class MouseEventHandler:
     
     def __init__(
             self,
-            layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]],
+            layer_transform_data: Dict[int, List[Tuple[float, ...]]],
             current_page_index: int,
             visible_layers: Dict[int, bool],
             on_transform_update: Callable[[], None],
@@ -54,7 +55,7 @@ class MouseEventHandler:
             sheet_rotate_blocked_message_code: UI message code when the guard fails.
         """
         # Transform data and callbacks
-        self.__layer_transform_data: Dict[int, List[Tuple[float, float, float, float]]] = layer_transform_data
+        self.__layer_transform_data: Dict[int, List[Tuple[float, ...]]] = layer_transform_data
         self.__current_page_index: int = current_page_index
         self.__visible_layers: Dict[int, bool] = visible_layers
         self.__on_transform_update: Callable[[], None] = on_transform_update
@@ -446,7 +447,7 @@ class MouseEventHandler:
             if self.__current_page_index >= len(self.__layer_transform_data[layer_id]):
                 continue
             ux, uy = self.__rotation_center_img_offsets[layer_id]
-            r, tx, ty, s = self.__layer_transform_data[layer_id][self.__current_page_index]
+            r, tx, ty, s, _fh, _fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
             return self._image_offset_to_canvas(ux, uy, r, tx, ty, s)
         return (None, None)
 
@@ -544,7 +545,7 @@ class MouseEventHandler:
         self.__blocked_warning_ids = None
         self.__blocked_warning_after_id = None
         
-    def add_layer(self, layer_id: int, init_transform_data: List[Tuple[float, float, float, float]]) -> None:
+    def add_layer(self, layer_id: int, init_transform_data: List[Tuple[float, ...]]) -> None:
         """Add a new layer.
         
         Args:
@@ -788,8 +789,9 @@ class MouseEventHandler:
                     if not vis:
                         continue
                     if lid in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[lid]):
-                        r, tx, ty, s = self.__layer_transform_data[lid][self.__current_page_index]
-                        self.__rotation_drag_base_transforms[lid] = (r, tx, ty, s)
+                        tup6 = as_transform6(self.__layer_transform_data[lid][self.__current_page_index])
+                        r, tx, ty, s = tup6[0], tup6[1], tup6[2], tup6[3]
+                        self.__rotation_drag_base_transforms[lid] = pack_transform6(*tup6)
                         self.__rotation_drag_base_rotations[lid] = r
                         if have_img_size:
                             ux, uy = self._canvas_to_image_offset(center_x, center_y, r, tx, ty, s)
@@ -813,8 +815,9 @@ class MouseEventHandler:
                     if not vis:
                         continue
                     if lid in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[lid]):
-                        r, tx, ty, s = self.__layer_transform_data[lid][self.__current_page_index]
-                        self.__rotation_drag_base_transforms[lid] = (r, tx, ty, s)
+                        tup6 = as_transform6(self.__layer_transform_data[lid][self.__current_page_index])
+                        r, tx, ty, s = tup6[0], tup6[1], tup6[2], tup6[3]
+                        self.__rotation_drag_base_transforms[lid] = pack_transform6(*tup6)
                         self.__rotation_drag_base_rotations[lid] = r
 
                 # Recompute red dot canvas position from image coords
@@ -882,9 +885,9 @@ class MouseEventHandler:
                         if not visible:
                             continue
                         if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                            r, tx, ty, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                            self.__rotation_drag_base_rotations[layer_id] = r
-                            self.__rotation_drag_base_transforms[layer_id] = (r, tx, ty, s)
+                            tup6 = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                            self.__rotation_drag_base_rotations[layer_id] = tup6[0]
+                            self.__rotation_drag_base_transforms[layer_id] = pack_transform6(*tup6)
                     self._show_guidance_text(self.__msg_mgr.get_message('M042'))
              
             # Only apply rotation if active
@@ -939,7 +942,7 @@ class MouseEventHandler:
                     base_t = self.__rotation_drag_base_transforms.get(layer_id)
                     if base_t is None:
                         continue
-                    base_r, base_tx, base_ty, base_s = base_t
+                    base_r, base_tx, base_ty, base_s, base_fh, base_fv = as_transform6(base_t)
                     new_r = base_r + angle_diff
 
                     if have_img_size and layer_id in self.__rotation_center_img_offsets:
@@ -953,11 +956,15 @@ class MouseEventHandler:
                         rw_new, rh_new = self._compute_rotated_dims(new_r)
                         new_tx = px - base_s * (vx_new + rw_new / 2)
                         new_ty = py - base_s * (vy_new + rh_new / 2)
-                        self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, new_tx, new_ty, base_s)
+                        self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
+                            new_r, new_tx, new_ty, base_s, base_fh, base_fv
+                        )
                     else:
                         # Fallback: rotate without translation adjustment
-                        _, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                        self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
+                        cur = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                        self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
+                            new_r, cur[1], cur[2], cur[3], cur[4], cur[5]
+                        )
                 
                 # Main processing: update canvas; keep red dot at fixed canvas position during drag.
                 self.__on_transform_update()
@@ -975,14 +982,11 @@ class MouseEventHandler:
             for layer_id in target_layer_ids:
                 # Check if current page index is within range
                 if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                    r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                    
+                    r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+
                     # Movement
-                    self.__layer_transform_data[layer_id][self.__current_page_index] = (
-                        r,
-                        x + dx,
-                        y + dy,
-                        s,
+                    self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
+                        r, x + dx, y + dy, s, fh, fv
                     )
             
             # Update display only when necessary
@@ -1128,19 +1132,21 @@ class MouseEventHandler:
         # Apply zoom to the resolved target layers around canvas center
         for layer_id in target_layer_ids:
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                
+                r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+
                 # Calculate new scale
                 new_scale = s * zoom_factor
-                
+
                 # Adjust position to scale from center
                 dx = x - center_x
                 dy = y - center_y
                 new_x = center_x + dx * zoom_factor
                 new_y = center_y + dy * zoom_factor
-                
+
                 # Update transform data
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (r, new_x, new_y, new_scale)
+                self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
+                    r, new_x, new_y, new_scale, fh, fv
+                )
         
         # Update display
         self.__on_transform_update()
@@ -1362,12 +1368,9 @@ class MouseEventHandler:
                 layer_id in self.__layer_transform_data
                 and self.__current_page_index < len(self.__layer_transform_data[layer_id])
             ):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (
-                    r + float(delta_deg),
-                    x,
-                    y,
-                    s,
+                r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
+                    r + float(delta_deg), x, y, s, fh, fv
                 )
         self.__on_transform_update()
 
@@ -1386,8 +1389,8 @@ class MouseEventHandler:
                 continue
             page_list = self.__layer_transform_data[layer_id]
             for page_index in range(len(page_list)):
-                r, x, y, s = page_list[page_index]
-                page_list[page_index] = (r + float(delta_deg), x, y, s)
+                r, x, y, s, fh, fv = as_transform6(page_list[page_index])
+                page_list[page_index] = pack_transform6(r + float(delta_deg), x, y, s, fh, fv)
         if self.__on_transform_commit_no_propagate is not None:
             self.__on_transform_commit_no_propagate()
         else:
@@ -1485,15 +1488,14 @@ class MouseEventHandler:
             return "break"
 
         self._maybe_commit_keyboard_preview_rotation()
-        # Flip visible layers vertically (180° rotation)
+        # Flip visible layers vertically (mirror across horizontal midline).
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
                 continue
-                
+
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                new_r = r + 180
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
+                r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(r, x, y, s, fh, 1 - fv)
                 
         # Update display
         self.__on_transform_update()
@@ -1516,15 +1518,14 @@ class MouseEventHandler:
             return "break"
 
         self._maybe_commit_keyboard_preview_rotation()
-        # Flip visible layers horizontally (horizontal mirror)
+        # Flip visible layers horizontally (mirror across vertical midline).
         for layer_id, visible in self.__visible_layers.items():
             if not visible:
                 continue
-                
+
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                r, x, y, s = self.__layer_transform_data[layer_id][self.__current_page_index]
-                new_r = r + 180  # Technically this is a vertical flip + 180° rotation
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (new_r, x, y, s)
+                r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(r, x, y, s, 1 - fh, fv)
                 
         # Update display
         self.__on_transform_update()
@@ -1547,10 +1548,11 @@ class MouseEventHandler:
             return "break"
 
         self._maybe_clear_keyboard_preview_rotation()
-        # Reset all transforms to identity
+        # Reset rotation/translation/mirrors; keep current scale factor per layer.
         for layer_id, visible in self.__visible_layers.items():
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
-                self.__layer_transform_data[layer_id][self.__current_page_index] = (0.0, 0.0, 0.0, 1.0)  # Identity transform
+                _r, _x, _y, s, _fh, _fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
+                self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(0.0, 0.0, 0.0, s, 0, 0)
                 
         # Update display
         self.__on_transform_update()

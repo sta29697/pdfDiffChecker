@@ -11,7 +11,7 @@ from pathlib import Path
 
 # PIL imports
 from PIL import Image, ImageTk
-from PIL.Image import Resampling
+from PIL.Image import Resampling, Transpose
 from PIL.ImageFile import ImageFile
 
 from configurations.message_manager import get_message_manager
@@ -27,6 +27,8 @@ from widgets.base_label_class import BaseLabelClass
 from widgets.page_control_frame import PageControlFrame
 from utils.utils import create_unique_file_path, get_temp_dir
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+from utils.path_normalization import normalize_host_path
+from utils.transform_tuple import as_transform6, pack_transform6
 from controllers.file2png_by_page import Pdf2PngByPages
 from controllers.pdf_export_handler import PDFExportHandler
 from models.class_dictionary import FilePathInfo
@@ -161,7 +163,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Initialize page data structures
         self.base_pages: list[str] = []  # List of file paths for base pages
         self.base_page_paths: list[Path] = []
-        self.base_transform_data: list[Tuple[float, float, float, float]] = []  # For storing transform data for each page
+        self.base_transform_data: list[Tuple[float, ...]] = []  # (r,tx,ty,s[,fh,fv]) per page
         self.comp_transform_data: list[Tuple[float, float, float, float]] = []  # For comparison transform data
         
         # UI components
@@ -203,8 +205,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 and saved_base
                 and saved_base != placeholder_base
             ):
-                base_value_to_apply = saved_base
-                base_path_obj = Path(saved_base)
+                saved_norm = normalize_host_path(saved_base)
+                base_value_to_apply = saved_norm
+                base_path_obj = Path(saved_norm)
                 if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
                     # Main processing: avoid startup-time preview load; do not persist folder to settings.
                     base_value_to_apply = str(base_path_obj.parent)
@@ -213,24 +216,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     self._base_file_path_entry.path_var.set(base_value_to_apply)
                     self.base_path.set(base_value_to_apply)
 
+                loaded_norm = normalize_host_path(str(self._loaded_pdf_source_path or ""))
                 if (
                     not use_startup_normalization
                     and base_path_obj.exists()
                     and base_path_obj.is_file()
                     and base_path_obj.suffix.lower() == ".pdf"
-                    and str(base_path_obj) != str(self._loaded_pdf_source_path or "")
+                    and str(base_path_obj) != loaded_norm
                 ):
-                    self._load_and_display_pdf(saved_base)
+                    self._load_and_display_pdf(saved_norm)
 
             saved_output = UserSettingManager().get_setting("output_folder_path")
             if (
                 isinstance(saved_output, str)
                 and saved_output
                 and saved_output != placeholder_output
-                and self._output_folder_path_entry.path_var.get() != saved_output
             ):
-                self._output_folder_path_entry.path_var.set(saved_output)
-                self.output_path.set(saved_output)
+                out_norm = normalize_host_path(saved_output)
+                if self._output_folder_path_entry.path_var.get() != out_norm:
+                    self._output_folder_path_entry.path_var.set(out_norm)
+                    self.output_path.set(out_norm)
         except Exception as exc:
             logger.warning(f"Shared path sync failed in pdf tab: {exc}")
 
@@ -267,7 +272,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             return
         if not (0 <= self.current_page_index < len(self.base_transform_data)):
             return
-        _rotation, _tx, _ty, scale = self.base_transform_data[self.current_page_index]
+        _rotation, _tx, _ty, scale, _fh, _fv = as_transform6(self.base_transform_data[self.current_page_index])
         self._persist_preview_scale(scale)
 
     def _build_export_metadata(self) -> Dict[str, Any]:
@@ -543,7 +548,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Main processing: initialize page transforms with the persisted preferred scale.
             self.base_transform_data = [
-                (0.0, 0.0, 0.0, self._preferred_preview_scale)
+                pack_transform6(0.0, 0.0, 0.0, self._preferred_preview_scale, 0, 0)
                 for _ in range(self.page_count)
             ]
             
@@ -750,8 +755,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         idx = self.current_page_index
         if not (0 <= idx < len(self.base_transform_data)):
             return
-        r, x, y, s = self.base_transform_data[idx]
-        self.base_transform_data[idx] = (r + delta, x, y, s)
+        r, x, y, s, fh, fv = as_transform6(self.base_transform_data[idx])
+        self.base_transform_data[idx] = pack_transform6(r + delta, x, y, s, fh, fv)
         self._on_transform_update()
 
     def _clear_preview_keyboard_rotation_only(self) -> None:
@@ -864,26 +869,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Apply any transformations from transform data
             if hasattr(self, 'base_transform_data') and len(self.base_transform_data) > page_index:
                 # Get transform data for current page
-                rotation, translate_x, translate_y, scale = self.base_transform_data[page_index]
+                rotation, translate_x, translate_y, scale, flip_h, flip_v = as_transform6(
+                    self.base_transform_data[page_index]
+                )
                 rotation_draw = rotation
                 if page_index == self.current_page_index:
                     rotation_draw = rotation + float(self._preview_keyboard_rotation_delta)
 
-                # Apply transformations if needed
-                if abs(rotation_draw) > 1e-9 or scale != 1.0:
-                    # Apply rotation if needed (PIL can handle any rotation angle, not limited to 90 degree increments)
+                # Apply transformations: mirror → rotate → scale (same order as main tab / export).
+                if abs(rotation_draw) > 1e-9 or scale != 1.0 or flip_h or flip_v:
+                    if flip_v:
+                        pil_image = cast(Union[Image.Image, ImageFile], pil_image.transpose(Transpose.FLIP_TOP_BOTTOM))
+                    if flip_h:
+                        pil_image = cast(Union[Image.Image, ImageFile], pil_image.transpose(Transpose.FLIP_LEFT_RIGHT))
                     if abs(rotation_draw) > 1e-9:
-                        # Use cast to handle type compatibility
-                        # PIL can rotate by any angle - no need to normalize to 90 degree increments
                         rotated_image = pil_image.rotate(rotation_draw, resample=Resampling.BICUBIC, expand=True)
                         pil_image = cast(Union[Image.Image, ImageFile], rotated_image)
-                    
-                    # Apply scaling if needed
                     if scale != 1.0:
                         new_width = int(pil_image.width * scale)
                         new_height = int(pil_image.height * scale)
                         if new_width > 0 and new_height > 0:
-                            # Use cast to handle type compatibility
                             resized_image = pil_image.resize((new_width, new_height), Resampling.LANCZOS)
                             pil_image = cast(Union[Image.Image, ImageFile], resized_image)
             
@@ -898,7 +903,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             
             # Display image with any translation offset
             if hasattr(self, 'base_transform_data') and self.base_transform_data:
-                _, translate_x, translate_y, _ = self.base_transform_data[page_index]
+                _, translate_x, translate_y, _, _, _ = as_transform6(self.base_transform_data[page_index])
                 self.canvas.create_image(
                     int(translate_x), int(translate_y),
                     anchor="nw", 
@@ -961,7 +966,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Update transform info display (M1-008)
             if self.page_control_frame is not None and hasattr(self, 'base_transform_data'):
                 if page_index < len(self.base_transform_data):
-                    r, tx, ty, s = self.base_transform_data[page_index]
+                    r, tx, ty, s, _fh, _fv = as_transform6(self.base_transform_data[page_index])
                     r_panel = r + float(self._preview_keyboard_rotation_delta)
                     self.page_control_frame.update_transform_info(r_panel, tx, ty, s)
 
@@ -1857,7 +1862,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             return
 
         # Main processing: update transform data and refresh display.
-        self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+        _r, _x, _y, _s, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
+        self.base_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
         self._on_transform_update()
 
     def _reset_transform(self) -> None:
@@ -1868,7 +1874,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Reset transform data for the current page
         if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
             # Reset to default transform values (0 rotation, 0,0 position, 1.0 scale)
-            self.base_transform_data[self.current_page_index] = (0.0, 0.0, 0.0, 1.0)
+            _r, _x, _y, s, _fh, _fv = as_transform6(self.base_transform_data[self.current_page_index])
+            self.base_transform_data[self.current_page_index] = pack_transform6(0.0, 0.0, 0.0, s, 0, 0)
             self._on_transform_update()
     
     def _zoom_in(self) -> None:
@@ -1879,11 +1886,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Apply zoom by scaling
         if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
             # Get current transform data
-            rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
-            # Apply smoother zoom increment
+            rotation, tx, ty, scale, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
             scale *= 1.05  # Smaller increment for smoother zooming
-            # Update transform data
-            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+            self.base_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
             self._on_transform_update()
     
     def _zoom_out(self) -> None:
@@ -1894,11 +1899,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         # Apply zoom by scaling
         if hasattr(self, 'base_transform_data') and self.current_page_index < len(self.base_transform_data):
             # Get current transform data
-            rotation, tx, ty, scale = self.base_transform_data[self.current_page_index]
-            # Apply smoother zoom decrement
+            rotation, tx, ty, scale, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
             scale *= 0.95  # Smaller decrement for smoother zooming
-            # Update transform data
-            self.base_transform_data[self.current_page_index] = (rotation, tx, ty, scale)
+            self.base_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
             self._on_transform_update()
             
     def _go_to_first_page(self) -> None:
@@ -2050,7 +2053,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         
         # Update page count and transform data
         self.page_count += 1
-        self.base_transform_data.insert(insert_position, (0.0, 0.0, 0.0, self._preferred_preview_scale))
+        self.base_transform_data.insert(
+            insert_position, pack_transform6(0.0, 0.0, 0.0, self._preferred_preview_scale, 0, 0)
+        )
 
         # Main processing: insert new path into base_page_paths at the correct position.
         if hasattr(self, 'base_page_paths'):
@@ -2136,11 +2141,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             list[Tuple[float, float, float, float]]: Export transforms with preview
             zoom removed so saved pages always use ``1.0`` scale.
         """
-        export_transforms: list[Tuple[float, float, float, float]] = []
-        for rotation, translate_x, translate_y, _scale in self.base_transform_data:
-            export_transforms.append(
-                (float(rotation), float(translate_x), float(translate_y), 1.0)
-            )
+        export_transforms: list[Tuple[float, ...]] = []
+        for raw in self.base_transform_data:
+            rotation, translate_x, translate_y, _scale, fh, fv = as_transform6(raw)
+            export_transforms.append(pack_transform6(rotation, translate_x, translate_y, 1.0, fh, fv))
         return export_transforms
 
     def _on_complete_edit(self) -> None:

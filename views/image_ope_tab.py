@@ -31,6 +31,7 @@ from widgets.convert_image_button import ConvertImageButton
 from controllers.drag_and_drop_file import DragAndDropHandler
 from themes.coloring_theme_interface import ColoringThemeIF
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+from utils.path_normalization import normalize_host_path
 
 logger = getLogger(__name__)
 message_manager = get_message_manager()
@@ -219,8 +220,9 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 and saved_base
                 and saved_base != placeholder_base
             ):
-                base_value_to_apply = saved_base
-                saved_base_path = Path(saved_base)
+                saved_norm = normalize_host_path(saved_base)
+                base_value_to_apply = saved_norm
+                saved_base_path = Path(saved_norm)
                 if use_startup_normalization and saved_base_path.exists() and saved_base_path.is_file():
                     # Main processing: avoid startup-time preview load; do not persist folder to settings.
                     base_value_to_apply = str(saved_base_path.parent)
@@ -230,17 +232,18 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                     self.base_path.set(base_value_to_apply)
 
                 if not use_startup_normalization and saved_base_path.exists() and saved_base_path.is_file():
-                    self._update_file_info(saved_base)
+                    self._update_file_info(saved_norm)
 
             saved_output = UserSettingManager().get_setting("output_folder_path")
             if (
                 isinstance(saved_output, str)
                 and saved_output
                 and saved_output != placeholder_output
-                and self._output_folder_path_entry.path_var.get() != saved_output
             ):
-                self._output_folder_path_entry.path_var.set(saved_output)
-                self.output_path.set(saved_output)
+                out_norm = normalize_host_path(saved_output)
+                if self._output_folder_path_entry.path_var.get() != out_norm:
+                    self._output_folder_path_entry.path_var.set(out_norm)
+                    self.output_path.set(out_norm)
         except Exception as exc:
             logger.warning(f"Shared path sync failed in image operation tab: {exc}")
 
