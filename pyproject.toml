@@ -1,6 +1,6 @@
 [project]
 name = "pdfdiffchecker"
-version = "1.0.1"
+version = "1.0.2"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,4 +21,8 @@ dependencies = [
 dev = [
     "pytest>=8.4.2",
     "pytest-cov>=4.0.0",
+]
+# Nuitka onefile compression (pulls zstandard); not declared by other runtime deps.
+build = [
+    "nuitka[onefile]>=4.0.7",
 ]

@@ -35,8 +35,8 @@ $nuitkaArgs = @(
     "--output-filename=pdfDiffChecker.exe",
     "--company-name=pdfDiffChecker",
     "--product-name=PDF Diff Checker",
-    "--file-version=1.0.1.0",
-    "--product-version=1.0.1.0",
+    "--file-version=1.0.2.0",
+    "--product-version=1.0.2.0",
     "--enable-plugin=tk-inter",
     "--include-package-data=tkinterdnd2",
     "--include-data-dir=images=images",
@@ -73,7 +73,7 @@ Write-Host "ShowScons  : $ShowScons" -ForegroundColor DarkGray
 Write-Host "Verbose    : $VerboseBuild" -ForegroundColor DarkGray
 Write-Host "OneFile    : $OneFile" -ForegroundColor DarkGray
 
-& uv run --python $PythonVersion --with nuitka python @nuitkaArgs
+& uv run --python $PythonVersion --group build python @nuitkaArgs
 
 if ($OneFile) {
     $exePath = Join-Path $projectRoot (Join-Path $OutputDir "pdfDiffChecker.exe")
