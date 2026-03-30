@@ -699,18 +699,15 @@ class Pdf2PngByPages(BaseImageConverter):
             raise
 
     def _get_name_flag(self) -> str:
-        """Get the name flag based on the file path.
+        """Return the side flag set at construction (``base`` or ``comp``).
+
+        Path substring checks are unsafe (e.g. ``database`` contains ``base``,
+        ``compile`` contains ``comp``) and break expected ``base_`` / ``comp_`` PNG names.
 
         Returns:
-            str: Name flag ('base' or 'comp')
+            The ``name_flag`` passed to this converter's constructor.
         """
-        _path_str = str(self.file_info.file_path).lower()
-        if "base" in _path_str:
-            return "base"
-        elif "comp" in _path_str:
-            return "comp"
-        else:
-            return self._name_flag
+        return self._name_flag
 
 
 class Tiff2PngByPages(BaseImageConverter):
@@ -787,18 +784,12 @@ class Tiff2PngByPages(BaseImageConverter):
             raise
 
     def _get_name_flag(self) -> str:
-        """Get the name flag based on the file path.
+        """Return the side flag set at construction (``base`` or ``comp``).
 
         Returns:
-            str: Name flag ('base' or 'comp')
+            The ``name_flag`` passed to this converter's constructor.
         """
-        _path_str = str(self.file_info.file_path).lower()
-        if "base" in _path_str:
-            return "base"
-        elif "comp" in _path_str or "comparison" in _path_str:
-            return "comp"
-        else:
-            return self._name_flag
+        return self._name_flag
 
 
 def binarize_grayscale_images_in_folder(

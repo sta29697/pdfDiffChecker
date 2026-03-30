@@ -213,7 +213,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._current_custom_button_state = "off"
         self._action_button_square_size = 120
         self._action_button_active_delay_ms = 420
-        # Confirmed this session via dialog/drop/Enter, or restored from settings when the PDF still exists.
+        # After dialog/drop/Enter the entry shows the full PDF path; until then only the parent folder.
         self._base_pdf_session_committed: bool = False
         self._comparison_pdf_session_committed: bool = False
         self._shortcut_guide_en_row1: Optional[tk.Frame] = None
@@ -2230,10 +2230,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """Synchronize persisted paths into the main tab inputs.
 
         Args:
-            event: Tkinter visibility or notebook tab-change event (unused). Existing
-                PDF paths loaded from settings are treated as committed so the preview
-                restores after restart; uncommitted sides still show the parent folder
-                until the user confirms via dialog, drop, or Enter.
+            event: Tkinter visibility or notebook tab-change event (unused). PDF paths
+                from settings show as the parent folder in the entry until the user
+                commits the side via dialog, drop, or Enter; preview uses
+                ``base_path`` / ``comparison_path`` only after they hold file paths.
         """
         _ = event
         placeholder_file = message_manager.get_ui_message("U053")
@@ -2246,13 +2246,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             saved_base = self._coerce_main_tab_saved_file_path(_rb, placeholder_file)
             saved_comparison = self._coerce_main_tab_saved_file_path(_rc, placeholder_file)
             saved_output = self._coerce_main_tab_saved_folder_path(_ro, placeholder_output)
-
-            # User settings file (e.g. %LOCALAPPDATA%\\pdfDiffChecker\\... in production) stores full paths;
-            # treat existing PDFs as committed so preview loads after restart without re-picking comparison only.
-            if self._is_existing_pdf_path(saved_base, placeholder_file):
-                self._base_pdf_session_committed = True
-            if self._is_existing_pdf_path(saved_comparison, placeholder_file):
-                self._comparison_pdf_session_committed = True
 
             output_display = placeholder_output if saved_output == placeholder_output else saved_output
 
@@ -3003,6 +2996,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
     def _create_workspace_temp_dir(self, pdf_path: str, name_flag: str) -> Path:
         """Create a unique temp directory for one side of the comparison workspace.
+
+        Parent root is ``get_temp_dir()`` / ``tool_settings.TEMP_DIR``: under the project
+        in development, and under ``%TEMP%\\pdfDiffChecker\\temp`` when running as a
+        packaged Windows executable.
 
         Args:
             pdf_path: Source PDF path.
