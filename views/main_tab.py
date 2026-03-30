@@ -102,6 +102,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
     _MAIN2_HOST6_CUSTOM_COLUMN_PADX_PX: tuple[int, int] = (0, 12)
     # Fixed preview surface so thin vector strokes stay readable in every app theme.
     _PREVIEW_CANVAS_BACKGROUND: str = "#ffffff"
+    # Historical DEFAULT_USER_SET placeholder before localized U053/U054 tokens.
+    _LEGACY_SETTINGS_PLACEHOLDER_JA: str = "直接入力、参照選択"
 
     def __init__(
         self, master: tk.Misc, settings: UserSettingManager
@@ -211,8 +213,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._current_custom_button_state = "off"
         self._action_button_square_size = 120
         self._action_button_active_delay_ms = 420
-        # After the user selects a PDF (dialog, drop, or Enter), load that side from settings on sync.
-        # Until then, a stored PDF path only shows its parent folder and does not drive the preview.
+        # Confirmed this session via dialog/drop/Enter, or restored from settings when the PDF still exists.
         self._base_pdf_session_committed: bool = False
         self._comparison_pdf_session_committed: bool = False
         self._shortcut_guide_en_row1: Optional[tk.Frame] = None
@@ -2087,6 +2088,38 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except Exception:
             return False
 
+    def _coerce_main_tab_saved_file_path(self, raw: str, placeholder_file: str) -> str:
+        """Normalize a persisted main-tab file slot to a path or the unset sentinel.
+
+        Args:
+            raw: Value from user settings for base or comparison PDF.
+            placeholder_file: Localized unset-path token (U053).
+
+        Returns:
+            ``placeholder_file`` when the value is empty or a legacy/default sentinel;
+            otherwise the normalized host path string.
+        """
+        s = str(raw or "").strip()
+        if not s or s == placeholder_file or s == self._LEGACY_SETTINGS_PLACEHOLDER_JA:
+            return placeholder_file
+        return normalize_host_path(s)
+
+    def _coerce_main_tab_saved_folder_path(self, raw: str, placeholder_folder: str) -> str:
+        """Normalize a persisted output-folder slot to a path or the unset sentinel.
+
+        Args:
+            raw: Value from user settings for the output folder.
+            placeholder_folder: Localized unset-folder token (U054).
+
+        Returns:
+            ``placeholder_folder`` when the value is empty or a legacy/default sentinel;
+            otherwise the normalized host path string.
+        """
+        s = str(raw or "").strip()
+        if not s or s == placeholder_folder or s == self._LEGACY_SETTINGS_PLACEHOLDER_JA:
+            return placeholder_folder
+        return normalize_host_path(s)
+
     def _path_display_for_main_entry(
         self,
         saved_value: str,
@@ -2197,9 +2230,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """Synchronize persisted paths into the main tab inputs.
 
         Args:
-            event: Tkinter visibility or notebook tab-change event (unused). Until a
-                side is committed, PDF paths from settings show as the parent folder
-                in the entry; preview loading stays gated by session commit flags.
+            event: Tkinter visibility or notebook tab-change event (unused). Existing
+                PDF paths loaded from settings are treated as committed so the preview
+                restores after restart; uncommitted sides still show the parent folder
+                until the user confirms via dialog, drop, or Enter.
         """
         _ = event
         placeholder_file = message_manager.get_ui_message("U053")
@@ -2209,9 +2243,16 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             _rb = str(self.settings.get_setting("base_file_path", placeholder_file) or placeholder_file)
             _rc = str(self.settings.get_setting("comparison_file_path", placeholder_file) or placeholder_file)
             _ro = str(self.settings.get_setting("output_folder_path", placeholder_output) or placeholder_output)
-            saved_base = _rb if _rb == placeholder_file else normalize_host_path(_rb)
-            saved_comparison = _rc if _rc == placeholder_file else normalize_host_path(_rc)
-            saved_output = _ro if _ro == placeholder_output else normalize_host_path(_ro)
+            saved_base = self._coerce_main_tab_saved_file_path(_rb, placeholder_file)
+            saved_comparison = self._coerce_main_tab_saved_file_path(_rc, placeholder_file)
+            saved_output = self._coerce_main_tab_saved_folder_path(_ro, placeholder_output)
+
+            # User settings file (e.g. %LOCALAPPDATA%\\pdfDiffChecker\\... in production) stores full paths;
+            # treat existing PDFs as committed so preview loads after restart without re-picking comparison only.
+            if self._is_existing_pdf_path(saved_base, placeholder_file):
+                self._base_pdf_session_committed = True
+            if self._is_existing_pdf_path(saved_comparison, placeholder_file):
+                self._comparison_pdf_session_committed = True
 
             output_display = placeholder_output if saved_output == placeholder_output else saved_output
 
