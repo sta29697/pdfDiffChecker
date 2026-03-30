@@ -1,7 +1,7 @@
 # M5 Plan — 文章類の整理（ドキュメント整備）
 
 ## 目的
-- M5 のチェックリストは `docs/tasks/M5_Tasks.md` に置き、リポジトリ直下の `Tasks.md` は現在のマイルストーン（例: M6）用とする。完了済み M4 の詳細チェックリストは `docs/tasks/M4_PLAN.md` へ集約する。
+- M5 のチェックリストは `docs/tasks/M5_Tasks.md` に置き、リポジトリ直下の `Tasks.md` は現在のマイルストーン（例: M6）用とする。完了済み M4 の詳細チェックリストは `docs/tasks/M4_Tasks.md` へ集約する。
 - 新規参画者・将来の自分が、**現行コードと同じ前提**でアプリを理解・実行できるドキュメントに揃える。
 - 全体のモジュール関係と処理の流れを **図（Mermaid）** で把握できるようにする。
 
@@ -15,7 +15,7 @@
   - `README.md`
   - `docs/architecture.md`（新規）
   - （任意）`views/description.py`
-  - 作業管理: `docs/tasks/M5_Tasks.md`、ルート `Tasks.md`（他マイルストーン用）、`docs/tasks/M4_PLAN.md`
+  - 作業管理: `docs/tasks/M5_Tasks.md`、ルート `Tasks.md`（他マイルストーン用）、`docs/tasks/M4_Tasks.md`
 - 非対象:
   - 機能仕様の変更（コードの挙動を変えるリファクタ）
   - ライセンス文面そのものの法務確定（M4-005 の判断は別途）
@@ -58,6 +58,6 @@
 3. （M5-003 を実施した場合）説明タブの表示と README の用語が大きく矛盾していないか確認する。
 
 ## 受け入れ基準
-- M4 の詳細チェックリストが `docs/tasks/M4_PLAN.md` にあり、M5 のチェックリストが `docs/tasks/M5_Tasks.md` にある（ルート `Tasks.md` は現行マイルストーン用）。
+- M4 の詳細チェックリストが `docs/tasks/M4_Tasks.md` にあり、M5 のチェックリストが `docs/tasks/M5_Tasks.md` にある（ルート `Tasks.md` は現行マイルストーン用）。
 - README が現行コード・依存の「正」と整合している。
 - `docs/architecture.md` が存在し、起動から UI 構築までの流れと主要コンポーネント関係が図で読める。

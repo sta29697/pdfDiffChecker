@@ -1,6 +1,6 @@
 # タスクリスト
 
-- M4 のチェックリストは `docs/tasks/M4_PLAN.md` を参照する。
+- M4 のチェックリストは `docs/tasks/M4_Tasks.md` を参照する。
 - M5 の目的・スコープ・検証のたたき台は `docs/milestone/M5_PLAN.md` を参照する。
 
 ## M5: 文章類の整理（ドキュメント整備）
