@@ -19,6 +19,7 @@ from utils.workspace_input_formats import (
     main_pdf_ope_askopen_filetypes,
     main_pdf_ope_drop_suffixes,
 )
+from utils.preview_diff_emphasis import build_diff_highlight_overlay_rgba
 from utils.transform_tuple import as_transform6, pack_transform6
 from utils.utils import (
     create_unique_file_path,
@@ -207,6 +208,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._last_translation_aux_update_time = 0.0
         self._translation_aux_update_interval_seconds = 1.0 / 30.0
         self._preview_keyboard_rotation_delta: float = 0.0
+        self._diff_emphasis_var = tk.BooleanVar(value=False)
+        self._diff_emphasis_photo_image: Optional[ImageTk.PhotoImage] = None
+        self._diff_emphasis_canvas_image_id: Optional[int] = None
 
         # Button images
         self.auto_conv_btn_img: Optional[ImageSwPaths] = None
@@ -821,6 +825,21 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             except Exception:
                 pass
 
+        if (
+            self._diff_emphasis_canvas_image_id is not None
+            and bool(self._diff_emphasis_var.get())
+            and self.current_page_index < len(self.base_transform_data)
+            and self.current_page_index < len(self.comp_transform_data)
+        ):
+            _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[self.current_page_index])
+            _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[self.current_page_index])
+            ox = int(min(btx, ctx))
+            oy = int(min(bty, cty))
+            try:
+                self.canvas.coords(self._diff_emphasis_canvas_image_id, ox, oy)
+            except Exception:
+                pass
+
         current_time = time.monotonic()
         should_refresh_auxiliary = (
             current_time - self._last_translation_aux_update_time
@@ -1006,6 +1025,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._show_comp_layer_check.configure(text=message_manager.get_ui_message("U141"))
         if getattr(self, "_show_reference_grid_check", None) is not None:
             self._show_reference_grid_check.configure(text=message_manager.get_ui_message("U149"))
+        if getattr(self, "_diff_emphasis_check", None) is not None:
+            self._diff_emphasis_check.configure(text=message_manager.get_ui_message("U178"))
         if getattr(self, "_shortcut_guide_frame", None) is not None:
             self._draw_canvas_footer_guide()
         if getattr(self, "_custom_rotation_guide_button", None) is not None:
@@ -1066,7 +1087,12 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             except Exception:
                 pass
 
-        for checkbox_attr in ["_show_base_layer_check", "_show_comp_layer_check", "_show_reference_grid_check"]:
+        for checkbox_attr in [
+            "_show_base_layer_check",
+            "_show_comp_layer_check",
+            "_show_reference_grid_check",
+            "_diff_emphasis_check",
+        ]:
             checkbox = getattr(self, checkbox_attr, None)
             if checkbox is None:
                 continue
@@ -1084,6 +1110,24 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 )
             except Exception:
                 pass
+
+    def _sync_diff_emphasis_checkbox_state(
+        self,
+        *,
+        workspace_enabled: bool,
+        theme_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Enable the diff-emphasis control only when both layers are visible and the workspace is ready."""
+        ch = getattr(self, "_diff_emphasis_check", None)
+        if ch is None:
+            return
+        both_layers = bool(self._show_base_layer_var.get() and self._show_comp_layer_var.get())
+        allow = bool(workspace_enabled and both_layers)
+        try:
+            ch.configure(state=tk.NORMAL if allow else tk.DISABLED)
+        except Exception:
+            pass
+        self._apply_layer_toggle_theme(theme_data)
 
     def _apply_layer_toggle_state(
         self,
@@ -1106,6 +1150,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             except Exception:
                 pass
         self._apply_layer_toggle_theme(theme_data)
+        self._sync_diff_emphasis_checkbox_state(workspace_enabled=enabled, theme_data=theme_data)
 
     def _sync_visualized_image_state(self) -> None:
         """Synchronize the visible-layer StringVar with the checkbox selection state."""
@@ -1128,6 +1173,16 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self.settings.update_setting("show_comp_layer", bool(self._show_comp_layer_var.get()))
         self.settings.update_setting("show_reference_grid", bool(self._show_reference_grid_var.get()))
         self.settings.save_settings()
+        if self._has_loaded_workspace_pages():
+            self._display_page(self.current_page_index)
+        else:
+            self._render_comparison_placeholder()
+        self._sync_diff_emphasis_checkbox_state(
+            workspace_enabled=self._has_loaded_workspace_pages(),
+        )
+
+    def _on_diff_emphasis_toggled(self) -> None:
+        """Redraw the preview when the user toggles diff highlight overlay."""
         if self._has_loaded_workspace_pages():
             self._display_page(self.current_page_index)
         else:
@@ -3541,19 +3596,22 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self.canvas.delete("pdf_image")
             self.canvas.delete("base_image")
             self.canvas.delete("comp_image")
+            self.canvas.delete("diff_emphasis")
         except Exception:
-            for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image"):
+            for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image", "diff_emphasis"):
                 try:
                     self.canvas.delete(_tag)
                 except Exception:
                     pass
         self._base_canvas_image_id = None
         self._comp_canvas_image_id = None
+        self._diff_emphasis_canvas_image_id = None
 
         base_path = self._get_display_page_path(self.base_page_paths, page_index)
         comp_path = self._get_display_page_path(self.comp_page_paths, page_index)
         base_image: Optional[Image.Image] = None
         comp_image: Optional[Image.Image] = None
+        comp_image_for_diff: Optional[Image.Image] = None
         show_base_layer = bool(self._show_base_layer_var.get())
         show_comp_layer = bool(self._show_comp_layer_var.get())
 
@@ -3605,6 +3663,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             # Main processing: only soften the comparison layer while both layers are shown.
             if comp_image.mode != "RGBA":
                 comp_image = comp_image.convert("RGBA")
+            comp_image_for_diff = comp_image.copy()
             overlay_image = comp_image.copy()
             if show_base_layer:
                 alpha_channel = overlay_image.getchannel("A")
@@ -3620,8 +3679,45 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 tags=("pdf_image", "comp_image"),
             )
 
+        if (
+            bool(self._diff_emphasis_var.get())
+            and show_base_layer
+            and show_comp_layer
+            and base_image is not None
+            and comp_image_for_diff is not None
+            and page_index < len(self.base_transform_data)
+            and page_index < len(self.comp_transform_data)
+        ):
+            try:
+                _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[page_index])
+                _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[page_index])
+                bi = base_image
+                if bi is not None and bi.mode != "RGBA":
+                    bi = bi.convert("RGBA")
+                if bi is not None:
+                    ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                        bi,
+                        (int(btx), int(bty)),
+                        comp_image_for_diff,
+                        (int(ctx), int(cty)),
+                    )
+                    self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
+                    self._diff_emphasis_canvas_image_id = self.canvas.create_image(
+                        int(ox),
+                        int(oy),
+                        anchor="nw",
+                        image=self._diff_emphasis_photo_image,
+                        tags=("diff_emphasis", "pdf_image"),
+                    )
+            except Exception as exc:
+                logger.debug("Diff emphasis overlay skipped: %s", exc)
+
         reference_bbox = self.canvas.bbox("pdf_image")
         self._draw_reference_grid(reference_bbox, raise_above_images=True)
+        try:
+            self.canvas.tag_raise("diff_emphasis")
+        except Exception:
+            pass
 
         if not show_base_layer and not show_comp_layer:
             self.canvas.create_text(
@@ -3862,7 +3958,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             return
 
         # Main processing: clear workspace drawings only; keep canvas shortcut overlay items.
-        for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image"):
+        for _tag in ("workspace", "reference_grid", "pdf_image", "base_image", "comp_image", "diff_emphasis"):
             try:
                 self.canvas.delete(_tag)
             except Exception:
@@ -4789,6 +4885,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 anchor="w",
             )
             self._show_reference_grid_check.grid(row=2, column=0, sticky="ew")
+
+            self._diff_emphasis_check = tk.Checkbutton(
+                self._layer_toggle_frame,
+                text=message_manager.get_ui_message("U178"),
+                variable=self._diff_emphasis_var,
+                command=self._on_diff_emphasis_toggled,
+                anchor="w",
+            )
+            self._diff_emphasis_check.grid(row=3, column=0, sticky="ew")
 
             self._dpi_row_frame = tk.Frame(self._row4_action_frame)
             self._dpi_row_frame.grid(row=1, column=0, sticky="ew", pady=(0, 4))
