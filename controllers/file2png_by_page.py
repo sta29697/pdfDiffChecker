@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from logging import getLogger
 import tkinter as tk
 import numpy as np
@@ -790,6 +791,85 @@ class Tiff2PngByPages(BaseImageConverter):
             The ``name_flag`` passed to this converter's constructor.
         """
         return self._name_flag
+
+
+class SvgRasterToPngPages(BaseImageConverter):
+    """Rasterize one SVG file to a single grayscale PNG page for the workspace."""
+
+    def __init__(self, svg_obj: FilePathInfo, program_mode: bool = False, name_flag: str = "base") -> None:
+        super().__init__(svg_obj, name_flag)
+        _ = program_mode
+        svg_file_name = os.path.basename(str(self.file_info.file_path))
+        self._temp_dir = cast(str, utils.create_directories(svg_file_name))
+
+    def convert_to_grayscale_pngs(
+        self, progress_callback: Optional[ProgressCallback] = None, **kwargs: Any
+    ) -> None:
+        try:
+            from svglib.svglib import svg2rlg
+            from reportlab.graphics import renderPM
+        except ImportError as exc:
+            raise RuntimeError(message_manager.get_ui_message("U088")) from exc
+
+        source_path = Path(self.file_info.file_path)
+        intermediate = Path(self._temp_dir) / "_svg_workspace_import.png"
+        drawing = svg2rlg(str(source_path))
+        if drawing is None:
+            raise RuntimeError(message_manager.get_ui_message("U088"))
+        try:
+            renderPM.drawToFile(drawing, str(intermediate), fmt="PNG")
+        except Exception as exc:
+            raise RuntimeError(message_manager.get_ui_message("U088")) from exc
+
+        if progress_callback:
+            progress_callback(50, 100, "Loading SVG...")
+
+        with Image.open(intermediate) as imported:
+            self._save_page(imported.convert("RGBA"), 1, self._name_flag)
+
+        self.file_info.file_meta_info["source_format"] = "SVG"
+        self.file_info.file_meta_info["library"] = f"Pillow {Image.__version__}"
+        self.file_info.file_page_count = 1
+
+        try:
+            intermediate.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        if progress_callback:
+            progress_callback(100, 100, "Conversion complete")
+
+
+def build_workspace_input_converter(
+    file_info: FilePathInfo,
+    *,
+    program_mode: bool,
+    name_flag: str,
+) -> BaseImageConverter:
+    """Build PDF, SVG, or Pillow-based converter for Main / PDF Operation inputs.
+
+    Args:
+        file_info: Source file record; ``file_path`` must be populated.
+        program_mode: Forwarded to the PDF converter only.
+        name_flag: ``base`` or ``comp`` prefix for generated PNG filenames.
+
+    Returns:
+        A ``BaseImageConverter`` ready for ``convert_to_grayscale_pngs``.
+
+    Raises:
+        ValueError: If the file suffix is not a supported workspace input type.
+    """
+    from utils.workspace_input_formats import MAIN_PDF_OPE_INPUT_EXTENSIONS
+
+    suffix = Path(str(file_info.file_path)).suffix.lower()
+    if suffix not in MAIN_PDF_OPE_INPUT_EXTENSIONS:
+        raise ValueError(f"Unsupported workspace input extension: {suffix!r}")
+
+    if suffix == ".pdf":
+        return Pdf2PngByPages(file_info, program_mode=program_mode, name_flag=name_flag)
+    if suffix == ".svg":
+        return SvgRasterToPngPages(file_info, program_mode=program_mode, name_flag=name_flag)
+    return Tiff2PngByPages(file_info, program_mode=program_mode, name_flag=name_flag)
 
 
 def binarize_grayscale_images_in_folder(

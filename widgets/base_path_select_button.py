@@ -11,6 +11,7 @@ from configurations.user_setting_manager import UserSettingManager
 from controllers.widgets_tracker import WidgetsTracker, ThemeColorApplicable
 from models.class_dictionary import FilePathInfo, FolderPathInfo
 from utils.utils import get_resource_path
+from utils.workspace_input_formats import main_pdf_ope_askopen_filetypes
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_path_entry import BasePathEntry
 from configurations.message_manager import get_message_manager
@@ -107,7 +108,7 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
                 # Dialog title for selecting base file
                 file_path = fd.askopenfilename(
                     title=message_manager.get_ui_message("U003"),
-                    filetypes=[("PDF files", "*.pdf"), ("TIFF files", "*.tif")],
+                    filetypes=main_pdf_ope_askopen_filetypes(),
                 )
                 if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)
@@ -116,7 +117,7 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
                 # Dialog title for selecting comparison file
                 file_path = fd.askopenfilename(
                     title=message_manager.get_ui_message("U003"),
-                    filetypes=[("PDF files", "*.pdf"), ("TIFF files", "*.tif")],
+                    filetypes=main_pdf_ope_askopen_filetypes(),
                 )
                 if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)

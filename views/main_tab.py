@@ -14,6 +14,11 @@ from PIL import Image, ImageTk, ImageFile
 from PIL.Image import Resampling, Transpose
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
 from utils.path_normalization import normalize_host_path
+from utils.workspace_input_formats import (
+    MAIN_PDF_OPE_INPUT_EXTENSIONS,
+    main_pdf_ope_askopen_filetypes,
+    main_pdf_ope_drop_suffixes,
+)
 from utils.transform_tuple import as_transform6, pack_transform6
 from utils.utils import (
     create_unique_file_path,
@@ -27,7 +32,7 @@ from configurations.message_manager import get_message_manager
 from configurations import tool_settings
 from models.class_dictionary import FilePathInfo
 from controllers.drag_and_drop_file import DragAndDropHandler
-from controllers.file2png_by_page import Pdf2PngByPages
+from controllers.file2png_by_page import BaseImageConverter, build_workspace_input_converter
 from controllers.pdf_export_handler import PDFExportHandler, apply_color_processing_to_image
 from widgets.base_button import BaseButton
 from widgets.base_label_class import BaseLabelClass
@@ -188,8 +193,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self.comp_file_info: Optional[FilePathInfo] = None
         self.base_pdf_metadata: Dict[str, Any] = {}
         self.comp_pdf_metadata: Dict[str, Any] = {}
-        self.base_pdf_converter: Optional[Pdf2PngByPages] = None
-        self.comp_pdf_converter: Optional[Pdf2PngByPages] = None
+        self.base_pdf_converter: Optional[BaseImageConverter] = None
+        self.comp_pdf_converter: Optional[BaseImageConverter] = None
         self._dpi_combo: Optional[BaseValueCombobox] = None
         self._dpi_choice_var = tk.StringVar(value=str(self.selected_dpi_value))
         self._detected_dpi_value: Optional[int] = None
@@ -2070,21 +2075,25 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         finally:
             setattr(entry_widget, "_suppress_callback", previous_suppress)
 
-    def _is_existing_pdf_path(self, path_str: str, placeholder_file: str) -> bool:
-        """Return True when ``path_str`` points to an existing PDF file on disk.
+    def _workspace_source_file_exists(self, path_str: str, placeholder_file: str) -> bool:
+        """Return True when ``path_str`` is an existing workspace input file (PDF, image, SVG).
 
         Args:
             path_str: Candidate filesystem path.
             placeholder_file: Localized unset-path token to treat as empty.
 
         Returns:
-            Whether the path should be treated as a resolved PDF input.
+            Whether the path should be treated as a resolved workspace source file.
         """
         if not path_str or path_str == placeholder_file:
             return False
         try:
             p = Path(path_str)
-            return p.exists() and p.is_file() and p.suffix.lower() == ".pdf"
+            return (
+                p.exists()
+                and p.is_file()
+                and p.suffix.lower() in MAIN_PDF_OPE_INPUT_EXTENSIONS
+            )
         except Exception:
             return False
 
@@ -2140,7 +2149,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             return placeholder_file
         if session_committed:
             return saved_value
-        if self._is_existing_pdf_path(saved_value, placeholder_file):
+        if self._workspace_source_file_exists(saved_value, placeholder_file):
             return str(Path(saved_value).parent)
         return saved_value
 
@@ -2158,7 +2167,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             return placeholder_pdf
         try:
             p = Path(path_value)
-            if p.exists() and p.is_file() and p.suffix.lower() == ".pdf":
+            if p.exists() and p.is_file() and p.suffix.lower() in MAIN_PDF_OPE_INPUT_EXTENSIONS:
                 return str(p.parent)
             return str(p)
         except Exception:
@@ -2187,7 +2196,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """
         if saved_value == placeholder_file:
             return placeholder_file
-        if self._is_existing_pdf_path(saved_value, placeholder_file) and not session_committed:
+        if self._workspace_source_file_exists(saved_value, placeholder_file) and not session_committed:
             return placeholder_file
         return saved_value
 
@@ -2285,13 +2294,13 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             DragAndDropHandler.register_drop_target(
                 self._base_file_path_entry,
                 self._on_drop_base_file,
-                [".pdf"],
+                main_pdf_ope_drop_suffixes(),
                 self._show_status_feedback,
             )
             DragAndDropHandler.register_drop_target(
                 self._comparison_file_path_entry,
                 self._on_drop_comparison_file,
-                [".pdf"],
+                main_pdf_ope_drop_suffixes(),
                 self._show_status_feedback,
             )
             DragAndDropHandler.register_drop_target(
@@ -2900,11 +2909,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
     def _get_or_create_converter(
         self, pdf_path: str, name_flag: str
-    ) -> tuple[Pdf2PngByPages, FilePathInfo]:
-        """Create or reuse a PDF converter for the requested side.
+    ) -> tuple[BaseImageConverter, FilePathInfo]:
+        """Create or reuse a workspace input converter for the requested side.
 
         Args:
-            pdf_path: Source PDF path.
+            pdf_path: Source file path (PDF, raster image, or SVG).
             name_flag: Side identifier, either ``"base"`` or ``"comp"``.
 
         Returns:
@@ -2927,8 +2936,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             file_meta_info={},
             file_histogram_data=[],
         )
-        converter = Pdf2PngByPages(
-            pdf_obj=file_info,
+        converter = build_workspace_input_converter(
+            file_info,
             program_mode=tool_settings.is_production_mode,
             name_flag=name_flag,
         )
@@ -4467,7 +4476,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 entry_setting_key="base_file_path",
                 allow_files=True,
                 allow_directories=False,
-                allowed_file_extensions={".pdf"},
+                allowed_file_extensions=MAIN_PDF_OPE_INPUT_EXTENSIONS,
             )
             self._base_file_path_entry.grid(
                 column=1, row=1, padx=(2, 4), pady=8, sticky="ew"
@@ -4515,7 +4524,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 entry_setting_key="comparison_file_path",
                 allow_files=True,
                 allow_directories=False,
-                allowed_file_extensions={".pdf"},
+                allowed_file_extensions=MAIN_PDF_OPE_INPUT_EXTENSIONS,
             )
             self._comparison_file_path_entry.grid(
                 column=1, row=2, padx=5, pady=8, sticky="we"
@@ -4958,7 +4967,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         file_path = ask_file_dialog(
             initialdir=initial_dir,
             title_code="U022",
-            filetypes=[("PDF files", "*.pdf")],
+            filetypes=main_pdf_ope_askopen_filetypes(),
         )
         if file_path:
             self._base_pdf_session_committed = True
@@ -4978,7 +4987,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         file_path = ask_file_dialog(
             initialdir=initial_dir,
             title_code="U023",
-            filetypes=[("PDF files", "*.pdf")],
+            filetypes=main_pdf_ope_askopen_filetypes(),
         )
         if file_path:
             self._comparison_pdf_session_committed = True

@@ -27,9 +27,14 @@ from widgets.base_label_class import BaseLabelClass
 from widgets.page_control_frame import PageControlFrame
 from utils.utils import create_unique_file_path, get_temp_dir
 from utils.path_dialog_utils import ask_file_dialog, ask_folder_dialog
+from utils.workspace_input_formats import (
+    MAIN_PDF_OPE_INPUT_EXTENSIONS,
+    main_pdf_ope_askopen_filetypes,
+    main_pdf_ope_drop_suffixes,
+)
 from utils.path_normalization import normalize_host_path
 from utils.transform_tuple import as_transform6, pack_transform6
-from controllers.file2png_by_page import Pdf2PngByPages
+from controllers.file2png_by_page import build_workspace_input_converter
 from controllers.pdf_export_handler import PDFExportHandler
 from models.class_dictionary import FilePathInfo
 from themes.coloring_theme_interface import ColoringThemeIF
@@ -221,7 +226,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                     not use_startup_normalization
                     and base_path_obj.exists()
                     and base_path_obj.is_file()
-                    and base_path_obj.suffix.lower() == ".pdf"
+                    and base_path_obj.suffix.lower() in MAIN_PDF_OPE_INPUT_EXTENSIONS
                     and str(base_path_obj) != loaded_norm
                 ):
                     self._load_and_display_pdf(saved_norm)
@@ -361,7 +366,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             entry_setting_key="base_file_path",
             allow_files=True,
             allow_directories=False,
-            allowed_file_extensions={".pdf"},
+            allowed_file_extensions=MAIN_PDF_OPE_INPUT_EXTENSIONS,
         )
         self._base_file_path_entry.grid(
             column=1, row=1, padx=5, pady=8, sticky="ew"
@@ -429,7 +434,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         file_path = ask_file_dialog(
             initialdir=initial_dir,
             title_code="U022",
-            filetypes=[("PDF files", "*.pdf")],
+            filetypes=main_pdf_ope_askopen_filetypes(),
         )
         if file_path:
             self._base_file_path_entry.path_var.set(file_path)
@@ -454,12 +459,12 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         """Setup drag and drop functionality for PDF input and output folder."""
         # Try to register drop target; suppress non-fatal errors
         success = DragAndDropHandler.register_drop_target(
-            self.canvas, self._on_drop, [".pdf"], self._show_drop_feedback
+            self.canvas, self._on_drop, main_pdf_ope_drop_suffixes(), self._show_drop_feedback
         )
         DragAndDropHandler.register_drop_target(
             self._base_file_path_entry,
             self._on_drop,
-            [".pdf"],
+            main_pdf_ope_drop_suffixes(),
             self._show_drop_feedback,
         )
         DragAndDropHandler.register_drop_target(
@@ -521,10 +526,10 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             # Show progress window during conversion
             # Use correct program_mode from tool_settings to ensure path consistency
             from configurations import tool_settings
-            self.current_pdf_converter = Pdf2PngByPages(
-                pdf_obj=file_path_info,
-                program_mode=tool_settings.is_production_mode,  # Use actual production mode flag
-                name_flag="base"  # This is the base file
+            self.current_pdf_converter = build_workspace_input_converter(
+                file_path_info,
+                program_mode=tool_settings.is_production_mode,
+                name_flag="base",
             )
             
             # Log the temp directory path for debugging
@@ -1976,8 +1981,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         if not file_path:
             return
         
-        # Only accept PDF files
-        if file_path.lower().endswith('.pdf'):
+        suffix = Path(file_path).suffix.lower()
+        if suffix in MAIN_PDF_OPE_INPUT_EXTENSIONS:
             self._base_file_path_entry.path_var.set(file_path)
             self.base_path.set(file_path)
             self._load_and_display_pdf(file_path)
