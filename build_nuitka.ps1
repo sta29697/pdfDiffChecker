@@ -6,7 +6,8 @@ param(
     [switch]$VerboseBuild,
     [switch]$Clean,
     [switch]$RunAfterBuild,
-    [switch]$OneFile
+    # Default: single pdfDiffChecker.exe (--onefile). Use -Standalone for a main.dist folder layout.
+    [switch]$Standalone
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,8 +36,8 @@ $nuitkaArgs = @(
     "--output-filename=pdfDiffChecker.exe",
     "--company-name=pdfDiffChecker",
     "--product-name=PDF Diff Checker",
-    "--file-version=1.0.4.0",
-    "--product-version=1.0.4.0",
+    "--file-version=1.0.5.0",
+    "--product-version=1.0.5.0",
     "--enable-plugin=tk-inter",
     "--include-package-data=tkinterdnd2",
     "--include-data-dir=images=images",
@@ -48,7 +49,7 @@ $nuitkaArgs = @(
     "main.py"
 )
 
-if ($OneFile) {
+if (-not $Standalone) {
     $nuitkaArgs += "--onefile"
 }
 
@@ -71,15 +72,15 @@ Write-Host "Python     : $PythonVersion" -ForegroundColor DarkGray
 Write-Host "Jobs       : $(if ($Jobs -gt 0) { $Jobs } else { 'auto' })" -ForegroundColor DarkGray
 Write-Host "ShowScons  : $ShowScons" -ForegroundColor DarkGray
 Write-Host "Verbose    : $VerboseBuild" -ForegroundColor DarkGray
-Write-Host "OneFile    : $OneFile" -ForegroundColor DarkGray
+Write-Host "Layout     : $(if ($Standalone) { 'standalone folder (main.dist)' } else { 'onefile exe' })" -ForegroundColor DarkGray
 
 & uv run --python $PythonVersion --group build python @nuitkaArgs
 
-if ($OneFile) {
-    $exePath = Join-Path $projectRoot (Join-Path $OutputDir "pdfDiffChecker.exe")
-} else {
+if ($Standalone) {
     $distDir = Join-Path $projectRoot (Join-Path $OutputDir "main.dist")
     $exePath = Join-Path $distDir "pdfDiffChecker.exe"
+} else {
+    $exePath = Join-Path $projectRoot (Join-Path $OutputDir "pdfDiffChecker.exe")
 }
 
 Write-Host "Build completed." -ForegroundColor Green

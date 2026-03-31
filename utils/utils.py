@@ -20,6 +20,10 @@ message_manager = get_message_manager()
 def get_resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for Nuitka.
 
+    Bundled assets are resolved from ``tool_settings.BASE_DIR`` (project root in
+    development, Nuitka onefile/standalone extraction root when frozen). Using
+    ``sys.executable`` would miss data embedded next to extracted modules.
+
     Args:
         relative_path (str): Relative path to the resource
 
@@ -30,15 +34,7 @@ def get_resource_path(relative_path: str) -> str:
         Exception: If path resolution fails
     """
     try:
-        # Determine base path for resources
-        if getattr(sys, "frozen", False):
-            # Running in a frozen executable (Nuitka)
-            base_path = os.path.dirname(sys.executable)
-        else:
-            # Running in a development environment
-            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-        # Construct the absolute resource path
+        base_path = str(tool_settings.BASE_DIR)
         path = os.path.normpath(os.path.join(base_path, relative_path))
         return path
     except Exception as e:
