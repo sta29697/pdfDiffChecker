@@ -6,7 +6,11 @@ build
 dist
 temp
 tmp_m2_*_verify/
-tests/tmp_m2_*_verify/
+# Not published on public GitHub (keep locally)
+tests/
+docs/*.drawio
+docs/tasks/M*PLAN.md
+views/*.bak
 __pycache__/
 .python-version
 memo.py
