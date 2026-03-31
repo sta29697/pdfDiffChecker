@@ -408,6 +408,36 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         # Log PageControlFrame initialization
         logger.debug(message_manager.get_log_message("L097"))
 
+    def iter_focus_widgets(self) -> List[tk.Widget]:
+        """Return sidebar widgets in top-to-bottom keyboard focus order.
+
+        Returns:
+            Interactive widgets from page navigation through export, excluding
+            static labels.
+        """
+        ordered: List[tk.Widget] = [
+            self.prev_page_btn,
+            self.current_page_label,
+            self.next_page_btn,
+            self.insert_blank_btn,
+            self.delete_page_btn,
+        ]
+        if self.__reference_grid_cb is not None:
+            ordered.append(self.__reference_grid_cb)
+        ordered.append(self.__batch_edit_cb)
+        ordered.extend(
+            [
+                self.__transform_x_entry,
+                self.__transform_y_entry,
+                self.__transform_angle_entry,
+                self.__transform_scale_entry,
+            ]
+        )
+        if self.__rotation_guide_btn is not None:
+            ordered.append(self.__rotation_guide_btn)
+        ordered.append(self.export_btn)
+        return ordered
+
     def update_page_label(self, current_index: int, max_pages: int) -> None:
         """Set the display text for current page and total pages.
 

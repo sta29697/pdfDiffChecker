@@ -4445,6 +4445,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         try:
             # Create language selection combobox
             lang_combo = LanguageSelectCombo(self.frame_main0)
+            self._lang_select_combo = lang_combo
             lang_combo.grid(row=0, column=0, padx=3, pady=3, sticky="e")
 
             # Create theme change button
@@ -4913,6 +4914,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 bg=CreateComparisonFileApp._PREVIEW_CANVAS_BACKGROUND,
                 relief=tk.SUNKEN,
                 bd=2,
+                takefocus=1,
+                highlightthickness=2,
+                highlightbackground="#888888",
             )
             self.canvas.grid(row=0, column=0, padx=5, pady=(1, 5), sticky="nsew")
 
@@ -4942,6 +4946,56 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             # Failed to setup widgets
             logger.error(message_manager.get_log_message("L067", str(e)))
             raise
+
+    def build_keyboard_focus_chain(self) -> List[tk.Widget]:
+        """Build column-major keyboard focus order for the main tab.
+
+        Order: header (language, theme), path rows by column, control row hosts
+        left-to-right, preview canvas, then page-control sidebar.
+
+        Returns:
+            Interactive widgets participating in Tab / Shift+Tab navigation.
+        """
+        chain: List[tk.Widget] = []
+        lang = getattr(self, "_lang_select_combo", None)
+        if lang is not None:
+            chain.append(lang)
+        theme_btn = getattr(self, "_color_theme_change_btn", None)
+        if theme_btn is not None and hasattr(theme_btn, "color_theme_change_btn"):
+            chain.append(theme_btn.color_theme_change_btn)
+
+        chain.append(self._base_file_path_entry.path_entry)
+        chain.append(self._comparison_file_path_entry.path_entry)
+        chain.append(self._output_folder_path_entry.path_entry)
+        chain.append(self._base_image_color_change_btn.image_color_select_btn)
+        chain.append(self._comparison_image_color_change_btn.image_color_select_btn)
+        chain.append(self._base_file_path_button.path_select_btn)
+        chain.append(self._comparison_file_path_button.path_select_btn)
+        chain.append(self._output_folder_path_button.path_select_btn)
+
+        chain.append(self._base_file_analyze_btn)
+        chain.append(self._comparison_file_analyze_btn)
+        chain.append(self._base_threshold_entry)
+        chain.append(self._comparison_threshold_entry)
+
+        chain.append(self._automatic_execute_button)
+
+        chain.extend(
+            [
+                self._show_base_layer_check,
+                self._show_comp_layer_check,
+                self._show_reference_grid_check,
+                self._dpi_combo,
+                self._color_processing_mode_combo,
+                self._custom_rotation_guide_button,
+            ]
+        )
+        chain.append(self._custom_execute_button)
+
+        chain.append(self.canvas)
+        if self.page_control_frame is not None:
+            chain.extend(self.page_control_frame.iter_focus_widgets())
+        return chain
 
     def _on_base_image_color_change(self) -> None:
         """Handle base image color change button click."""

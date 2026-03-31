@@ -28,6 +28,7 @@ from controllers.widgets_tracker import (
     ensure_contrast_color,
     refresh_combobox_popdown_listboxes,
 )
+from controllers.keyboard_navigation import KeyboardNavigationShell
 
 # View components
 from views.description import DescriptionApp
@@ -625,7 +626,7 @@ def get_version_info() -> str:
         str: Version string for display in window title
     """
     # Hard-coded version for this application
-    return "v1.0.5"
+    return "v1.0.6"
 
 
 def set_args() -> dict:
@@ -1212,6 +1213,29 @@ def main() -> None:
         # Initialize Licenses tab
         license_app = LicensesApp(licenses_tab)
         license_app.pack(expand=True, fill="both")
+
+        def _keyboard_chain_for_tab(tab_index: int):
+            """Return main-tab focus chain or None to use default Tk traversal.
+
+            Args:
+                tab_index: Notebook tab index.
+
+            Returns:
+                Ordered focus targets for the main tab, else None.
+            """
+            if tab_index == 0:
+                try:
+                    return main_app.build_keyboard_focus_chain()
+                except Exception:
+                    return None
+            return None
+
+        KeyboardNavigationShell(
+            main_window,
+            notebook,
+            (main_tab, pdf_ope_tab, image_ope_tab, description_tab, licenses_tab),
+            _keyboard_chain_for_tab,
+        )
 
         # Main processing: re-apply theme after tab contents are created.
         theme_manager.apply_color_theme_all_widgets()
