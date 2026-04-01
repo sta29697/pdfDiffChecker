@@ -4,7 +4,7 @@ from typing import Dict, Any, Callable, Optional, cast
 from logging import getLogger
 from configurations.tool_settings import DEFAULT_COLOR_THEME_SET
 from controllers.color_theme_manager import ColorThemeManager
-from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker, ensure_contrast_color
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
 
@@ -76,6 +76,27 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
 
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
+        self._apply_keyboard_focus_chrome()
+
+    def _apply_keyboard_focus_chrome(self) -> None:
+        """Make keyboard focus visible (Tk highlight ring around the color swatch)."""
+        try:
+            bg = str(self.image_color_select_btn.cget("bg"))
+            ring = str(
+                self.__theme_dict.get(
+                    "highlightcolor",
+                    ensure_contrast_color("#f5d742", bg, 0.35),
+                )
+            )
+            ring = ensure_contrast_color(ring, bg, 0.3)
+            self.image_color_select_btn.configure(
+                takefocus=1,
+                highlightthickness=2,
+                highlightbackground=bg,
+                highlightcolor=ring,
+            )
+        except tk.TclError:
+            pass
 
     def __color_select_btn_clicked(self) -> None:
         """Handle color selection button click."""
@@ -136,6 +157,7 @@ class BaseImageColorChangeButton(ColoringThemeIF, ThemeColorApplicable):
         """
         try:
             self.image_color_select_btn.configure(**theme_dict)
+            self._apply_keyboard_focus_chrome()
             # Applied theme color to image display toggle button
             logger.debug(message_manager.get_log_message("L101", self.__color_key))
         except Exception as e:

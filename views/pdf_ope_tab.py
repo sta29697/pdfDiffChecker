@@ -4,7 +4,7 @@ from logging import getLogger
 import math
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Any, Dict, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from utils.log_throttle import LogThrottle
 import os
 from pathlib import Path
@@ -135,8 +135,9 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             bg=_canvas_bg0,
             relief=tk.FLAT,
             borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=_cv0.get("highlightbackground", "#e0e0e0"),
+            takefocus=1,
+            highlightthickness=2,
+            highlightbackground=_cv0.get("highlightbackground", "#888888"),
             highlightcolor=_cv0.get("highlightcolor", "#e0e0e0"),
         )
         self.canvas.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
@@ -335,8 +336,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self.frame_main0.grid_columnconfigure(0, weight=1)  # This column will expand
         
         # Create language selection combobox (right-aligned)
-        lang_combo = LanguageSelectCombo(self.frame_main0)
-        lang_combo.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        self._lang_select_combo = LanguageSelectCombo(self.frame_main0)
+        self._lang_select_combo.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
         # Create theme change button (right-aligned)
         self._color_theme_change_btn = ColorThemeChangeButton(
@@ -428,6 +429,32 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
         self.pdf_file_path_entry = None
 
+    def build_keyboard_focus_chain(self) -> List[tk.Widget]:
+        """Build column-major keyboard focus order for the PDF operation tab.
+
+        Order: path entries then select buttons, header (language, theme), preview
+        canvas, then ``PageControlFrame`` widgets when present.
+
+        Returns:
+            Interactive widgets participating in Tab / Shift+Tab navigation.
+        """
+        chain: List[tk.Widget] = []
+        chain.append(self._base_file_path_entry.path_entry)
+        chain.append(self._base_file_path_button.path_select_btn)
+        chain.append(self._output_folder_path_entry.path_entry)
+        chain.append(self._output_folder_path_button.path_select_btn)
+        lang = getattr(self, "_lang_select_combo", None)
+        if lang is not None:
+            chain.append(lang)
+        theme_btn = getattr(self, "_color_theme_change_btn", None)
+        if theme_btn is not None and hasattr(theme_btn, "color_theme_change_btn"):
+            chain.append(theme_btn.color_theme_change_btn)
+
+        chain.append(self.canvas)
+        if self.page_control_frame is not None:
+            chain.extend(self.page_control_frame.iter_focus_widgets())
+        return chain
+
     def _on_base_file_select(self) -> None:
         """Handle base file selection event using common dialog."""
         initial_dir = self._get_initial_dir_from_setting("base_file_path")
@@ -435,6 +462,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             initialdir=initial_dir,
             title_code="U022",
             filetypes=main_pdf_ope_askopen_filetypes(),
+            parent=self.winfo_toplevel(),
         )
         if file_path:
             self._base_file_path_entry.path_var.set(file_path)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from logging import getLogger
 from typing import Any, cast
-from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker
+from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker, ensure_contrast_color
 from controllers.color_theme_manager import ColorThemeManager
 from themes.coloring_theme_interface import ColoringThemeIF
 from configurations.message_manager import get_message_manager
@@ -89,7 +89,30 @@ class BaseEntry(tk.Entry, ThemeColorApplicable, ColoringThemeIF):
             # Apply theme configuration
             self.configure(**entry_theme_config)  # type: ignore[arg-type]
             self._config_widget(entry_theme_config)
-            
+
+            # Main processing: keep keyboard focus visible on main-tab path entries.
+            if self.__color_key in (
+                "base_file_path_entry",
+                "comparison_file_path_entry",
+                "output_folder_path_entry",
+            ):
+                try:
+                    surf = str(self.cget("bg"))
+                    ring = entry_theme_config.get("highlightcolor") or ensure_contrast_color(
+                        "#f5d742", surf, 0.28
+                    )
+                    ring = ensure_contrast_color(str(ring), surf, 0.25)
+                    self.configure(
+                        takefocus=1,
+                        highlightthickness=max(
+                            1, int(str(entry_theme_config.get("highlightthickness", 1) or 1))
+                        ),
+                        highlightbackground=surf,
+                        highlightcolor=ring,
+                    )
+                except (tk.TclError, TypeError, ValueError):
+                    pass
+
             # Mark that theme has been successfully initialized
             self._theme_initialized = True
 

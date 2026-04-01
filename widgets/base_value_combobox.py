@@ -5,7 +5,12 @@ from tkinter import ttk
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Union
 
-from controllers.widgets_tracker import ThemeColorApplicable, WidgetsTracker, resolve_disabled_visual_colors
+from controllers.widgets_tracker import (
+    ThemeColorApplicable,
+    WidgetsTracker,
+    ensure_contrast_color,
+    resolve_disabled_visual_colors,
+)
 from utils.utils import get_resource_path
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_tab_widgets import BaseTabWidgets as btw
@@ -69,6 +74,7 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
             font=btw.base_font,
             state="readonly",
             style=self.__style_name,
+            takefocus=1,
         )
 
         # Set default value if provided
@@ -153,6 +159,12 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
                 )
             )
 
+            border_plain = str(combobox_theme_config.get("bordercolor", active_bg))
+            focus_ring = ensure_contrast_color(
+                str(combobox_theme_config.get("highlightcolor", active_fg)),
+                active_bg,
+                0.22,
+            )
             style = ttk.Style(self)
             style.configure(
                 self.__style_name,
@@ -160,6 +172,8 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
                 fieldbackground=active_bg,
                 background=active_bg,
                 arrowcolor=active_fg,
+                bordercolor=border_plain,
+                focuscolor=focus_ring,
             )
             style.map(
                 self.__style_name,
@@ -168,6 +182,16 @@ class BaseValueCombobox(ttk.Combobox, ThemeColorApplicable, ColoringThemeIF):
                 fieldbackground=[("readonly", active_bg), ("disabled", disabled_bg)],
                 background=[("readonly", active_bg), ("disabled", disabled_bg)],
                 arrowcolor=[("readonly", active_fg), ("disabled", disabled_fg)],
+                bordercolor=[
+                    ("focus", focus_ring),
+                    ("readonly", border_plain),
+                    ("disabled", border_plain),
+                ],
+                focuscolor=[
+                    ("focus", focus_ring),
+                    ("readonly", active_fg),
+                    ("disabled", disabled_fg),
+                ],
             )
 
             safe_theme_config = self._filter_supported_theme_settings(combobox_theme_config)
