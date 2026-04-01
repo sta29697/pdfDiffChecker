@@ -432,24 +432,23 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     def build_keyboard_focus_chain(self) -> List[tk.Widget]:
         """Build column-major keyboard focus order for the PDF operation tab.
 
-        Order: header (language, theme), path entries then select buttons, preview
+        Order: path entries then select buttons, header (language, theme), preview
         canvas, then ``PageControlFrame`` widgets when present.
 
         Returns:
             Interactive widgets participating in Tab / Shift+Tab navigation.
         """
         chain: List[tk.Widget] = []
+        chain.append(self._base_file_path_entry.path_entry)
+        chain.append(self._base_file_path_button.path_select_btn)
+        chain.append(self._output_folder_path_entry.path_entry)
+        chain.append(self._output_folder_path_button.path_select_btn)
         lang = getattr(self, "_lang_select_combo", None)
         if lang is not None:
             chain.append(lang)
         theme_btn = getattr(self, "_color_theme_change_btn", None)
         if theme_btn is not None and hasattr(theme_btn, "color_theme_change_btn"):
             chain.append(theme_btn.color_theme_change_btn)
-
-        chain.append(self._base_file_path_entry.path_entry)
-        chain.append(self._output_folder_path_entry.path_entry)
-        chain.append(self._base_file_path_button.path_select_btn)
-        chain.append(self._output_folder_path_button.path_select_btn)
 
         chain.append(self.canvas)
         if self.page_control_frame is not None:
@@ -463,6 +462,7 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             initialdir=initial_dir,
             title_code="U022",
             filetypes=main_pdf_ope_askopen_filetypes(),
+            parent=self.winfo_toplevel(),
         )
         if file_path:
             self._base_file_path_entry.path_var.set(file_path)

@@ -20,13 +20,13 @@
 
 ### M7-001: ノートブックとシェル結線
 
-- [x] `KeyboardNavigationShell` を `main.py` で生成し、`ttk.Notebook` と各タブ `Frame` を渡す。  
+- [✅] `KeyboardNavigationShell` を `main.py` で生成し、`ttk.Notebook` と各タブ `Frame` を渡す。  
 
       **確認観点**: 起動時に例外が出ず、他タブの既定フォーカスが不必要に壊れないこと。  
 
       → メイン / PDF / 画像タブはカスタムチェーンを返し、説明・ライセンスは `None` で既定のままとする。
 
-- [x] **Alt 単独**（他キーと同時押しでないこと）でタブストリップモードに入り、**左右**でタブインデックスが循環すること。  
+- [✅] **Alt 単独**（他キーと同時押しでないこと）でタブストリップモードに入り、**左右**でタブインデックスが循環すること。  
 
       **確認観点**: Alt+他キーのときはタブストリップモードに入らないこと。  
 
@@ -36,13 +36,13 @@
 
 ### M7-002: メインタブのフォーカスチェーン
 
-- [x] `CreateComparisonFileApp.build_keyboard_focus_chain()` で、ヘッダ・パス行（列優先）・第4行ホスト列左から右・キャンバス・`PageControlFrame` の順にリストを返す。  
+- [✅] `CreateComparisonFileApp.build_keyboard_focus_chain()` で、ヘッダ・パス行（列優先）・第4行ホスト列左から右・キャンバス・`PageControlFrame` の順にリストを返す。  
 
       **確認観点**: `PageControlFrame` を再生成しても `Tab` が破綻しないこと。  
 
       → 無効（`disabled`）のウィジェットはスキップする。
 
-- [x] **Tab** で順方向、**Shift+Tab** で逆方向。タブストリップモード中の **Tab** はモード終了＋先頭へフォーカス。  
+- [✅] **Tab** で順方向、**Shift+Tab** で逆方向。タブストリップモード中の **Tab** はモード終了＋先頭へフォーカス。  
 
       **確認観点**: 説明タブのテキスト等では、チェーン外のとき既定の Tab が残ること。  
 
@@ -52,19 +52,19 @@
 
 ### M7-003: Combobox・Canvas・右サイドバー
 
-- [x] `ttk.Combobox` フォーカス時に **Down** で `ttk::combobox::Post` を試み、開いたら `break` する。  
+- [✅] `ttk.Combobox` フォーカス時に **Down** で `ttk::combobox::Post` を試み、開いたら `break` する。  
 
       **確認観点**: Tcl 未対応環境では黙ってスキップし、他処理を壊さないこと。  
 
       → 言語・DPI・色処理モードの各コンボで確認する。
 
-- [x] プレビュー **Canvas** に `takefocus` とフォーカスリングを付与し、チェーンに含める。  
+- [✅] プレビュー **Canvas** に `takefocus` とフォーカスリングを付与し、チェーンに含める。  
 
       **確認観点**: フォーカス中は既存キャンバスショートカットが使えること。  
 
       → Ctrl+クリック相当はキーボードでは要求しない。
 
-- [x] `PageControlFrame.iter_focus_widgets()` がページ操作・変形 Entry・（あれば）回転ガイド・エクスポートまでを上から順に返す。  
+- [✅] `PageControlFrame.iter_focus_widgets()` がページ操作・変形 Entry・（あれば）回転ガイド・エクスポートまでを上から順に返す。  
 
       **確認観点**: Enter でページ確定・変形適用・ボタン実行が従来どおり動くこと。  
 
@@ -74,7 +74,7 @@
 
 ### M7-004: 他タブ拡張（任意）
 
-- [x] PDF 操作タブ・画像操作タブに `build_keyboard_focus_chain()` を追加し、`main.py` の `_keyboard_chain_for_tab` で結線した。  
+- [✅] PDF 操作タブ・画像操作タブに `build_keyboard_focus_chain()` を追加し、`main.py` の `_keyboard_chain_for_tab` で結線した。  
 
       **確認観点**: `M7_PLAN.md` のスコープと矛盾しないこと。  
 
@@ -84,10 +84,8 @@
 
 ### M7-005: 検証
 
-- [ ] キーボードのみでメインタブを一端から他端まで辿れること（目視）。  
+- [✅] キーボードのみでメインタブを一端から他端まで辿れること（目視）。  
 
       **確認観点**: `docs/milestone/M7_PLAN.md` の検証手順に沿うこと。  
 
       → 必要ならユニットテストはチェーン長・先頭要素の存在のみに留める。
-
-

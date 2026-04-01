@@ -626,7 +626,7 @@ def get_version_info() -> str:
         str: Version string for display in window title
     """
     # Hard-coded version for this application
-    return "v1.0.7"
+    return "v1.0.8"
 
 
 def set_args() -> dict:
@@ -1028,6 +1028,11 @@ def main() -> None:
                 except Exception:
                     pass
                 try:
+                    combo_focus_ring = ensure_contrast_color(
+                        str(combo_focus),
+                        combo_bg,
+                        0.28,
+                    )
                     self._style.map(
                         "TCombobox",
                         fieldbackground=[("readonly", combo_bg), ("disabled", combo_bg)],
@@ -1036,8 +1041,64 @@ def main() -> None:
                         selectbackground=[("readonly", combobox_theme.get("selectbackground", combo_bg))],
                         selectforeground=[("readonly", combobox_theme.get("selectforeground", combo_fg))],
                         arrowcolor=[("readonly", combo_fg), ("active", combo_fg), ("disabled", combo_fg)],
-                        bordercolor=[("readonly", combo_border), ("active", combo_border), ("disabled", combo_border)],
-                        focuscolor=[("readonly", combo_focus), ("active", combo_focus)],
+                        bordercolor=[
+                            ("focus", combo_focus_ring),
+                            ("readonly", combo_border),
+                            ("active", combo_border),
+                            ("disabled", combo_border),
+                        ],
+                        focuscolor=[
+                            ("focus", combo_focus_ring),
+                            ("readonly", combo_focus),
+                            ("active", combo_focus),
+                        ],
+                    )
+                except Exception:
+                    pass
+
+                # Main processing: language combobox uses a dedicated style for a stronger focus ring.
+                try:
+                    lang_focus_ring = ensure_contrast_color(
+                        str(combo_focus),
+                        combo_bg,
+                        0.52,
+                    )
+                    self._style.configure(
+                        "LanguageSelect.TCombobox",
+                        arrowcolor=combo_fg,
+                        bordercolor=combo_border,
+                        lightcolor=combo_light,
+                        darkcolor=combo_dark,
+                        focuscolor=lang_focus_ring,
+                        background=combo_arrow_bg,
+                    )
+                    self._style.map(
+                        "LanguageSelect.TCombobox",
+                        fieldbackground=[("readonly", combo_bg), ("disabled", combo_bg)],
+                        background=[
+                            ("readonly", combo_arrow_bg),
+                            ("disabled", combo_arrow_bg),
+                            ("active", combo_arrow_bg),
+                        ],
+                        foreground=[("readonly", combo_fg), ("disabled", combo_fg), ("active", combo_fg)],
+                        selectbackground=[
+                            ("readonly", combobox_theme.get("selectbackground", combo_bg)),
+                        ],
+                        selectforeground=[
+                            ("readonly", combobox_theme.get("selectforeground", combo_fg)),
+                        ],
+                        arrowcolor=[("readonly", combo_fg), ("active", combo_fg), ("disabled", combo_fg)],
+                        bordercolor=[
+                            ("focus", lang_focus_ring),
+                            ("readonly", combo_border),
+                            ("active", combo_border),
+                            ("disabled", combo_border),
+                        ],
+                        focuscolor=[
+                            ("focus", lang_focus_ring),
+                            ("readonly", combo_focus),
+                            ("active", combo_focus),
+                        ],
                     )
                 except Exception:
                     pass
@@ -1252,6 +1313,35 @@ def main() -> None:
         # Main processing: run one more pass after idle so launch-time colors settle.
         main_window.after_idle(theme_manager.apply_color_theme_all_widgets)
 
+        def _focus_main_tab_base_path_entry() -> None:
+            """Move keyboard focus to the main tab base path entry when possible."""
+            try:
+                if not main_window.winfo_exists():
+                    return
+                main_window.lift()
+                main_window.update_idletasks()
+                ent = main_app._base_file_path_entry.path_entry
+                if ent.winfo_exists():
+                    try:
+                        notebook.select(main_tab)
+                    except tk.TclError:
+                        pass
+                    ent.focus_force()
+                    try:
+                        ent.icursor(0)
+                    except tk.TclError:
+                        pass
+            except Exception:
+                pass
+
+        def _schedule_startup_base_path_focus() -> None:
+            """Schedule focus after theme passes; ``apply_color_theme`` can reset focus."""
+            _focus_main_tab_base_path_entry()
+            for _delay_ms in (50, 150, 400, 900, 1800, 3500, 6000):
+                main_window.after(_delay_ms, _focus_main_tab_base_path_entry)
+
+        main_window.after_idle(_schedule_startup_base_path_focus)
+
         def _sync_shared_paths_on_tab_change(event: tk.Event) -> None:
             """Refresh shared path fields whenever the active tab changes.
 
@@ -1291,6 +1381,36 @@ def main() -> None:
             except tk.TclError:
                 pass
 
+            def _focus_base_path_for_selected_notebook_tab() -> None:
+                """After switching tabs, move focus to that tab's base file path entry."""
+                try:
+                    sel = notebook.select()
+                    idx = int(notebook.index(sel))
+                except tk.TclError:
+                    return
+                ent = None
+                try:
+                    if idx == int(notebook.index(main_tab)):
+                        ent = main_app._base_file_path_entry.path_entry
+                    elif idx == int(notebook.index(pdf_ope_tab)):
+                        ent = pdf_app._base_file_path_entry.path_entry
+                    elif idx == int(notebook.index(image_ope_tab)):
+                        ent = image_app._base_file_path_entry.path_entry
+                except (tk.TclError, AttributeError):
+                    ent = None
+                if ent is not None and ent.winfo_exists():
+                    try:
+                        ent.focus_force()
+                        ent.icursor(0)
+                    except tk.TclError:
+                        pass
+
+            # Idle + short delays so focus wins over reparenting/repaint after tab switch
+            # (e.g. Main → PDF → Main should land on base path entry reliably).
+            main_window.after_idle(_focus_base_path_for_selected_notebook_tab)
+            main_window.after(10, _focus_base_path_for_selected_notebook_tab)
+            main_window.after(50, _focus_base_path_for_selected_notebook_tab)
+
         notebook.bind("<<NotebookTabChanged>>", _sync_shared_paths_on_tab_change)
         try:
             pdf_short0 = getattr(pdf_app, "set_pdf_tab_shortcuts_active", None)
@@ -1301,9 +1421,6 @@ def main() -> None:
         except tk.TclError:
             pass
 
-        # Pack notebook to fill the window
-        notebook.pack(expand=True, fill=tk.BOTH)
-        
         # Process command line arguments
         set_args()
 

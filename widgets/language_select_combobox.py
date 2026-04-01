@@ -34,7 +34,13 @@ class LanguageSelectCombo(ttk.Combobox):
         self.parent = parent
         self.settings = UserSettingManager()
         values = [LANGUAGE_CODES["ja"], LANGUAGE_CODES["en"]]
-        super().__init__(self.parent, values=values, state="readonly")
+        super().__init__(
+            self.parent,
+            values=values,
+            state="readonly",
+            style="LanguageSelect.TCombobox",
+        )
+        self.configure(takefocus=1)
         lang = self.settings.get_setting("language", "ja")
         lang_code = self._normalize_language_value(str(lang))
         self._initial_language_code = lang_code

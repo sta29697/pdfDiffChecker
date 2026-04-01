@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tkinter as tk
 from logging import getLogger
@@ -11,6 +12,7 @@ from configurations.user_setting_manager import UserSettingManager
 from controllers.widgets_tracker import WidgetsTracker, ThemeColorApplicable
 from models.class_dictionary import FilePathInfo, FolderPathInfo
 from utils.utils import get_resource_path
+from utils.path_dialog_utils import ask_file_dialog
 from utils.workspace_input_formats import main_pdf_ope_askopen_filetypes
 from themes.coloring_theme_interface import ColoringThemeIF
 from widgets.base_path_entry import BasePathEntry
@@ -101,23 +103,55 @@ class BasePathSelectButton(tk.Frame, ColoringThemeIF, ThemeColorApplicable):
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
 
+    def _initial_dir_for_file_dialog(self) -> str:
+        """Resolve a reasonable initial directory for file open dialogs.
+
+        Returns:
+            Existing directory path, or the process current working directory.
+        """
+        initial_dir = os.getcwd()
+        setting_key = (
+            "base_file_path"
+            if self.__entry_setting_key == "base_file_path"
+            else "comparison_file_path"
+        )
+        try:
+            saved = self.__settings.get_setting(setting_key, "")
+            if not isinstance(saved, str) or not saved.strip():
+                return initial_dir
+            p = Path(saved.strip())
+            if p.is_file():
+                initial_dir = str(p.parent)
+            elif p.is_dir() and p.exists():
+                initial_dir = str(p)
+            else:
+                par = p.parent
+                if par.exists() and par.is_dir():
+                    initial_dir = str(par)
+        except Exception:
+            pass
+        return initial_dir
+
     def _select_path(self) -> None:
         """Open file dialog and handle path selection."""
         try:
+            parent = self.winfo_toplevel()
             if self.__entry_setting_key == "base_file_path":
-                # Dialog title for selecting base file
-                file_path = fd.askopenfilename(
-                    title=message_manager.get_ui_message("U003"),
-                    filetypes=main_pdf_ope_askopen_filetypes(),
+                file_path = ask_file_dialog(
+                    self._initial_dir_for_file_dialog(),
+                    "U003",
+                    main_pdf_ope_askopen_filetypes(),
+                    parent=parent,
                 )
                 if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)
                     self.__path_info = FilePathInfo(path)
             elif self.__entry_setting_key == "comparison_file_path":
-                # Dialog title for selecting comparison file
-                file_path = fd.askopenfilename(
-                    title=message_manager.get_ui_message("U003"),
-                    filetypes=main_pdf_ope_askopen_filetypes(),
+                file_path = ask_file_dialog(
+                    self._initial_dir_for_file_dialog(),
+                    "U003",
+                    main_pdf_ope_askopen_filetypes(),
+                    parent=parent,
                 )
                 if file_path and self.__share_path_entry.accept_dialog_path(str(Path(file_path))):
                     path = Path(file_path)

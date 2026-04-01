@@ -16,6 +16,7 @@ from controllers.color_theme_manager import ColorThemeManager
 from controllers.event_bus import EventBus, EventNames
 from controllers.widgets_tracker import (
     WidgetsTracker,
+    adjust_hex_color,
     ensure_contrast_color,
     resolve_disabled_visual_colors,
 )
@@ -36,6 +37,15 @@ from utils.path_normalization import normalize_host_path
 logger = getLogger(__name__)
 message_manager = get_message_manager()
 _IMAGE_OPE_DEFAULT_DPI = 300
+
+
+def _ttk_combobox_border_and_focus_ring(field_bg: str, field_fg: str) -> tuple[str, str]:
+    """Return ``(bordercolor, focus_ring)`` for image-tab ttk.Combobox styles."""
+    bg_s, fg_s = str(field_bg), str(field_fg)
+    border = str(ensure_contrast_color(fg_s, bg_s, 0.22))
+    ring = str(ensure_contrast_color("#f5d742", bg_s, 0.38))
+    ring = str(ensure_contrast_color(ring, bg_s, 0.32))
+    return border, ring
 
 # Supported image extensions for file dialogs
 _IMAGE_EXTENSIONS = (
@@ -677,12 +687,17 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             style = ttk.Style(self)
             active_combo_fg = self._dpi_combo_active_fg or active_filename_fg
             active_combo_bg = self._dpi_combo_active_bg or active_filename_bg
+            ext_bd, ext_ring = _ttk_combobox_border_and_focus_ring(active_combo_bg, active_combo_fg)
             style.configure(
                 self._ext_target_enabled_style,
                 foreground=active_combo_fg,
                 fieldbackground=active_combo_bg,
                 background=active_combo_bg,
                 arrowcolor=active_combo_fg,
+                bordercolor=ext_bd,
+                lightcolor=adjust_hex_color(ext_bd, 0.2),
+                darkcolor=adjust_hex_color(ext_bd, -0.2),
+                focuscolor=ext_ring,
             )
             style.map(
                 self._ext_target_enabled_style,
@@ -691,6 +706,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 fieldbackground=[("readonly", active_combo_bg)],
                 background=[("readonly", active_combo_bg)],
                 arrowcolor=[("readonly", active_combo_fg)],
+                bordercolor=[("focus", ext_ring), ("readonly", ext_bd), ("active", ext_bd)],
+                focuscolor=[("focus", ext_ring), ("readonly", active_combo_fg)],
             )
             style.configure(
                 self._ext_target_disabled_style,
@@ -717,6 +734,13 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                 self._ext_combo.configure(
                     style=self._ext_target_disabled_style if controls_locked else self._ext_target_enabled_style
                 )
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "_ext_pdf_dpi_combo"):
+                    self._ext_pdf_dpi_combo.configure(
+                        style=self._ext_target_disabled_style if controls_locked else self._ext_target_enabled_style
+                    )
             except Exception:
                 pass
 
@@ -919,12 +943,17 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             active_combo_bg = self._dpi_combo_active_bg or entry_bg
             active_combo_fg = self._dpi_combo_active_fg or entry_fg
             try:
+                pap_bd, pap_ring = _ttk_combobox_border_and_focus_ring(active_combo_bg, active_combo_fg)
                 style.configure(
                     self._resize_paper_enabled_style,
                     foreground=active_combo_fg,
                     fieldbackground=active_combo_bg,
                     background=active_combo_bg,
                     arrowcolor=active_combo_fg,
+                    bordercolor=pap_bd,
+                    lightcolor=adjust_hex_color(pap_bd, 0.2),
+                    darkcolor=adjust_hex_color(pap_bd, -0.2),
+                    focuscolor=pap_ring,
                 )
                 style.map(
                     self._resize_paper_enabled_style,
@@ -933,6 +962,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                     fieldbackground=[("readonly", active_combo_bg)],
                     background=[("readonly", active_combo_bg)],
                     arrowcolor=[("readonly", active_combo_fg)],
+                    bordercolor=[("focus", pap_ring), ("readonly", pap_bd), ("active", pap_bd)],
+                    focuscolor=[("focus", pap_ring), ("readonly", active_combo_fg)],
                 )
             except Exception:
                 pass
@@ -969,6 +1000,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
 
         if hasattr(self, "_aspect_check"):
             try:
+                chk_ring = ensure_contrast_color(str(label_fg), str(block_bg), 0.3)
+                chk_ring = str(ensure_contrast_color(chk_ring, str(block_bg), 0.28))
                 self._aspect_check.configure(
                     state="disabled" if controls_locked else "normal",
                     fg=label_fg,
@@ -977,6 +1010,10 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
                     activeforeground=label_fg,
                     selectcolor=disabled_bg if controls_locked else active_filename_bg,
                     disabledforeground=disabled_fg,
+                    takefocus=1,
+                    highlightthickness=2,
+                    highlightbackground=str(block_bg),
+                    highlightcolor=chk_ring,
                 )
             except Exception:
                 pass
@@ -1164,6 +1201,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             values=_EXT_CHOICES,
             state="readonly",
             width=8,
+            takefocus=1,
         )
         self._ext_combo.pack(side="left", padx=(2, 0))
         self._ext_combo.bind("<<ComboboxSelected>>", self._on_ext_target_changed)
@@ -1196,6 +1234,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             textvariable=self._ext_pdf_dpi_var,
             values=self._get_configured_dpi_choices(),
             width=6,
+            takefocus=1,
         )
         self._ext_pdf_dpi_combo.pack(side="left", padx=(0, 15))
         self._ext_pdf_dpi_combo.bind("<<ComboboxSelected>>", self._on_ext_pdf_dpi_changed)
@@ -1322,8 +1361,11 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self._dpi_label_default_fg = self._dpi_label.cget("fg")
         self._dpi_var = tk.StringVar(value=self._get_initial_user_dpi_choice())
         self._dpi_combo = ttk.Combobox(
-            self._options_row, textvariable=self._dpi_var,
-            values=self._get_configured_dpi_choices(), width=6,
+            self._options_row,
+            textvariable=self._dpi_var,
+            values=self._get_configured_dpi_choices(),
+            width=6,
+            takefocus=1,
         )
         self._dpi_combo.pack(side="left", padx=(0, 15))
         self._dpi_combo_default_style = self._dpi_combo.cget("style")
@@ -1337,8 +1379,12 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         paper_names = list(self._paper_sizes.keys())
         self._paper_var = tk.StringVar(value="")
         self._paper_combo = ttk.Combobox(
-            self._options_row, textvariable=self._paper_var,
-            values=paper_names, state="readonly", width=30,
+            self._options_row,
+            textvariable=self._paper_var,
+            values=paper_names,
+            state="readonly",
+            width=30,
+            takefocus=1,
         )
         self._paper_combo.pack(side="left", padx=(0, 15))
         # Bind paper size selection to auto-fill width/height
@@ -1351,6 +1397,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             text=message_manager.get_ui_message("U081"),
             variable=self._aspect_lock_var,
             command=self._on_aspect_toggle,
+            takefocus=1,
+            highlightthickness=2,
         )
         self._aspect_check.pack(side="left", padx=(0, 5))
 
@@ -1388,7 +1436,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
     def build_keyboard_focus_chain(self) -> List[tk.Widget]:
         """Build column-major keyboard focus order for the image operation tab.
 
-        Order: header (language, theme), path rows (entries then buttons),
+        Order: path rows (entries then buttons), header (language, theme),
         extension block comboboxes and convert button, size block entries and
         comboboxes, aspect checkbox, and size convert button.
 
@@ -1396,17 +1444,16 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             Interactive widgets participating in Tab / Shift+Tab navigation.
         """
         chain: List[tk.Widget] = []
+        chain.append(self._base_file_path_entry.path_entry)
+        chain.append(self._output_folder_path_entry.path_entry)
+        chain.append(self._base_file_path_button.path_select_btn)
+        chain.append(self._output_folder_path_button.path_select_btn)
         lang = getattr(self, "_lang_select_combo", None)
         if lang is not None:
             chain.append(lang)
         theme_btn = getattr(self, "_color_theme_change_btn", None)
         if theme_btn is not None and hasattr(theme_btn, "color_theme_change_btn"):
             chain.append(theme_btn.color_theme_change_btn)
-
-        chain.append(self._base_file_path_entry.path_entry)
-        chain.append(self._output_folder_path_entry.path_entry)
-        chain.append(self._base_file_path_button.path_select_btn)
-        chain.append(self._output_folder_path_button.path_select_btn)
 
         chain.append(self._ext_combo)
         chain.append(self._ext_pdf_dpi_combo)
@@ -1515,6 +1562,7 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             title_code="U022",
             filetypes=prioritized_filetypes,
             typevariable=self._input_dialog_type_var,
+            parent=self.winfo_toplevel(),
         )
         self._persist_input_dialog_preference(self._input_dialog_type_var.get(), file_path)
         if file_path:
@@ -2432,12 +2480,17 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         active_combo_bg = self._dpi_combo_active_bg or self._dpi_combo_disabled_bg
         disabled_combo_bg = self._size_disabled_bg or active_combo_bg
         style = ttk.Style(self)
+        dpi_bd, dpi_ring = _ttk_combobox_border_and_focus_ring(active_combo_bg, active_combo_fg)
         style.configure(
             self._output_dpi_enabled_style,
             foreground=active_combo_fg,
             fieldbackground=active_combo_bg,
             background=active_combo_bg,
             arrowcolor=active_combo_fg,
+            bordercolor=dpi_bd,
+            lightcolor=adjust_hex_color(dpi_bd, 0.2),
+            darkcolor=adjust_hex_color(dpi_bd, -0.2),
+            focuscolor=dpi_ring,
         )
         style.map(
             self._output_dpi_enabled_style,
@@ -2446,6 +2499,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             fieldbackground=[("readonly", active_combo_bg)],
             background=[("readonly", active_combo_bg)],
             arrowcolor=[("readonly", active_combo_fg)],
+            bordercolor=[("focus", dpi_ring), ("readonly", dpi_bd), ("active", dpi_bd)],
+            focuscolor=[("focus", dpi_ring), ("readonly", active_combo_fg)],
         )
 
         style_name = self._output_dpi_enabled_style if dpi_editable else self._output_dpi_disabled_style
