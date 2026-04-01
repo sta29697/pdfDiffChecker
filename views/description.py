@@ -56,7 +56,7 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     },
                     {
                         "title": "8. 色処理・DPI設定・表示切替",
-                        "body": "「色処理」コンボボックスでは指定色濃淡などの表示方式を選びます。「DPI設定」はプレビュー解像度の基準です。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。"
+                        "body": "「色処理」コンボボックスでは指定色濃淡などの表示方式を選びます。「DPI設定」はプレビュー解像度の基準です。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。両方表示中は「差分を強調表示（半透明）」で、色処理後の画像同士の違いを半透明の色で重ねて強調できます。"
                     },
                     {
                         "title": "9. カスタム回転ガイドと中央Canvas",
@@ -207,7 +207,7 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     {"title": "5. Analysis buttons", "body": "Use the base and comparison analysis buttons first. They load the selected PDFs and prepare the preview and page information used by later steps."},
                     {"title": "6. Threshold fields and Apply button", "body": "These fields control how strongly each side is emphasized by the current color-processing mode. Press Apply after changing the numbers."},
                     {"title": "7. Color buttons and image buttons", "body": "The color buttons next to the base and comparison paths define the visible color of each layer. The two large image buttons are the entry points for automatic alignment and manual alignment workflows."},
-                    {"title": "8. Color mode, DPI, and layer toggles", "body": "Choose the processing mode, set the preview DPI, and turn the base layer, comparison layer, and reference grid on or off as needed."},
+                    {"title": "8. Color mode, DPI, and layer toggles", "body": "Choose the processing mode, set the preview DPI, and turn the base layer, comparison layer, and reference grid on or off as needed. When both layers are visible, use Highlight differences (semi-transparent) to tint regions where the processed pixels differ."},
                     {"title": "9. Rotation guide and preview canvas", "body": "The custom rotation guide explains the rotation workflow. The large canvas below is the main inspection area, where you can zoom, pan, rotate, and inspect the overlaid result."},
                     {"title": "10. Right-side page controls", "body": "Move between pages, insert blank pages, delete pages, save, and enter X/Y, angle, and scale values. Batch Edit applies the current transform settings to other pages as well."},
                     {"title": "11. Footer status information", "body": "The footer below the canvas shows pixel size, DPI, and paper-size information for the current page so you can confirm the current state quickly."}

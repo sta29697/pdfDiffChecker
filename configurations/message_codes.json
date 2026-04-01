@@ -2397,6 +2397,10 @@
         "U177": {
             "en": "This operation is only available when both the base and comparison files are shown at the same time.",
             "ja": "この操作は両ファイルを同時に表示させているときにしかできません。"
+        },
+        "U178": {
+            "en": "Highlight differences (semi-transparent)",
+            "ja": "差分を強調表示（半透明）"
         }
     }
 }
