@@ -3574,6 +3574,51 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._preview_processed_image_cache[cache_key] = cached_image
         return cached_image.copy()
 
+    def _diff_emphasis_source_rgba_pair_for_page(
+        self,
+        page_index: int,
+        base_path: Path,
+        comp_path: Path,
+    ) -> tuple[Image.Image, Image.Image]:
+        """Load workspace PNGs without color processing and apply preview transforms.
+
+        Used for diff-emphasis masking when ``指定色濃淡`` is active: comparing tinted
+        previews makes near-white regions diverge; comparing source rasters aligns
+        highlights with real ink on the page image.
+
+        Args:
+            page_index: Zero-based page index.
+            base_path: Rendered base page PNG path.
+            comp_path: Rendered comparison page PNG path.
+
+        Returns:
+            Tuple ``(base_rgba, comp_rgba)`` ready for :func:`build_diff_highlight_overlay_rgba`.
+
+        Raises:
+            Exception: Propagated if cache load or transform fails (caller may fall back).
+        """
+        base_rgba = self._get_cached_source_preview_image(base_path)
+        comp_rgba = self._get_cached_source_preview_image(comp_path)
+        if page_index < len(self.base_transform_data):
+            base_t = self._transform_tuple_for_preview_render(
+                page_index,
+                self.base_transform_data[page_index],
+                is_base_layer=True,
+            )
+            base_rgba = self._apply_transform_to_image(base_rgba, base_t)
+        if page_index < len(self.comp_transform_data):
+            comp_t = self._transform_tuple_for_preview_render(
+                page_index,
+                self.comp_transform_data[page_index],
+                is_base_layer=False,
+            )
+            comp_rgba = self._apply_transform_to_image(comp_rgba, comp_t)
+        if base_rgba.mode != "RGBA":
+            base_rgba = base_rgba.convert("RGBA")
+        if comp_rgba.mode != "RGBA":
+            comp_rgba = comp_rgba.convert("RGBA")
+        return base_rgba, comp_rgba
+
     def _display_page(self, page_index: int) -> None:
         """Display one page of the converted comparison workspace.
 
@@ -3692,13 +3737,30 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[page_index])
                 _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[page_index])
                 bi = base_image
+                ci = comp_image_for_diff
+                if (
+                    self._selected_color_processing_mode == "指定色濃淡"
+                    and base_path is not None
+                    and comp_path is not None
+                    and base_path.exists()
+                    and comp_path.exists()
+                ):
+                    try:
+                        bi, ci = self._diff_emphasis_source_rgba_pair_for_page(
+                            page_index, base_path, comp_path
+                        )
+                    except Exception:
+                        bi = base_image
+                        ci = comp_image_for_diff
                 if bi is not None and bi.mode != "RGBA":
                     bi = bi.convert("RGBA")
-                if bi is not None:
+                if ci is not None and ci.mode != "RGBA":
+                    ci = ci.convert("RGBA")
+                if bi is not None and ci is not None:
                     ov, (ox, oy) = build_diff_highlight_overlay_rgba(
                         bi,
                         (int(btx), int(bty)),
-                        comp_image_for_diff,
+                        ci,
                         (int(ctx), int(cty)),
                     )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
@@ -4497,8 +4559,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             # Compact row height: extra minsize steals vertical space from the canvas / page sidebar below.
             # Threshold descenders are handled with modest per-widget pady instead of inflating the whole row.
             _row4_body_h = max(
-                228,
-                int(self._action_button_square_size) + 108,
+                240,
+                int(self._action_button_square_size) + 112,
             )
             self.frame_main2.grid_rowconfigure(0, minsize=_row4_body_h)
 
@@ -4702,7 +4764,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._row4_fixed_col0_host.grid_columnconfigure(0, weight=1)
 
             self._row4_comment_frame = tk.Frame(self._row4_fixed_col0_host)
-            self._row4_comment_frame.grid(row=0, column=0, padx=(_hpad, _hpad), pady=6, sticky="nsew")
+            self._row4_comment_frame.grid(row=0, column=0, padx=(_hpad, _hpad), pady=6, sticky="new")
             self._row4_comment_frame.grid_columnconfigure(0, weight=1)
 
             self._row4_comment_text_label = tk.Label(
