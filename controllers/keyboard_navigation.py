@@ -53,7 +53,11 @@ class KeyboardNavigationShell:
         root.bind_all("<Right>", self._on_right_in_tab_mode, add="+")
         root.bind_all("<Tab>", self._on_tab_forward, add="+")
         root.bind_all("<Shift-Tab>", self._on_tab_backward, add="+")
-        root.bind_all("<ISO_Left_Tab>", self._on_tab_backward, add="+")
+        # X11/Linux often emits ISO_Left_Tab for Shift+Tab; Windows Tk rejects this sequence.
+        try:
+            root.bind_all("<ISO_Left_Tab>", self._on_tab_backward, add="+")
+        except tk.TclError:
+            pass
         root.bind_all("<Escape>", self._on_escape, add="+")
         root.bind_all("<KeyPress-Down>", self._on_down_combobox, add="+")
 

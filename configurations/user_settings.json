@@ -76,7 +76,7 @@
         "separat_color_threshold": 700,
         "base_separat_color_threshold": 700,
         "comparison_separat_color_threshold": 700,
-        "color_processing_mode": "二色化",
+        "color_processing_mode": "指定色濃淡",
         "setted_dpi": 300,
         "setted_dpi_mode": "manual",
         "preview_scale": 0.09271422561135849,

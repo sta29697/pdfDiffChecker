@@ -2,7 +2,7 @@
 
 
 
-- M4 のチェックリストは `docs/tasks/M4_PLAN.md` を参照する。
+- M4 のチェックリストは `docs/tasks/M4_Tasks.md` を参照する。
 
 - M5 のチェックリストは `docs/tasks/M5_Tasks.md` を参照する。
 
