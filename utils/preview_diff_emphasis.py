@@ -1,7 +1,7 @@
-"""Build a translucent overlay highlighting pixel differences between two preview layers.
+"""Build a translucent overlay highlighting structural (ink) differences between two layers.
 
-Used by the main tab when both base and comparison transformed RGBA images are available.
-Implements M6 plan: numpy + PIL only, no OpenCV.
+Uses BT.601 luminance and alpha for ink detection, then exclusive regions with optional
+dilated matching to ignore palette-only differences on shared strokes. numpy + PIL only.
 """
 
 from __future__ import annotations
@@ -58,48 +58,78 @@ def _rasterize_placed_rgba(
     return np.asarray(canvas, dtype=np.uint8)
 
 
-def rgba_pixel_diff_mask(
-    a: np.ndarray,
-    b: np.ndarray,
+def luma_bt601_rgba(rgba: np.ndarray) -> np.ndarray:
+    """BT.601 luma per pixel from RGB channels (float32, shape HxW)."""
+    r = rgba[..., 0].astype(np.float32)
+    g = rgba[..., 1].astype(np.float32)
+    b = rgba[..., 2].astype(np.float32)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def ink_mask_from_rgba(
+    rgba: np.ndarray,
     *,
-    squared_diff_threshold: int = 180,
+    luma_threshold: int = 248,
+    alpha_threshold: int = 18,
 ) -> np.ndarray:
-    """Return a boolean mask where per-pixel squared channel error exceeds the threshold.
+    """Boolean mask where a pixel counts as ink (dark enough and sufficiently opaque).
 
     Args:
-        a: First image array ``(H, W, 4)`` uint8.
-        b: Second image array, same shape as ``a``.
-        squared_diff_threshold: Threshold on sum of squared channel differences (RGBA).
+        rgba: ``(H, W, 4)`` uint8 RGBA.
+        luma_threshold: Pixels with BT.601 luma strictly below this are candidate ink.
+        alpha_threshold: Alpha must be strictly greater than this value.
 
     Returns:
         Boolean array ``(H, W)``.
-
-    Raises:
-        ValueError: If ``a`` and ``b`` shapes differ.
     """
-    if a.shape != b.shape:
-        raise ValueError(f"Shape mismatch for diff mask: {a.shape} vs {b.shape}")
-    # int16 overflows for large channel deltas (e.g. 200^2 * 3 > 32767).
-    da = a.astype(np.int32) - b.astype(np.int32)
-    sq = np.sum(da * da, axis=2)
-    return sq > squared_diff_threshold
+    y = luma_bt601_rgba(rgba)
+    a = rgba[..., 3].astype(np.int32)
+    return (y < float(luma_threshold)) & (a > int(alpha_threshold))
+
+
+def _mask_dilate_max(mask_bool: np.ndarray, size: int) -> np.ndarray:
+    """Dilate a boolean mask with a square MaxFilter (odd size >= 3)."""
+    if size < 3:
+        return mask_bool
+    h, w = mask_bool.shape
+    if h == 0 or w == 0:
+        return mask_bool
+    u8 = (mask_bool.astype(np.uint8) * 255)
+    pil = Image.fromarray(u8, mode="L")
+    pil = pil.filter(ImageFilter.MaxFilter(size))
+    return np.asarray(pil, dtype=np.uint8) > 127
+
+
+def _apply_edge_suppress(mask_bool: np.ndarray, px: int) -> np.ndarray:
+    """Clear a margin of ``px`` pixels on each edge of the mask."""
+    if px <= 0:
+        return mask_bool
+    h, w = mask_bool.shape
+    if h <= 2 * px or w <= 2 * px:
+        return np.zeros_like(mask_bool)
+    out = mask_bool.copy()
+    out[:px, :] = False
+    out[h - px :, :] = False
+    out[:, :px] = False
+    out[:, w - px :] = False
+    return out
 
 
 def refine_diff_mask_with_morphology(
     mask_bool: np.ndarray,
     *,
-    open_size: int = 3,
-    dilate_size: int = 9,
+    open_size: int = 0,
+    dilate_size: int = 5,
 ) -> np.ndarray:
-    """Reduce salt noise with a small opening, then dilate to thicken regions.
+    """Optional opening then MaxFilter dilation on a boolean mask.
 
     Args:
         mask_bool: Boolean mask ``(H, W)``.
-        open_size: Side length for Min/Max opening (must be odd, >= 3), or 0 to skip.
-        dilate_size: Side length for MaxFilter dilation (must be odd, >= 3), or 0 to skip.
+        open_size: Min/Max opening side length (odd, >= 3), or 0 to skip.
+        dilate_size: MaxFilter dilation side length (odd, >= 3), or 0 to skip.
 
     Returns:
-        Boolean mask ``(H, W)`` after morphology.
+        Boolean mask after morphology.
     """
     h, w = mask_bool.shape
     if h == 0 or w == 0:
@@ -115,30 +145,68 @@ def refine_diff_mask_with_morphology(
     return arr > 127
 
 
+def rgba_pixel_diff_mask(
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    squared_diff_threshold: int = 180,
+) -> np.ndarray:
+    """Return a boolean mask where per-pixel squared channel error exceeds the threshold.
+
+    Legacy helper for tests; main overlay uses :func:`ink_mask_from_rgba` flow.
+
+    Args:
+        a: First image array ``(H, W, 4)`` uint8.
+        b: Second image array, same shape as ``a``.
+        squared_diff_threshold: Threshold on sum of squared channel differences (RGBA).
+
+    Returns:
+        Boolean array ``(H, W)``.
+
+    Raises:
+        ValueError: If ``a`` and ``b`` shapes differ.
+    """
+    if a.shape != b.shape:
+        raise ValueError(f"Shape mismatch for diff mask: {a.shape} vs {b.shape}")
+    da = a.astype(np.int32) - b.astype(np.int32)
+    sq = np.sum(da * da, axis=2)
+    return sq > squared_diff_threshold
+
+
 def build_diff_highlight_overlay_rgba(
     base_img: PILImage,
     base_xy: Tuple[int, int],
     comp_img: PILImage,
     comp_xy: Tuple[int, int],
     *,
-    squared_diff_threshold: int = 180,
-    open_size: int = 3,
-    dilate_size: int = 9,
-    highlight_rgba: Tuple[int, int, int, int] = (255, 220, 0, 110),
+    base_highlight_rgba: Tuple[int, int, int, int] = (62, 119, 210, 110),
+    comp_highlight_rgba: Tuple[int, int, int, int] = (192, 55, 85, 110),
+    luma_threshold: int = 248,
+    alpha_threshold: int = 18,
+    ink_match_dilate_size: int = 5,
+    edge_suppress_px: int = 6,
+    open_size: int = 0,
+    dilate_size: int = 5,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
-    """Build an RGBA overlay and its canvas top-left position.
+    """Build an RGBA overlay from structural (ink) exclusive regions.
 
-    Compares full-alpha transformed layers (before any display-only alpha softening).
+    Comparison-only ink is tinted with ``comp_highlight_rgba``; base-only ink with
+    ``base_highlight_rgba``. Shared stroke locations (after dilated matching) do not
+    highlight, so palette-only differences on the same geometry are suppressed.
 
     Args:
         base_img: Transformed base RGBA image.
         base_xy: Canvas (x, y) for base (nw).
-        comp_img: Transformed comparison RGBA image (not softened).
+        comp_img: Transformed comparison RGBA (not display-softened).
         comp_xy: Canvas (x, y) for comparison (nw).
-        squared_diff_threshold: Pixel difference sensitivity.
-        open_size: Morphological opening size (odd, >= 3).
-        dilate_size: Dilation MaxFilter size (odd, >= 3).
-        highlight_rgba: Fill color including alpha.
+        base_highlight_rgba: Semi-transparent RGBA for base-only ink.
+        comp_highlight_rgba: Semi-transparent RGBA for comparison-only ink.
+        luma_threshold: BT.601 luma below this counts as ink.
+        alpha_threshold: Alpha above this counts as ink.
+        ink_match_dilate_size: Dilate opponent ink before XOR (0 = strict masks).
+        edge_suppress_px: Clear highlights in a border this many pixels wide (0 = off).
+        open_size: Morphological opening size (0 = off).
+        dilate_size: Final dilation of exclusive masks (0 = off).
 
     Returns:
         Tuple of ``(overlay_rgba, (x0, y0))`` where ``(x0, y0)`` is the bbox top-left.
@@ -147,13 +215,38 @@ def build_diff_highlight_overlay_rgba(
     x0, y0, x1, y1 = bbox
     ra = _rasterize_placed_rgba(base_img, base_xy, bbox)
     rb = _rasterize_placed_rgba(comp_img, comp_xy, bbox)
-    raw = rgba_pixel_diff_mask(ra, rb, squared_diff_threshold=squared_diff_threshold)
-    refined = refine_diff_mask_with_morphology(
-        raw,
-        open_size=open_size,
-        dilate_size=dilate_size,
+
+    base_ink = ink_mask_from_rgba(
+        ra, luma_threshold=luma_threshold, alpha_threshold=alpha_threshold
     )
-    hr, hg, hb, ha = highlight_rgba
+    comp_ink = ink_mask_from_rgba(
+        rb, luma_threshold=luma_threshold, alpha_threshold=alpha_threshold
+    )
+
+    if ink_match_dilate_size >= 3:
+        base_for_match = _mask_dilate_max(base_ink, ink_match_dilate_size)
+        comp_for_match = _mask_dilate_max(comp_ink, ink_match_dilate_size)
+    else:
+        base_for_match = base_ink
+        comp_for_match = comp_ink
+
+    comp_only = comp_ink & ~base_for_match
+    base_only = base_ink & ~comp_for_match
+
+    comp_only = _apply_edge_suppress(comp_only, edge_suppress_px)
+    base_only = _apply_edge_suppress(base_only, edge_suppress_px)
+
+    comp_only = refine_diff_mask_with_morphology(
+        comp_only, open_size=open_size, dilate_size=dilate_size
+    )
+    base_only = refine_diff_mask_with_morphology(
+        base_only, open_size=open_size, dilate_size=dilate_size
+    )
+
+    br, bg, bb, ba = base_highlight_rgba
+    cr, cg, cb, ca = comp_highlight_rgba
     overlay = np.zeros_like(ra)
-    overlay[refined] = (hr, hg, hb, ha)
+    # Comparison-side emphasis wins where both masks overlap after morphology.
+    overlay[base_only] = (br, bg, bb, ba)
+    overlay[comp_only] = (cr, cg, cb, ca)
     return Image.fromarray(overlay, mode="RGBA"), (x0, y0)

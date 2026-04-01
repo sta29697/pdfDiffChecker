@@ -1999,6 +1999,37 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except Exception:
             return None
 
+    def _diff_emphasis_palette_rgba(self, name_flag: str, alpha: int = 110) -> tuple[int, int, int, int]:
+        """Map the layer palette color to an RGBA tuple for diff-emphasis overlay.
+
+        Args:
+            name_flag: Either ``"base"`` or ``"comp"``.
+            alpha: Overlay alpha (0--255).
+
+        Returns:
+            ``(R, G, B, A)`` for semi-transparent highlights.
+        """
+        default_hex = "#3e77d2" if name_flag == "base" else "#c03755"
+        raw = self._get_selected_layer_color(name_flag) or default_hex
+        h = str(raw).strip().lstrip("#")
+        if len(h) >= 6:
+            try:
+                return (
+                    int(h[0:2], 16),
+                    int(h[2:4], 16),
+                    int(h[4:6], 16),
+                    max(0, min(255, int(alpha))),
+                )
+            except ValueError:
+                pass
+        # Fallback parse for short or invalid hex
+        return (62, 119, 210, max(0, min(255, int(alpha)))) if name_flag == "base" else (
+            192,
+            55,
+            85,
+            max(0, min(255, int(alpha))),
+        )
+
     def _get_threshold_for_side(self, name_flag: str) -> int:
         """Return the current threshold value for one side.
 
@@ -3762,6 +3793,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                         (int(btx), int(bty)),
                         ci,
                         (int(ctx), int(cty)),
+                        base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
+                        comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
                     )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
                     self._diff_emphasis_canvas_image_id = self.canvas.create_image(
