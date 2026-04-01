@@ -1228,6 +1228,16 @@ def main() -> None:
                     return main_app.build_keyboard_focus_chain()
                 except Exception:
                     return None
+            if tab_index == 1:
+                try:
+                    return pdf_app.build_keyboard_focus_chain()
+                except Exception:
+                    return None
+            if tab_index == 2:
+                try:
+                    return image_app.build_keyboard_focus_chain()
+                except Exception:
+                    return None
             return None
 
         KeyboardNavigationShell(

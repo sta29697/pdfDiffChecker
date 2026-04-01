@@ -1022,8 +1022,8 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
         self.frame_main0.grid_columnconfigure(0, weight=1)
 
         # Language combo (left-aligned via weight)
-        lang_combo = LanguageSelectCombo(self.frame_main0)
-        lang_combo.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        self._lang_select_combo = LanguageSelectCombo(self.frame_main0)
+        self._lang_select_combo.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
         # Theme change button (right-aligned)
         self._color_theme_change_btn = ColorThemeChangeButton(
@@ -1384,6 +1384,41 @@ class ImageOperationApp(ttk.Frame, ColoringThemeIF):
             command=self._on_size_convert,
         )
         self._size_convert_btn.grid(row=5, column=2, padx=5, pady=(8, 4), sticky="e")
+
+    def build_keyboard_focus_chain(self) -> List[tk.Widget]:
+        """Build column-major keyboard focus order for the image operation tab.
+
+        Order: header (language, theme), path rows (entries then buttons),
+        extension block comboboxes and convert button, size block entries and
+        comboboxes, aspect checkbox, and size convert button.
+
+        Returns:
+            Interactive widgets participating in Tab / Shift+Tab navigation.
+        """
+        chain: List[tk.Widget] = []
+        lang = getattr(self, "_lang_select_combo", None)
+        if lang is not None:
+            chain.append(lang)
+        theme_btn = getattr(self, "_color_theme_change_btn", None)
+        if theme_btn is not None and hasattr(theme_btn, "color_theme_change_btn"):
+            chain.append(theme_btn.color_theme_change_btn)
+
+        chain.append(self._base_file_path_entry.path_entry)
+        chain.append(self._output_folder_path_entry.path_entry)
+        chain.append(self._base_file_path_button.path_select_btn)
+        chain.append(self._output_folder_path_button.path_select_btn)
+
+        chain.append(self._ext_combo)
+        chain.append(self._ext_pdf_dpi_combo)
+        chain.append(self._ext_convert_btn)
+
+        chain.append(self._width_entry)
+        chain.append(self._height_entry)
+        chain.append(self._dpi_combo)
+        chain.append(self._paper_combo)
+        chain.append(self._aspect_check)
+        chain.append(self._size_convert_btn)
+        return chain
 
     # ------------------------------------------------------------------
     # frame_status: Status bar
