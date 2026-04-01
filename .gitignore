@@ -2,7 +2,11 @@
 .env
 .mypy_cache
 .cursor
-build
+# Build outputs: ignore all under build/ except the shipped Nuitka onefile exe.
+build/*
+!build/nuitka/
+build/nuitka/*
+!build/nuitka/pdfDiffChecker.exe
 dist
 temp
 tmp_m2_*_verify/
