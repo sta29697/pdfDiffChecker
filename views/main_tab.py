@@ -66,8 +66,8 @@ message_manager = get_message_manager()
 _MAIN_TAB_DEFAULT_DPI = 300
 _MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
 # Interactive zoom: draw from a downsampled source first, then full-res after idle.
-_PREVIEW_LOD_MAX_SIDE = 1600
-_PREVIEW_HIRES_DEBOUNCE_MS = 120
+_PREVIEW_LOD_MAX_SIDE = 1024
+_PREVIEW_HIRES_DEBOUNCE_MS = 200
 
 
 class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
@@ -3519,12 +3519,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self,
         pil_image: Image.Image,
         transform: tuple[float, ...],
+        *,
+        fast_resize: bool = False,
     ) -> Image.Image:
         """Apply mirror, rotation, and scale to a rendered page image.
 
         Args:
             pil_image: Source page image.
             transform: Transform tuple ``(rotation, tx, ty, scale[, flip_h, flip_v])``.
+            fast_resize: Use bilinear instead of Lanczos for the scale step (LOD passes).
 
         Returns:
             Transformed PIL image.
@@ -3543,7 +3546,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             new_width = int(transformed_image.width * effective_scale)
             new_height = int(transformed_image.height * effective_scale)
             if new_width > 0 and new_height > 0:
-                transformed_image = transformed_image.resize((new_width, new_height), Resampling.LANCZOS)
+                rs = Resampling.BILINEAR if fast_resize else Resampling.LANCZOS
+                transformed_image = transformed_image.resize((new_width, new_height), rs)
         return transformed_image
 
     def _get_display_page_path(self, page_paths: List[Path], page_index: int) -> Optional[Path]:
@@ -3674,7 +3678,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if max(source.size) > int(preview_max_source_side):
             lod = source.copy()
             cap = int(preview_max_source_side)
-            lod.thumbnail((cap, cap), Resampling.LANCZOS)
+            lod.thumbnail((cap, cap), Resampling.BILINEAR)
             source = lod
         return self._apply_color_processing_for_side(source, name_flag)
 
@@ -3776,16 +3780,21 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             except Exception:
                 pass
 
+        _lod_fast = preview_max_source_side is not None
         if base_image is not None and page_index < len(self.base_transform_data):
             base_t = self._transform_tuple_for_preview_render(
                 page_index, self.base_transform_data[page_index], is_base_layer=True
             )
-            base_image = self._apply_transform_to_image(base_image, base_t)
+            base_image = self._apply_transform_to_image(
+                base_image, base_t, fast_resize=_lod_fast
+            )
         if comp_image is not None and page_index < len(self.comp_transform_data):
             comp_t = self._transform_tuple_for_preview_render(
                 page_index, self.comp_transform_data[page_index], is_base_layer=False
             )
-            comp_image = self._apply_transform_to_image(comp_image, comp_t)
+            comp_image = self._apply_transform_to_image(
+                comp_image, comp_t, fast_resize=_lod_fast
+            )
 
         self._base_photo_image = None
         self._comp_photo_image = None
@@ -3841,14 +3850,30 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 if ci is not None and ci.mode != "RGBA":
                     ci = ci.convert("RGBA")
                 if bi is not None and ci is not None:
-                    ov, (ox, oy) = build_diff_highlight_overlay_rgba(
-                        bi,
-                        (int(btx), int(bty)),
-                        ci,
-                        (int(ctx), int(cty)),
-                        base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
-                        comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
-                    )
+                    if self._selected_color_processing_mode == "二色化":
+                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                            bi,
+                            (int(btx), int(bty)),
+                            ci,
+                            (int(ctx), int(cty)),
+                            base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
+                            comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
+                        )
+                    else:
+                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                            bi,
+                            (int(btx), int(bty)),
+                            ci,
+                            (int(ctx), int(cty)),
+                            base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
+                            comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
+                            ink_speckle_open_size=3,
+                            same_cell_pixel_diff=True,
+                            same_cell_sq_diff_threshold=90,
+                            same_cell_luma_delta_min=12,
+                            same_cell_supplement_open=3,
+                            same_cell_supplement_dilate=5,
+                        )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
                     self._diff_emphasis_canvas_image_id = self.canvas.create_image(
                         int(ox),

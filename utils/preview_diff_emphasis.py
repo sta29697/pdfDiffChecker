@@ -187,12 +187,24 @@ def build_diff_highlight_overlay_rgba(
     edge_suppress_px: int = 6,
     open_size: int = 0,
     dilate_size: int = 5,
+    ink_speckle_open_size: int = 0,
+    same_cell_pixel_diff: bool = False,
+    same_cell_sq_diff_threshold: int = 100,
+    same_cell_luma_delta_min: int = 0,
+    same_cell_supplement_open: int = 3,
+    same_cell_supplement_dilate: int = 5,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
     """Build an RGBA overlay from structural (ink) exclusive regions.
 
     Comparison-only ink is tinted with ``comp_highlight_rgba``; base-only ink with
     ``base_highlight_rgba``. Shared stroke locations (after dilated matching) do not
     highlight, so palette-only differences on the same geometry are suppressed.
+
+    Optional **same-cell** supplements catch glyph edits where XOR is cancelled by
+    dilated matching: pixels where both layers are ink and either RGBA differs
+    (``same_cell_pixel_diff``) or BT.601 luma differs by ``same_cell_luma_delta_min``.
+    Opening on the supplement rejects single-pixel pepper; keep these off for hard
+    binarization where salt noise dominates.
 
     Args:
         base_img: Transformed base RGBA image.
@@ -207,6 +219,13 @@ def build_diff_highlight_overlay_rgba(
         edge_suppress_px: Clear highlights in a border this many pixels wide (0 = off).
         open_size: Morphological opening size (0 = off).
         dilate_size: Final dilation of exclusive masks (0 = off).
+        ink_speckle_open_size: Odd opening (>=3) on ink masks before matching to drop
+            isolated grid dots; 0 disables.
+        same_cell_pixel_diff: OR in per-pixel RGBA squared-difference mask.
+        same_cell_sq_diff_threshold: Threshold for that mask (lower = more sensitive).
+        same_cell_luma_delta_min: If >0, OR in ``|luma_a - luma_b|`` above this delta.
+        same_cell_supplement_open: Opening on the supplement mask (0 = off).
+        same_cell_supplement_dilate: Dilation on the supplement for visibility.
 
     Returns:
         Tuple of ``(overlay_rgba, (x0, y0))`` where ``(x0, y0)`` is the bbox top-left.
@@ -222,6 +241,15 @@ def build_diff_highlight_overlay_rgba(
     comp_ink = ink_mask_from_rgba(
         rb, luma_threshold=luma_threshold, alpha_threshold=alpha_threshold
     )
+
+    speckle = int(ink_speckle_open_size)
+    if speckle >= 3:
+        base_ink = refine_diff_mask_with_morphology(
+            base_ink, open_size=speckle, dilate_size=0
+        )
+        comp_ink = refine_diff_mask_with_morphology(
+            comp_ink, open_size=speckle, dilate_size=0
+        )
 
     if ink_match_dilate_size >= 3:
         base_for_match = _mask_dilate_max(base_ink, ink_match_dilate_size)
@@ -248,4 +276,33 @@ def build_diff_highlight_overlay_rgba(
     overlay = np.zeros_like(ra)
     overlay[base_only] = (br, bg, bb, ba)
     overlay[comp_only] = (cr, cg, cb, ca)
+
+    use_supplement = bool(same_cell_pixel_diff) or int(same_cell_luma_delta_min) > 0
+    if use_supplement:
+        change = np.zeros(base_ink.shape, dtype=bool)
+        if same_cell_pixel_diff:
+            change |= rgba_pixel_diff_mask(
+                ra,
+                rb,
+                squared_diff_threshold=int(same_cell_sq_diff_threshold),
+            )
+        ldm = int(same_cell_luma_delta_min)
+        if ldm > 0:
+            ya = luma_bt601_rgba(ra)
+            yb = luma_bt601_rgba(rb)
+            change |= np.abs(ya - yb) > float(ldm)
+        overlap_raw = base_ink & comp_ink & change
+        overlap_raw = _apply_edge_suppress(overlap_raw, edge_suppress_px)
+        so = int(same_cell_supplement_open)
+        sd = int(same_cell_supplement_dilate)
+        supp = refine_diff_mask_with_morphology(
+            overlap_raw,
+            open_size=so if so >= 3 else 0,
+            dilate_size=sd if sd >= 3 else 0,
+        )
+        already = base_only | comp_only
+        supp &= ~already
+        if np.any(supp):
+            overlay[supp] = (cr, cg, cb, ca)
+
     return Image.fromarray(overlay, mode="RGBA"), (x0, y0)
