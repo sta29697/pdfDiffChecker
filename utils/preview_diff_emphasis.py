@@ -145,6 +145,51 @@ def refine_diff_mask_with_morphology(
     return arr > 127
 
 
+def _compact_tiny_highlight_boost_dilate(
+    base_only: np.ndarray,
+    comp_only: np.ndarray,
+    *,
+    max_union_pixels: int,
+    max_bbox_side_px: int,
+    extra_dilate: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Widen very small, spatially compact highlights so they stay visible when zoomed out.
+
+    Uses the axis-aligned bounding box of ``base_only | comp_only`` plus pixel count.
+    Large bboxes (e.g. scattered noise or many separated edits) are not boosted.
+
+    Args:
+        base_only: Boolean mask after morphology.
+        comp_only: Boolean mask after morphology.
+        max_union_pixels: Boost only if union pixel count is positive and below this.
+        max_bbox_side_px: Boost only if both width and height of the union bbox are
+            at most this value (pixels in overlay raster space).
+        extra_dilate: Odd ``MaxFilter`` side length (>=3) applied to each mask; ignored
+            if below 3.
+
+    Returns:
+        Possibly dilated ``(base_only, comp_only)`` copies.
+    """
+    union = base_only | comp_only
+    n = int(np.count_nonzero(union))
+    if n <= 0 or n >= int(max_union_pixels):
+        return base_only, comp_only
+    ys, xs = np.nonzero(union)
+    bw = int(xs.max() - xs.min() + 1)
+    bh = int(ys.max() - ys.min() + 1)
+    if bw > int(max_bbox_side_px) or bh > int(max_bbox_side_px):
+        return base_only, comp_only
+    d = int(extra_dilate)
+    if d < 3:
+        return base_only, comp_only
+    if d % 2 == 0:
+        d += 1
+    return (
+        _mask_dilate_max(base_only.copy(), d),
+        _mask_dilate_max(comp_only.copy(), d),
+    )
+
+
 def rgba_pixel_diff_mask(
     a: np.ndarray,
     b: np.ndarray,
@@ -190,6 +235,10 @@ def build_diff_highlight_overlay_rgba(
     same_cell_pixel_diff: bool = True,
     same_cell_sq_diff_threshold: int = 220,
     same_cell_supplement_dilate: int = 5,
+    boost_compact_tiny_highlights: bool = True,
+    tiny_highlight_max_union_pixels: int = 5200,
+    tiny_highlight_max_bbox_side_px: int = 240,
+    tiny_highlight_extra_dilate: int = 19,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
     """Build an RGBA overlay from structural (ink) exclusive regions.
 
@@ -215,6 +264,13 @@ def build_diff_highlight_overlay_rgba(
         same_cell_sq_diff_threshold: Squared channel-difference threshold for that mask.
         same_cell_supplement_dilate: Odd MaxFilter size (>=3) to widen thin supplement
             regions for visibility; 0 skips dilation.
+        boost_compact_tiny_highlights: When True and the union of exclusive masks is
+            small and fits in a tight bbox, apply an extra MaxFilter dilation so tiny
+            edits (e.g. a few glyphs) remain visible at low zoom.
+        tiny_highlight_max_union_pixels: Union area below this triggers a boost check.
+        tiny_highlight_max_bbox_side_px: Both bbox sides must be <= this (avoids
+            boosting scattered noise that spans a large rectangle).
+        tiny_highlight_extra_dilate: Odd MaxFilter size for the extra boost pass.
 
     Returns:
         Tuple of ``(overlay_rgba, (x0, y0))`` where ``(x0, y0)`` is the bbox top-left.
@@ -250,6 +306,15 @@ def build_diff_highlight_overlay_rgba(
     base_only = refine_diff_mask_with_morphology(
         base_only, open_size=open_size, dilate_size=dilate_size
     )
+
+    if boost_compact_tiny_highlights:
+        base_only, comp_only = _compact_tiny_highlight_boost_dilate(
+            base_only,
+            comp_only,
+            max_union_pixels=int(tiny_highlight_max_union_pixels),
+            max_bbox_side_px=int(tiny_highlight_max_bbox_side_px),
+            extra_dilate=int(tiny_highlight_extra_dilate),
+        )
 
     br, bg, bb, ba = base_highlight_rgba
     cr, cg, cb, ca = comp_highlight_rgba
