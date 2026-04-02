@@ -3795,6 +3795,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                         (int(ctx), int(cty)),
                         base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
                         comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
+                        same_cell_pixel_diff=True,
+                        same_cell_sq_diff_threshold=200,
+                        same_cell_supplement_dilate=5,
                     )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
                     self._diff_emphasis_canvas_image_id = self.canvas.create_image(

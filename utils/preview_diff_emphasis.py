@@ -187,6 +187,9 @@ def build_diff_highlight_overlay_rgba(
     edge_suppress_px: int = 6,
     open_size: int = 0,
     dilate_size: int = 5,
+    same_cell_pixel_diff: bool = True,
+    same_cell_sq_diff_threshold: int = 220,
+    same_cell_supplement_dilate: int = 5,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
     """Build an RGBA overlay from structural (ink) exclusive regions.
 
@@ -207,6 +210,11 @@ def build_diff_highlight_overlay_rgba(
         edge_suppress_px: Clear highlights in a border this many pixels wide (0 = off).
         open_size: Morphological opening size (0 = off).
         dilate_size: Final dilation of exclusive masks (0 = off).
+        same_cell_pixel_diff: When True, add highlights where both layers show ink but
+            RGBA still differs (catches small glyph edits suppressed by dilated XOR).
+        same_cell_sq_diff_threshold: Squared channel-difference threshold for that mask.
+        same_cell_supplement_dilate: Odd MaxFilter size (>=3) to widen thin supplement
+            regions for visibility; 0 skips dilation.
 
     Returns:
         Tuple of ``(overlay_rgba, (x0, y0))`` where ``(x0, y0)`` is the bbox top-left.
@@ -249,4 +257,22 @@ def build_diff_highlight_overlay_rgba(
     # Comparison-side emphasis wins where both masks overlap after morphology.
     overlay[base_only] = (br, bg, bb, ba)
     overlay[comp_only] = (cr, cg, cb, ca)
+
+    if same_cell_pixel_diff:
+        pd = rgba_pixel_diff_mask(
+            ra, rb, squared_diff_threshold=int(same_cell_sq_diff_threshold)
+        )
+        overlap_raw = base_ink & comp_ink & pd
+        overlap_raw = _apply_edge_suppress(overlap_raw, edge_suppress_px)
+        supp_d = int(same_cell_supplement_dilate)
+        supp = refine_diff_mask_with_morphology(
+            overlap_raw,
+            open_size=0,
+            dilate_size=supp_d if supp_d >= 3 else 0,
+        )
+        already = base_only | comp_only
+        supp &= ~already
+        if np.any(supp):
+            overlay[supp] = (cr, cg, cb, ca)
+
     return Image.fromarray(overlay, mode="RGBA"), (x0, y0)

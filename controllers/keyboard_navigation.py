@@ -3,8 +3,8 @@
 Supports Alt+number (1..9) to select notebook tabs. Left/Right arrow keys do **not**
 switch tabs (avoids false positives from ``VK_MENU`` / modifier state); use Alt+digits
 instead. Horizontal and vertical arrows move focus within the current tab when spatial
-navigation applies. Also: tab-strip focus helpers, per-tab focus chains, Combobox Down,
-and Shift+Tab reverse.
+navigation applies. Also: tab-strip focus helpers, per-tab focus chains, Combobox list opened with
+Enter (not arrow keys when the list is closed), and Shift+Tab reverse.
 
 On Windows, ``GetAsyncKeyState`` polling tracks Alt for chord detection; it does not
 move notebook tabs via arrow keys.
@@ -19,6 +19,30 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 # Optional Tcl helper to open ttk.Combobox popdown (Windows/macOS/Linux Tk 8.6+).
 _TTK_COMBO_POST = "ttk::combobox::Post"
+
+
+def _ttk_combobox_popdown_is_mapped(w: tk.Misc) -> bool:
+    """Return True if this combobox's listbox popdown exists and is visible.
+
+    Used so Up/Down can move spatial focus when the list is closed, while list
+    navigation still works when the popdown is open.
+
+    Args:
+        w: Focus widget (typically ``ttk.Combobox``).
+
+    Returns:
+        True when the Tcl popdown toplevel is mapped, else False.
+    """
+    try:
+        if w.winfo_class() != "TCombobox":
+            return False
+        pop = w.tk.call("ttk::combobox::PopdownWindow", w._w)
+        if not pop:
+            return False
+        return str(w.tk.call("winfo", "ismapped", pop)) == "1"
+    except tk.TclError:
+        return False
+
 
 # Bindtag prepended to every descendant so notebook tab arrows run before widget defaults
 # (Entry/Text consume <Left>/<Right> with "break", so bind_all("all") never runs).
@@ -74,7 +98,6 @@ class KeyboardNavigationShell:
         except tk.TclError:
             pass
         root.bind_all("<Escape>", self._on_escape, add="+")
-        root.bind_all("<KeyPress-Down>", self._on_down_combobox, add="+")
         root.bind_all("<Return>", self._on_return_activate_focus_widget, add="+")
         root.bind_all("<KP_Enter>", self._on_return_activate_focus_widget, add="+")
 
@@ -533,6 +556,17 @@ class KeyboardNavigationShell:
         """Move focus to a chain widget above/below when not editing text-like widgets."""
         if self._try_spatial_arrow_focus(event):
             return "break"
+        w = self._safe_focus_get()
+        keysym = getattr(event, "keysym", "") or ""
+        if (
+            isinstance(w, ttk.Combobox)
+            and keysym in ("Up", "Down")
+            and self._is_focusable_state(w)
+            and not _ttk_combobox_popdown_is_mapped(w)
+        ):
+            # Tk opens the list on Down when nothing else handles the key; require Enter
+            # to post instead (see _on_return_activate_focus_widget).
+            return "break"
         return None
 
     @staticmethod
@@ -561,7 +595,13 @@ class KeyboardNavigationShell:
             return True
         if cls in ("Entry", "TEntry"):
             return keysym in ("Left", "Right")
-        if cls in ("Spinbox", "TSpinbox", "TCombobox", "Listbox", "TListbox", "Treeview"):
+        if cls in ("Spinbox", "TSpinbox", "Listbox", "TListbox", "Treeview"):
+            return True
+        if cls == "TCombobox":
+            if keysym in ("Up", "Down"):
+                if isinstance(w, ttk.Combobox) and _ttk_combobox_popdown_is_mapped(w):
+                    return True
+                return False
             return True
         return False
 
@@ -718,19 +758,6 @@ class KeyboardNavigationShell:
         prv = self._next_chain_index(chain, pos, -1)
         chain[prv].focus_set()
         return "break"
-
-    def _on_down_combobox(self, event: tk.Event) -> Optional[str]:
-        """Open ttk.Combobox list when Down is pressed and list is closed."""
-        w = self._safe_focus_get()
-        if not isinstance(w, ttk.Combobox):
-            return None
-        if not self._is_focusable_state(w):
-            return None
-        try:
-            self._root.tk.call(_TTK_COMBO_POST, w._w)  # type: ignore[attr-defined]
-            return "break"
-        except tk.TclError:
-            return None
 
     @staticmethod
     def _widget_reserves_return_for_text_commit(w: tk.Widget) -> bool:
