@@ -801,6 +801,30 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
         self._render_comparison_placeholder()
 
+    def _main_canvas_viewport_center_canvas_coords(self) -> Optional[tuple[float, float]]:
+        """Return the center of the visible canvas viewport in canvas coordinates.
+
+        Matches :meth:`MouseEventHandler._get_visible_origin` plus half the widget
+        size, used as the zoom pivot when the user changes scale via numeric entry.
+
+        Returns:
+            ``(cx, cy)`` in canvas space, or ``None`` if the canvas is unavailable
+            or not yet laid out.
+        """
+        if not hasattr(self, "canvas"):
+            return None
+        try:
+            self.canvas.update_idletasks()
+            w = int(self.canvas.winfo_width())
+            h = int(self.canvas.winfo_height())
+            if w <= 1 or h <= 1:
+                return None
+            x0 = float(self.canvas.canvasx(0))
+            y0 = float(self.canvas.canvasy(0))
+            return (x0 + w * 0.5, y0 + h * 0.5)
+        except tk.TclError:
+            return None
+
     def _update_canvas_translation_preview(self) -> None:
         """Update only canvas image coordinates during drag translation.
 
@@ -4387,18 +4411,18 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             and abs(float(rotation)) < 1e-6
         ):
             _, old_x, old_y, old_s, _fh, _fv = old_base
-            ow = float(getattr(self, "_original_page_width", 0) or 0)
-            oh = float(getattr(self, "_original_page_height", 0) or 0)
-            if ow > 0 and oh > 0:
+            pivot = self._main_canvas_viewport_center_canvas_coords()
+            if pivot is not None:
+                ax, ay = pivot
                 dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
                     max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
                 )
                 old_eff = max(0.01, float(old_s) * dpi_norm)
                 new_eff = max(0.01, float(scale) * dpi_norm)
-                cx = float(old_x) + ow * old_eff * 0.5
-                cy = float(old_y) + oh * old_eff * 0.5
-                adj_tx = cx - ow * new_eff * 0.5
-                adj_ty = cy - oh * new_eff * 0.5
+                ix = (ax - float(old_x)) / old_eff
+                iy = (ay - float(old_y)) / old_eff
+                adj_tx = ax - ix * new_eff
+                adj_ty = ay - iy * new_eff
         if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
             _r, _x, _y, _s, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
             self.base_transform_data[self.current_page_index] = pack_transform6(
