@@ -3788,17 +3788,36 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 if ci is not None and ci.mode != "RGBA":
                     ci = ci.convert("RGBA")
                 if bi is not None and ci is not None:
-                    ov, (ox, oy) = build_diff_highlight_overlay_rgba(
-                        bi,
-                        (int(btx), int(bty)),
-                        ci,
-                        (int(ctx), int(cty)),
-                        base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
-                        comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
-                        same_cell_pixel_diff=True,
-                        same_cell_sq_diff_threshold=200,
-                        same_cell_supplement_dilate=5,
-                    )
+                    # Binarized previews amplify per-pixel noise; keep ink XOR only and
+                    # improve visibility via dilation and alpha. Shaded mode keeps the
+                    # same-cell RGBA supplement for subtle glyph edits.
+                    if self._selected_color_processing_mode == "二色化":
+                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                            bi,
+                            (int(btx), int(bty)),
+                            ci,
+                            (int(ctx), int(cty)),
+                            base_highlight_rgba=self._diff_emphasis_palette_rgba(
+                                "base", alpha=130
+                            ),
+                            comp_highlight_rgba=self._diff_emphasis_palette_rgba(
+                                "comp", alpha=130
+                            ),
+                            same_cell_pixel_diff=False,
+                            dilate_size=7,
+                        )
+                    else:
+                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                            bi,
+                            (int(btx), int(bty)),
+                            ci,
+                            (int(ctx), int(cty)),
+                            base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
+                            comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
+                            same_cell_pixel_diff=True,
+                            same_cell_sq_diff_threshold=200,
+                            same_cell_supplement_dilate=5,
+                        )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
                     self._diff_emphasis_canvas_image_id = self.canvas.create_image(
                         int(ox),
