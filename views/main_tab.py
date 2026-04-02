@@ -3804,7 +3804,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                                 "comp", alpha=130
                             ),
                             same_cell_pixel_diff=False,
-                            dilate_size=7,
+                            dilate_size=5,
                         )
                     else:
                         ov, (ox, oy) = build_diff_highlight_overlay_rgba(
@@ -3856,7 +3856,6 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             except Exception:
                 pass
 
-        previous_page_index = getattr(self, "current_page_index", None)
         self.current_page_index = page_index
 
         visible_layers = self._get_visible_layer_state()
@@ -3877,8 +3876,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             pass
 
         if self.page_control_frame is not None:
-            if previous_page_index != page_index:
-                self.page_control_frame.update_page_label(page_index, self.page_count)
+            # Always sync the page entry: callers often set current_page_index before
+            # _display_page (e.g. next/prev/page entry), so comparing "previous" here
+            # skipped updates and left "1 / N" stuck.
+            self.page_control_frame.update_page_label(page_index, self.page_count)
             rotation, tx, ty, scale = self._get_active_transform()
             self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
 

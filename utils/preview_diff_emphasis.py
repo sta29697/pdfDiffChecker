@@ -1,7 +1,8 @@
 """Build a translucent overlay highlighting structural (ink) differences between two layers.
 
 Uses BT.601 luminance and alpha for ink detection, then exclusive regions with optional
-dilated matching to ignore palette-only differences on shared strokes. numpy + PIL only.
+dilated matching to ignore palette-only differences on shared strokes. numpy + PIL;
+connected-component sizing for small-diff boost uses scipy.ndimage.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from typing import Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter
+from scipy import ndimage
 from PIL.Image import Image as PILImage
 
 
@@ -145,49 +147,66 @@ def refine_diff_mask_with_morphology(
     return arr > 127
 
 
-def _compact_tiny_highlight_boost_dilate(
+def _per_component_tiny_highlight_boost(
     base_only: np.ndarray,
     comp_only: np.ndarray,
     *,
-    max_union_pixels: int,
+    max_component_pixels: int,
     max_bbox_side_px: int,
     extra_dilate: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Widen very small, spatially compact highlights so they stay visible when zoomed out.
+    """Extra dilation on *small* connected components only (4-connected on union).
 
-    Uses the axis-aligned bounding box of ``base_only | comp_only`` plus pixel count.
-    Large bboxes (e.g. scattered noise or many separated edits) are not boosted.
+    A large red blob and a tiny glyph edit share no single compact union bbox; labeling
+    avoids boosting the whole large region while still enlarging small exclusive islands.
 
     Args:
         base_only: Boolean mask after morphology.
         comp_only: Boolean mask after morphology.
-        max_union_pixels: Boost only if union pixel count is positive and below this.
-        max_bbox_side_px: Boost only if both width and height of the union bbox are
-            at most this value (pixels in overlay raster space).
-        extra_dilate: Odd ``MaxFilter`` side length (>=3) applied to each mask; ignored
-            if below 3.
+        max_component_pixels: Components with at least this many pixels are not boosted.
+        max_bbox_side_px: Components whose bbox width or height exceeds this are not boosted.
+        extra_dilate: Odd ``MaxFilter`` side length (>=3); ignored if below 3.
 
     Returns:
-        Possibly dilated ``(base_only, comp_only)`` copies.
+        Updated ``(base_only, comp_only)`` masks (copies when any boost runs).
     """
     union = base_only | comp_only
-    n = int(np.count_nonzero(union))
-    if n <= 0 or n >= int(max_union_pixels):
-        return base_only, comp_only
-    ys, xs = np.nonzero(union)
-    bw = int(xs.max() - xs.min() + 1)
-    bh = int(ys.max() - ys.min() + 1)
-    if bw > int(max_bbox_side_px) or bh > int(max_bbox_side_px):
+    if not np.any(union):
         return base_only, comp_only
     d = int(extra_dilate)
     if d < 3:
         return base_only, comp_only
     if d % 2 == 0:
         d += 1
-    return (
-        _mask_dilate_max(base_only.copy(), d),
-        _mask_dilate_max(comp_only.copy(), d),
-    )
+
+    structure = ndimage.generate_binary_structure(2, 1)
+    labeled, nfeat = ndimage.label(union, structure=structure)
+    if nfeat <= 0:
+        return base_only, comp_only
+
+    out_b = base_only.copy()
+    out_c = comp_only.copy()
+    max_px = int(max_component_pixels)
+    max_side = int(max_bbox_side_px)
+
+    for k in range(1, nfeat + 1):
+        comp_mask = labeled == k
+        npx = int(np.count_nonzero(comp_mask))
+        if npx <= 0 or npx >= max_px:
+            continue
+        ys, xs = np.nonzero(comp_mask)
+        bh = int(ys.max() - ys.min() + 1)
+        bw = int(xs.max() - xs.min() + 1)
+        if max(bh, bw) > max_side:
+            continue
+        sub_b = base_only & comp_mask
+        sub_c = comp_only & comp_mask
+        if np.any(sub_b):
+            out_b |= _mask_dilate_max(sub_b, d)
+        if np.any(sub_c):
+            out_c |= _mask_dilate_max(sub_c, d)
+
+    return out_b, out_c
 
 
 def rgba_pixel_diff_mask(
@@ -236,7 +255,7 @@ def build_diff_highlight_overlay_rgba(
     same_cell_sq_diff_threshold: int = 220,
     same_cell_supplement_dilate: int = 5,
     boost_compact_tiny_highlights: bool = True,
-    tiny_highlight_max_union_pixels: int = 5200,
+    tiny_highlight_max_component_pixels: int = 5200,
     tiny_highlight_max_bbox_side_px: int = 240,
     tiny_highlight_extra_dilate: int = 19,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
@@ -264,12 +283,13 @@ def build_diff_highlight_overlay_rgba(
         same_cell_sq_diff_threshold: Squared channel-difference threshold for that mask.
         same_cell_supplement_dilate: Odd MaxFilter size (>=3) to widen thin supplement
             regions for visibility; 0 skips dilation.
-        boost_compact_tiny_highlights: When True and the union of exclusive masks is
-            small and fits in a tight bbox, apply an extra MaxFilter dilation so tiny
-            edits (e.g. a few glyphs) remain visible at low zoom.
-        tiny_highlight_max_union_pixels: Union area below this triggers a boost check.
-        tiny_highlight_max_bbox_side_px: Both bbox sides must be <= this (avoids
-            boosting scattered noise that spans a large rectangle).
+        boost_compact_tiny_highlights: When True, run 4-connected labeling on
+            ``base_only | comp_only`` and apply extra dilation only to components whose
+            pixel count and bbox are below the thresholds (large blobs stay thin).
+        tiny_highlight_max_component_pixels: Components with fewer pixels than this may
+            receive the extra dilation.
+        tiny_highlight_max_bbox_side_px: Components whose bbox max side exceeds this
+            are not boosted (skips large rectangles).
         tiny_highlight_extra_dilate: Odd MaxFilter size for the extra boost pass.
 
     Returns:
@@ -308,10 +328,10 @@ def build_diff_highlight_overlay_rgba(
     )
 
     if boost_compact_tiny_highlights:
-        base_only, comp_only = _compact_tiny_highlight_boost_dilate(
+        base_only, comp_only = _per_component_tiny_highlight_boost(
             base_only,
             comp_only,
-            max_union_pixels=int(tiny_highlight_max_union_pixels),
+            max_component_pixels=int(tiny_highlight_max_component_pixels),
             max_bbox_side_px=int(tiny_highlight_max_bbox_side_px),
             extra_dilate=int(tiny_highlight_extra_dilate),
         )
