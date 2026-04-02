@@ -1,8 +1,7 @@
 """Build a translucent overlay highlighting structural (ink) differences between two layers.
 
 Uses BT.601 luminance and alpha for ink detection, then exclusive regions with optional
-dilated matching to ignore palette-only differences on shared strokes. numpy + PIL;
-connected-component sizing for small-diff boost uses scipy.ndimage.
+dilated matching to ignore palette-only differences on shared strokes. numpy + PIL only.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from typing import Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter
-from scipy import ndimage
 from PIL.Image import Image as PILImage
 
 
@@ -147,68 +145,6 @@ def refine_diff_mask_with_morphology(
     return arr > 127
 
 
-def _per_component_tiny_highlight_boost(
-    base_only: np.ndarray,
-    comp_only: np.ndarray,
-    *,
-    max_component_pixels: int,
-    max_bbox_side_px: int,
-    extra_dilate: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Extra dilation on *small* connected components only (4-connected on union).
-
-    A large red blob and a tiny glyph edit share no single compact union bbox; labeling
-    avoids boosting the whole large region while still enlarging small exclusive islands.
-
-    Args:
-        base_only: Boolean mask after morphology.
-        comp_only: Boolean mask after morphology.
-        max_component_pixels: Components with at least this many pixels are not boosted.
-        max_bbox_side_px: Components whose bbox width or height exceeds this are not boosted.
-        extra_dilate: Odd ``MaxFilter`` side length (>=3); ignored if below 3.
-
-    Returns:
-        Updated ``(base_only, comp_only)`` masks (copies when any boost runs).
-    """
-    union = base_only | comp_only
-    if not np.any(union):
-        return base_only, comp_only
-    d = int(extra_dilate)
-    if d < 3:
-        return base_only, comp_only
-    if d % 2 == 0:
-        d += 1
-
-    structure = ndimage.generate_binary_structure(2, 1)
-    labeled, nfeat = ndimage.label(union, structure=structure)
-    if nfeat <= 0:
-        return base_only, comp_only
-
-    out_b = base_only.copy()
-    out_c = comp_only.copy()
-    max_px = int(max_component_pixels)
-    max_side = int(max_bbox_side_px)
-
-    for k in range(1, nfeat + 1):
-        comp_mask = labeled == k
-        npx = int(np.count_nonzero(comp_mask))
-        if npx <= 0 or npx >= max_px:
-            continue
-        ys, xs = np.nonzero(comp_mask)
-        bh = int(ys.max() - ys.min() + 1)
-        bw = int(xs.max() - xs.min() + 1)
-        if max(bh, bw) > max_side:
-            continue
-        sub_b = base_only & comp_mask
-        sub_c = comp_only & comp_mask
-        if np.any(sub_b):
-            out_b |= _mask_dilate_max(sub_b, d)
-        if np.any(sub_c):
-            out_c |= _mask_dilate_max(sub_c, d)
-
-    return out_b, out_c
-
-
 def rgba_pixel_diff_mask(
     a: np.ndarray,
     b: np.ndarray,
@@ -251,13 +187,6 @@ def build_diff_highlight_overlay_rgba(
     edge_suppress_px: int = 6,
     open_size: int = 0,
     dilate_size: int = 5,
-    same_cell_pixel_diff: bool = True,
-    same_cell_sq_diff_threshold: int = 220,
-    same_cell_supplement_dilate: int = 5,
-    boost_compact_tiny_highlights: bool = True,
-    tiny_highlight_max_component_pixels: int = 5200,
-    tiny_highlight_max_bbox_side_px: int = 240,
-    tiny_highlight_extra_dilate: int = 19,
 ) -> Tuple[Image.Image, Tuple[int, int]]:
     """Build an RGBA overlay from structural (ink) exclusive regions.
 
@@ -278,19 +207,6 @@ def build_diff_highlight_overlay_rgba(
         edge_suppress_px: Clear highlights in a border this many pixels wide (0 = off).
         open_size: Morphological opening size (0 = off).
         dilate_size: Final dilation of exclusive masks (0 = off).
-        same_cell_pixel_diff: When True, add highlights where both layers show ink but
-            RGBA still differs (catches small glyph edits suppressed by dilated XOR).
-        same_cell_sq_diff_threshold: Squared channel-difference threshold for that mask.
-        same_cell_supplement_dilate: Odd MaxFilter size (>=3) to widen thin supplement
-            regions for visibility; 0 skips dilation.
-        boost_compact_tiny_highlights: When True, run 4-connected labeling on
-            ``base_only | comp_only`` and apply extra dilation only to components whose
-            pixel count and bbox are below the thresholds (large blobs stay thin).
-        tiny_highlight_max_component_pixels: Components with fewer pixels than this may
-            receive the extra dilation.
-        tiny_highlight_max_bbox_side_px: Components whose bbox max side exceeds this
-            are not boosted (skips large rectangles).
-        tiny_highlight_extra_dilate: Odd MaxFilter size for the extra boost pass.
 
     Returns:
         Tuple of ``(overlay_rgba, (x0, y0))`` where ``(x0, y0)`` is the bbox top-left.
@@ -327,37 +243,9 @@ def build_diff_highlight_overlay_rgba(
         base_only, open_size=open_size, dilate_size=dilate_size
     )
 
-    if boost_compact_tiny_highlights:
-        base_only, comp_only = _per_component_tiny_highlight_boost(
-            base_only,
-            comp_only,
-            max_component_pixels=int(tiny_highlight_max_component_pixels),
-            max_bbox_side_px=int(tiny_highlight_max_bbox_side_px),
-            extra_dilate=int(tiny_highlight_extra_dilate),
-        )
-
     br, bg, bb, ba = base_highlight_rgba
     cr, cg, cb, ca = comp_highlight_rgba
     overlay = np.zeros_like(ra)
-    # Comparison-side emphasis wins where both masks overlap after morphology.
     overlay[base_only] = (br, bg, bb, ba)
     overlay[comp_only] = (cr, cg, cb, ca)
-
-    if same_cell_pixel_diff:
-        pd = rgba_pixel_diff_mask(
-            ra, rb, squared_diff_threshold=int(same_cell_sq_diff_threshold)
-        )
-        overlap_raw = base_ink & comp_ink & pd
-        overlap_raw = _apply_edge_suppress(overlap_raw, edge_suppress_px)
-        supp_d = int(same_cell_supplement_dilate)
-        supp = refine_diff_mask_with_morphology(
-            overlap_raw,
-            open_size=0,
-            dilate_size=supp_d if supp_d >= 3 else 0,
-        )
-        already = base_only | comp_only
-        supp &= ~already
-        if np.any(supp):
-            overlay[supp] = (cr, cg, cb, ca)
-
     return Image.fromarray(overlay, mode="RGBA"), (x0, y0)

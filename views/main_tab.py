@@ -65,6 +65,9 @@ logger = getLogger(__name__)
 message_manager = get_message_manager()
 _MAIN_TAB_DEFAULT_DPI = 300
 _MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
+# Interactive zoom: draw from a downsampled source first, then full-res after idle.
+_PREVIEW_LOD_MAX_SIDE = 1600
+_PREVIEW_HIRES_DEBOUNCE_MS = 120
 
 
 class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
@@ -175,6 +178,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._visual_adjustments_enabled = False
         self._copy_protected = False
         self._conversion_dpi = self._get_selected_dpi()
+        self._preview_hires_after_id: Optional[str] = None
         self._batch_edit_selected = True
         self._selected_color_processing_mode = self._normalize_color_processing_mode(
             str(self.settings.get_setting("color_processing_mode", "指定色濃淡") or "指定色濃淡")
@@ -773,6 +777,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
     def _refresh_current_page_view(self) -> None:
         """Refresh the page-control and canvas view for the current page."""
+        self._cancel_pending_hi_res_preview()
         self._apply_preferred_preview_scale_to_page(self.current_page_index)
         if self.mouse_handler is not None:
             visible_layers = self._get_visible_layer_state()
@@ -3605,56 +3610,84 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._preview_processed_image_cache[cache_key] = cached_image
         return cached_image.copy()
 
-    def _diff_emphasis_source_rgba_pair_for_page(
-        self,
-        page_index: int,
-        base_path: Path,
-        comp_path: Path,
-    ) -> tuple[Image.Image, Image.Image]:
-        """Load workspace PNGs without color processing and apply preview transforms.
-
-        Used for diff-emphasis masking when ``指定色濃淡`` is active: comparing tinted
-        previews makes near-white regions diverge; comparing source rasters aligns
-        highlights with real ink on the page image.
+    def _get_source_page_pixel_size(self, page_path: Path) -> tuple[int, int]:
+        """Return width and height of the workspace PNG without copying pixel buffers.
 
         Args:
-            page_index: Zero-based page index.
-            base_path: Rendered base page PNG path.
-            comp_path: Rendered comparison page PNG path.
+            page_path: Rendered page path.
 
         Returns:
-            Tuple ``(base_rgba, comp_rgba)`` ready for :func:`build_diff_highlight_overlay_rgba`.
-
-        Raises:
-            Exception: Propagated if cache load or transform fails (caller may fall back).
+            ``(width, height)`` in pixels.
         """
-        base_rgba = self._get_cached_source_preview_image(base_path)
-        comp_rgba = self._get_cached_source_preview_image(comp_path)
-        if page_index < len(self.base_transform_data):
-            base_t = self._transform_tuple_for_preview_render(
-                page_index,
-                self.base_transform_data[page_index],
-                is_base_layer=True,
-            )
-            base_rgba = self._apply_transform_to_image(base_rgba, base_t)
-        if page_index < len(self.comp_transform_data):
-            comp_t = self._transform_tuple_for_preview_render(
-                page_index,
-                self.comp_transform_data[page_index],
-                is_base_layer=False,
-            )
-            comp_rgba = self._apply_transform_to_image(comp_rgba, comp_t)
-        if base_rgba.mode != "RGBA":
-            base_rgba = base_rgba.convert("RGBA")
-        if comp_rgba.mode != "RGBA":
-            comp_rgba = comp_rgba.convert("RGBA")
-        return base_rgba, comp_rgba
+        path_str, modified_time_ns, file_size = self._get_preview_image_signature(page_path)
+        cache_key = (path_str, modified_time_ns, file_size, 0)
+        cached_image = self._preview_source_image_cache.get(cache_key)
+        if cached_image is not None:
+            return cached_image.size
+        with Image.open(page_path) as loaded_image:
+            return loaded_image.size
 
-    def _display_page(self, page_index: int) -> None:
+    def _processed_preview_image_for_display(
+        self,
+        page_path: Path,
+        name_flag: str,
+        preview_max_source_side: Optional[int],
+    ) -> Image.Image:
+        """Return a color-processed page raster, optionally capped for LOD preview.
+
+        Args:
+            page_path: Workspace PNG path.
+            name_flag: ``"base"`` or ``"comp"``.
+            preview_max_source_side: If set and the source is larger, downsample before
+                color processing (not cached with full-res keys).
+
+        Returns:
+            Processed RGBA image (copy).
+        """
+        if preview_max_source_side is None:
+            return self._get_cached_processed_preview_image(page_path, name_flag)
+        source = self._get_cached_source_preview_image(page_path)
+        if max(source.size) > int(preview_max_source_side):
+            lod = source.copy()
+            cap = int(preview_max_source_side)
+            lod.thumbnail((cap, cap), Resampling.LANCZOS)
+            source = lod
+        return self._apply_color_processing_for_side(source, name_flag)
+
+    def _cancel_pending_hi_res_preview(self) -> None:
+        """Cancel a scheduled full-resolution redraw after interactive zoom."""
+        aid = getattr(self, "_preview_hires_after_id", None)
+        if aid is not None:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+            self._preview_hires_after_id = None
+
+    def _flush_hi_res_preview(self) -> None:
+        """Run a full-resolution page draw after LOD zoom (see scheduling helper)."""
+        self._preview_hires_after_id = None
+        if not self._has_loaded_workspace_pages():
+            return
+        self._display_page(self.current_page_index, preview_max_source_side=None)
+
+    def _schedule_interactive_preview_redraw(self) -> None:
+        """Show a capped-source preview immediately, then full-res after a short idle."""
+        self._cancel_pending_hi_res_preview()
+        self._display_page(self.current_page_index, preview_max_source_side=_PREVIEW_LOD_MAX_SIDE)
+
+        def _deferred() -> None:
+            self._flush_hi_res_preview()
+
+        self._preview_hires_after_id = self.after(_PREVIEW_HIRES_DEBOUNCE_MS, _deferred)
+
+    def _display_page(self, page_index: int, *, preview_max_source_side: Optional[int] = None) -> None:
         """Display one page of the converted comparison workspace.
 
         Args:
             page_index: Zero-based page index.
+            preview_max_source_side: Optional cap on the long side of the source PNG before
+                color processing (interactive zoom LOD). ``None`` uses full resolution.
         """
         self._apply_preferred_preview_scale_to_page(page_index)
         if not self._has_loaded_workspace_pages():
@@ -3692,23 +3725,32 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         show_comp_layer = bool(self._show_comp_layer_var.get())
 
         if base_path is not None and base_path.exists():
-            base_image = self._get_cached_processed_preview_image(base_path, "base")
+            ow, oh = self._get_source_page_pixel_size(base_path)
+            self._original_page_width = ow
+            self._original_page_height = oh
+            base_image = self._processed_preview_image_for_display(
+                base_path, "base", preview_max_source_side
+            )
+        elif comp_path is not None and comp_path.exists():
+            ow, oh = self._get_source_page_pixel_size(comp_path)
+            self._original_page_width = ow
+            self._original_page_height = oh
         if comp_path is not None and comp_path.exists():
-            comp_image = self._get_cached_processed_preview_image(comp_path, "comp")
+            comp_image = self._processed_preview_image_for_display(
+                comp_path, "comp", preview_max_source_side
+            )
 
         if base_image is None and comp_image is None:
             self._show_status_feedback("Rendered page images could not be found.", False)
             return
 
-        reference_image = base_image if base_image is not None else comp_image
-        if reference_image is not None:
-            self._original_page_width = reference_image.width
-            self._original_page_height = reference_image.height
-            if self.mouse_handler is not None and hasattr(self.mouse_handler, "set_original_image_size"):
-                try:
-                    self.mouse_handler.set_original_image_size(reference_image.width, reference_image.height)
-                except Exception:
-                    pass
+        if self.mouse_handler is not None and hasattr(self.mouse_handler, "set_original_image_size"):
+            try:
+                self.mouse_handler.set_original_image_size(
+                    int(self._original_page_width), int(self._original_page_height)
+                )
+            except Exception:
+                pass
 
         if base_image is not None and page_index < len(self.base_transform_data):
             base_t = self._transform_tuple_for_preview_render(
@@ -3756,7 +3798,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             )
 
         if (
-            bool(self._diff_emphasis_var.get())
+            preview_max_source_side is None
+            and bool(self._diff_emphasis_var.get())
             and show_base_layer
             and show_comp_layer
             and base_image is not None
@@ -3769,55 +3812,19 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[page_index])
                 bi = base_image
                 ci = comp_image_for_diff
-                if (
-                    self._selected_color_processing_mode == "指定色濃淡"
-                    and base_path is not None
-                    and comp_path is not None
-                    and base_path.exists()
-                    and comp_path.exists()
-                ):
-                    try:
-                        bi, ci = self._diff_emphasis_source_rgba_pair_for_page(
-                            page_index, base_path, comp_path
-                        )
-                    except Exception:
-                        bi = base_image
-                        ci = comp_image_for_diff
                 if bi is not None and bi.mode != "RGBA":
                     bi = bi.convert("RGBA")
                 if ci is not None and ci.mode != "RGBA":
                     ci = ci.convert("RGBA")
                 if bi is not None and ci is not None:
-                    # Binarized previews amplify per-pixel noise; keep ink XOR only and
-                    # improve visibility via dilation and alpha. Shaded mode keeps the
-                    # same-cell RGBA supplement for subtle glyph edits.
-                    if self._selected_color_processing_mode == "二色化":
-                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
-                            bi,
-                            (int(btx), int(bty)),
-                            ci,
-                            (int(ctx), int(cty)),
-                            base_highlight_rgba=self._diff_emphasis_palette_rgba(
-                                "base", alpha=130
-                            ),
-                            comp_highlight_rgba=self._diff_emphasis_palette_rgba(
-                                "comp", alpha=130
-                            ),
-                            same_cell_pixel_diff=False,
-                            dilate_size=5,
-                        )
-                    else:
-                        ov, (ox, oy) = build_diff_highlight_overlay_rgba(
-                            bi,
-                            (int(btx), int(bty)),
-                            ci,
-                            (int(ctx), int(cty)),
-                            base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
-                            comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
-                            same_cell_pixel_diff=True,
-                            same_cell_sq_diff_threshold=200,
-                            same_cell_supplement_dilate=5,
-                        )
+                    ov, (ox, oy) = build_diff_highlight_overlay_rgba(
+                        bi,
+                        (int(btx), int(bty)),
+                        ci,
+                        (int(ctx), int(cty)),
+                        base_highlight_rgba=self._diff_emphasis_palette_rgba("base"),
+                        comp_highlight_rgba=self._diff_emphasis_palette_rgba("comp"),
+                    )
                     self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov)
                     self._diff_emphasis_canvas_image_id = self.canvas.create_image(
                         int(ox),
@@ -4239,6 +4246,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             on_transform_commit_no_propagate=self._on_transform_update_skip_batch_propagate,
             sheet_rotate_guard=self._can_main_sheet_rotate_dual_display,
             sheet_rotate_blocked_message_code="U177",
+            preview_dpi_normalize=lambda: float(_MAIN_TAB_DEFAULT_DPI)
+            / max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI)),
         )
         self.mouse_handler.attach_to_canvas(self.canvas)
         self.mouse_handler.update_state(
@@ -4367,15 +4376,41 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             changed_fields: Entry fields explicitly confirmed by the user.
         """
         self._commit_preview_keyboard_rotation()
+        explicit_fields = set(changed_fields or ())
+        old_base: Optional[tuple[float, ...]] = None
+        if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
+            old_base = as_transform6(self.base_transform_data[self.current_page_index])
+        adj_tx, adj_ty = float(tx), float(ty)
+        if (
+            old_base is not None
+            and explicit_fields == {"scale"}
+            and abs(float(rotation)) < 1e-6
+        ):
+            _, old_x, old_y, old_s, _fh, _fv = old_base
+            ow = float(getattr(self, "_original_page_width", 0) or 0)
+            oh = float(getattr(self, "_original_page_height", 0) or 0)
+            if ow > 0 and oh > 0:
+                dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
+                    max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
+                )
+                old_eff = max(0.01, float(old_s) * dpi_norm)
+                new_eff = max(0.01, float(scale) * dpi_norm)
+                cx = float(old_x) + ow * old_eff * 0.5
+                cy = float(old_y) + oh * old_eff * 0.5
+                adj_tx = cx - ow * new_eff * 0.5
+                adj_ty = cy - oh * new_eff * 0.5
         if self.base_transform_data and self.current_page_index < len(self.base_transform_data):
             _r, _x, _y, _s, fh, fv = as_transform6(self.base_transform_data[self.current_page_index])
-            self.base_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
+            self.base_transform_data[self.current_page_index] = pack_transform6(
+                rotation, adj_tx, adj_ty, scale, fh, fv
+            )
         if self.comp_transform_data and self.current_page_index < len(self.comp_transform_data):
             _r, _x, _y, _s, fh, fv = as_transform6(self.comp_transform_data[self.current_page_index])
-            self.comp_transform_data[self.current_page_index] = pack_transform6(rotation, tx, ty, scale, fh, fv)
+            self.comp_transform_data[self.current_page_index] = pack_transform6(
+                rotation, adj_tx, adj_ty, scale, fh, fv
+            )
         self._persist_preview_scale(scale)
-        explicit_fields = set(changed_fields or set())
-        self._apply_export_transform_overrides_for_current_page(tx, ty, scale, explicit_fields)
+        self._apply_export_transform_overrides_for_current_page(adj_tx, adj_ty, scale, explicit_fields)
         self._propagate_current_transform_to_all_pages(visible_only=False)
         self._propagate_export_overrides_to_all_pages(explicit_fields)
         self._refresh_current_page_view()
@@ -4389,7 +4424,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         """Refresh page control and placeholder display after a transform update."""
         self._update_preferred_preview_scale_from_current_page()
         self._propagate_current_transform_to_all_pages(visible_only=True)
-        self._refresh_current_page_view()
+        self._schedule_interactive_preview_redraw()
 
     def _renumber_workspace_records(self, records: List[Dict[str, Any]]) -> None:
         """Refresh stored filename metadata to match the current workspace order.

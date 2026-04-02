@@ -35,6 +35,7 @@ class MouseEventHandler:
             on_transform_commit_no_propagate: Optional[Callable[[], None]] = None,
             sheet_rotate_guard: Optional[Callable[[], bool]] = None,
             sheet_rotate_blocked_message_code: str = "U177",
+            preview_dpi_normalize: Optional[Callable[[], float]] = None,
         ) -> None:
         """Initialize the MouseEventHandler.
 
@@ -53,6 +54,8 @@ class MouseEventHandler:
             on_transform_commit_no_propagate: Optional refresh after per-page sheet rotation (skip batch copy).
             sheet_rotate_guard: If set, Ctrl+Alt+R/L runs only when this returns True (e.g. dual-PDF main tab).
             sheet_rotate_blocked_message_code: UI message code when the guard fails.
+            preview_dpi_normalize: Optional callback returning ``default_dpi / conversion_dpi`` for
+                preview math (wheel zoom pivots at cursor when rotation is ~0).
         """
         # Transform data and callbacks
         self.__layer_transform_data: Dict[int, List[Tuple[float, ...]]] = layer_transform_data
@@ -67,6 +70,7 @@ class MouseEventHandler:
         )
         self.__sheet_rotate_guard: Optional[Callable[[], bool]] = sheet_rotate_guard
         self.__sheet_rotate_blocked_message_code: str = sheet_rotate_blocked_message_code
+        self.__preview_dpi_normalize: Optional[Callable[[], float]] = preview_dpi_normalize
 
         # Tracking variables
         self.__dragging: bool = False
@@ -1122,28 +1126,40 @@ class MouseEventHandler:
         zoom_factor = 1.1 if direction > 0 else 0.9
         target_layer_ids = self._get_transform_target_layer_ids(ctrl_pressed=ctrl_pressed)
         
-        # Get canvas center for scaling origin
         canvas_width = self.__canvas_ref.winfo_width()
         canvas_height = self.__canvas_ref.winfo_height()
         x0, y0 = self._get_visible_origin()
         center_x = x0 + canvas_width / 2
         center_y = y0 + canvas_height / 2
-        
-        # Apply zoom to the resolved target layers around canvas center
+        pivot_x = float(self.__canvas_ref.canvasx(event.x))
+        pivot_y = float(self.__canvas_ref.canvasy(event.y))
+        dpi_norm = 1.0
+        if self.__preview_dpi_normalize is not None:
+            try:
+                dpi_norm = float(self.__preview_dpi_normalize())
+            except (TypeError, ValueError):
+                dpi_norm = 1.0
+        if dpi_norm <= 0:
+            dpi_norm = 1.0
+
         for layer_id in target_layer_ids:
             if layer_id in self.__layer_transform_data and self.__current_page_index < len(self.__layer_transform_data[layer_id]):
                 r, x, y, s, fh, fv = as_transform6(self.__layer_transform_data[layer_id][self.__current_page_index])
 
-                # Calculate new scale
                 new_scale = s * zoom_factor
+                eff = max(0.01, float(s) * dpi_norm)
+                new_eff = max(0.01, float(new_scale) * dpi_norm)
 
-                # Adjust position to scale from center
-                dx = x - center_x
-                dy = y - center_y
-                new_x = center_x + dx * zoom_factor
-                new_y = center_y + dy * zoom_factor
+                if abs(float(r)) > 1e-6:
+                    ax, ay = center_x, center_y
+                else:
+                    ax, ay = pivot_x, pivot_y
 
-                # Update transform data
+                ix = (ax - float(x)) / eff
+                iy = (ay - float(y)) / eff
+                new_x = ax - ix * new_eff
+                new_y = ay - iy * new_eff
+
                 self.__layer_transform_data[layer_id][self.__current_page_index] = pack_transform6(
                     r, new_x, new_y, new_scale, fh, fv
                 )
