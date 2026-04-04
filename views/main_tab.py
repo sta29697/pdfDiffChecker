@@ -76,6 +76,7 @@ _MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3
 # (Source PNG is always full-res so canvas geometry matches the stored scale; downsampling
 # the source previously made LOD and hi-res frames different sizes and the view "jumped".)
 _PREVIEW_HIRES_DEBOUNCE_MS = 200
+_DIFF_CACHE_MISSING = object()  # sentinel: key exists but value not yet computed
 
 
 class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
@@ -190,6 +191,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._workspace_preview_blocked: bool = False
         self._workspace_raster_limit_dialog_shown: bool = False
         self._preview_hires_after_id: Optional[str] = None
+        self._diff_src_overlay_cache: dict = {}
+        self._diff_overlay_cache_lock = threading.Lock()
+        self._diff_overlay_bg_key: Optional[tuple] = None
         self._batch_edit_selected = True
         self._selected_color_processing_mode = self._normalize_color_processing_mode(
             str(self.settings.get_setting("color_processing_mode", "指定色濃淡") or "指定色濃淡")
@@ -2157,6 +2161,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             event: Optional Tk event.
         """
         _ = event
+        with self._diff_overlay_cache_lock:
+            self._diff_src_overlay_cache.clear()
+            self._diff_overlay_bg_key = None
         self._selected_color_processing_mode = self._resolve_color_processing_mode_from_display(
             self._color_processing_mode_var.get()
         )
@@ -2562,6 +2569,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._preview_render_generation += 1
         self._background_preview_render_thread = None
         self._clear_workspace_temp_artifacts()
+        with self._diff_overlay_cache_lock:
+            self._diff_src_overlay_cache.clear()
+            self._diff_overlay_bg_key = None
         self._batch_edit_selected = True
         self.base_page_paths = []
         self.comp_page_paths = []
@@ -4033,6 +4043,240 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         )
         return ov, ox, oy, ref_wh
 
+    # ------------------------------------------------------------------
+    # Background diff overlay cache (decouples diff compute from scroll)
+    # ------------------------------------------------------------------
+
+    def _diff_overlay_cache_key(
+        self, page_index: int, base_path: Path, comp_path: Path
+    ) -> Optional[tuple]:
+        """Return a cache key that captures everything affecting the diff pixel content.
+
+        Translation (btx/bty) is intentionally excluded — it only affects canvas
+        position, not the diff pixels themselves.
+        """
+        if page_index >= len(self.base_transform_data) or page_index >= len(
+            self.comp_transform_data
+        ):
+            return None
+        r, _, _, _, fh, fv = as_transform6(self.base_transform_data[page_index])
+        base_c = self._diff_emphasis_palette_rgba("base", alpha=130)
+        comp_c = self._diff_emphasis_palette_rgba("comp", alpha=130)
+        return (
+            page_index,
+            str(base_path),
+            str(comp_path),
+            self._selected_color_processing_mode,
+            base_c,
+            comp_c,
+            round(float(r), 2),
+            int(fh),
+            int(fv),
+        )
+
+    def _compute_diff_overlay_at_origin(
+        self, page_index: int, base_path: Path, comp_path: Path
+    ) -> Optional[Image.Image]:
+        """Compute diff overlay at source DPI with rotation/flip only (no scale).
+
+        Both source images are placed at canvas origin (0, 0).  The result is an
+        RGBA image in source-pixel space; the caller scales it for display.
+
+        Returns:
+            RGBA :class:`PIL.Image.Image` overlay, or ``None`` on failure.
+        """
+        if page_index >= len(self.base_transform_data) or page_index >= len(
+            self.comp_transform_data
+        ):
+            return None
+        try:
+            sbi_raw = self._get_cached_source_preview_image(base_path).convert("RGBA")
+            sci_raw = self._get_cached_source_preview_image(comp_path).convert("RGBA")
+        except Exception:
+            return None
+
+        r_base, _, _, _, fh_base, fv_base = as_transform6(self.base_transform_data[page_index])
+        r_comp, _, _, _, fh_comp, fv_comp = as_transform6(self.comp_transform_data[page_index])
+
+        def _apply_rot_flip(img: Image.Image, r: float, fh: int, fv: int) -> Image.Image:
+            if fv:
+                img = img.transpose(Transpose.FLIP_TOP_BOTTOM)
+            if fh:
+                img = img.transpose(Transpose.FLIP_LEFT_RIGHT)
+            if abs(r) > 1e-6:
+                img = img.rotate(float(r), resample=Resampling.BICUBIC, expand=True)
+            return img
+
+        sbi = _apply_rot_flip(sbi_raw, r_base, int(fh_base), int(fv_base))
+        sci = _apply_rot_flip(sci_raw, r_comp, int(fh_comp), int(fv_comp))
+
+        is_bin = self._selected_color_processing_mode == "二色化"
+        base_c = self._diff_emphasis_palette_rgba("base", alpha=130)
+        comp_c = self._diff_emphasis_palette_rgba("comp", alpha=130)
+
+        # Scale morphology params by DPI so highlights stay visible after downscale to display.
+        # At 300 DPI (baseline), factor=1. At 600 DPI, factor=2, etc.
+        dpi_factor = max(1, round(
+            int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI) / _MAIN_TAB_DEFAULT_DPI
+        ))
+
+        def _odd(n: int) -> int:
+            """Round up to the nearest odd integer >= 3 (PIL MaxFilter requires odd size)."""
+            n = max(3, int(n))
+            return n if n % 2 == 1 else n + 1
+
+        try:
+            if is_bin:
+                ov, _ = build_diff_highlight_overlay_rgba(
+                    sbi, (0, 0), sci, (0, 0),
+                    base_highlight_rgba=base_c,
+                    comp_highlight_rgba=comp_c,
+                    luma_threshold=248, alpha_threshold=18,
+                    ink_match_dilate_size=_odd(3 * dpi_factor),
+                    edge_suppress_px=2 * dpi_factor,
+                    open_size=_odd(3 * dpi_factor),
+                    dilate_size=_odd(30 * dpi_factor),
+                    ink_speckle_open_size=0,
+                    same_cell_pixel_diff=False, same_cell_sq_diff_threshold=200,
+                    same_cell_luma_delta_min=0,
+                    same_cell_supplement_open=0,
+                    same_cell_supplement_dilate=_odd(10 * dpi_factor),
+                )
+            else:
+                ov, _ = build_diff_highlight_overlay_rgba(
+                    sbi, (0, 0), sci, (0, 0),
+                    base_highlight_rgba=base_c,
+                    comp_highlight_rgba=comp_c,
+                    luma_threshold=248, alpha_threshold=18,
+                    ink_match_dilate_size=_odd(3 * dpi_factor),
+                    edge_suppress_px=4 * dpi_factor,
+                    open_size=0,
+                    dilate_size=_odd(30 * dpi_factor),
+                    ink_speckle_open_size=0,
+                    same_cell_pixel_diff=True, same_cell_sq_diff_threshold=52,
+                    same_cell_luma_delta_min=5,
+                    same_cell_supplement_open=0,
+                    same_cell_supplement_dilate=_odd(10 * dpi_factor),
+                )
+        except Exception:
+            return None
+        return ov
+
+    def _schedule_diff_overlay_bg_compute(
+        self, page_index: int, base_path: Path, comp_path: Path, key: tuple
+    ) -> None:
+        """Launch a daemon thread to compute the diff overlay for *key* if not already running."""
+        with self._diff_overlay_cache_lock:
+            if key in self._diff_src_overlay_cache:
+                return
+            if self._diff_overlay_bg_key == key:
+                return
+            self._diff_overlay_bg_key = key
+
+        def _worker() -> None:
+            ov = self._compute_diff_overlay_at_origin(page_index, base_path, comp_path)
+            with self._diff_overlay_cache_lock:
+                self._diff_src_overlay_cache[key] = ov
+                if self._diff_overlay_bg_key == key:
+                    self._diff_overlay_bg_key = None
+            try:
+                self.after(0, lambda: self._on_diff_overlay_ready(page_index))
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_worker, daemon=True, name="diff_overlay_bg")
+        t.start()
+
+    def _on_diff_overlay_ready(self, page_index: int) -> None:
+        """Called on the main thread after background diff overlay computation finishes."""
+        try:
+            self.canvas.delete("diff_computing")
+        except Exception:
+            pass
+        if self.current_page_index == page_index and self._has_loaded_workspace_pages():
+            base_path = self._get_display_page_path(self.base_page_paths, page_index)
+            comp_path = self._get_display_page_path(self.comp_page_paths, page_index)
+            if base_path is not None and comp_path is not None:
+                self._display_diff_overlay_from_cache(
+                    page_index, base_path, comp_path, fast_resize=False
+                )
+
+    def _display_diff_overlay_from_cache(
+        self,
+        page_index: int,
+        base_path: Path,
+        comp_path: Path,
+        *,
+        fast_resize: bool,
+    ) -> None:
+        """Look up the diff overlay cache and draw it onto the canvas, or schedule bg compute."""
+        if not bool(self._diff_emphasis_var.get()):
+            return
+        key = self._diff_overlay_cache_key(page_index, base_path, comp_path)
+        if key is None:
+            return
+
+        with self._diff_overlay_cache_lock:
+            cached = self._diff_src_overlay_cache.get(key, _DIFF_CACHE_MISSING)
+
+        # Always clean up any stale computing indicator before deciding what to show
+        try:
+            self.canvas.delete("diff_computing")
+        except Exception:
+            pass
+
+        if cached is _DIFF_CACHE_MISSING:
+            self._schedule_diff_overlay_bg_compute(page_index, base_path, comp_path, key)
+            try:
+                cw = max(self.canvas.winfo_width(), 200)
+                ch = max(self.canvas.winfo_height(), 120)
+                self.canvas.create_text(
+                    cw // 2, ch // 2,
+                    text="差分計算中…",
+                    fill="#FF8800",
+                    font=("", 11, "bold"),
+                    tags=("diff_computing",),
+                )
+            except Exception:
+                pass
+            return
+
+        if cached is None:
+            return  # Computation failed — skip silently
+
+        # Scale the cached source-resolution overlay to match the current display transform
+        _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[page_index])
+        _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[page_index])
+        ox = int(min(btx, ctx))
+        oy = int(min(bty, cty))
+
+        r, _, _, s, _, _ = as_transform6(self.base_transform_data[page_index])
+        dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
+            max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
+        )
+        effective_scale = max(0.01, float(s) * dpi_norm)
+
+        ov_src_w, ov_src_h = cached.size
+        tgt_w = max(1, int(ov_src_w * effective_scale))
+        tgt_h = max(1, int(ov_src_h * effective_scale))
+
+        rs = Resampling.BILINEAR if fast_resize else Resampling.LANCZOS
+        try:
+            display_ov = cached.resize((tgt_w, tgt_h), rs)
+        except Exception:
+            return
+
+        try:
+            self._diff_emphasis_photo_image = ImageTk.PhotoImage(display_ov)
+            self._diff_emphasis_canvas_image_id = self.canvas.create_image(
+                ox, oy,
+                anchor="nw",
+                image=self._diff_emphasis_photo_image,
+                tags=("diff_emphasis", "pdf_image"),
+            )
+        except Exception as exc:
+            logger.debug("Diff overlay display failed: %s", exc)
+
     def _cancel_pending_hi_res_preview(self) -> None:
         """Cancel a scheduled full-resolution redraw after interactive zoom."""
         aid = getattr(self, "_preview_hires_after_id", None)
@@ -4244,34 +4488,18 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 )
 
         if (
-            bool(self._diff_emphasis_var.get())
-            and show_base_layer
+            show_base_layer
             and show_comp_layer
             and base_path is not None
             and base_path.exists()
             and comp_path is not None
             and comp_path.exists()
-            and base_image is not None
-            and comp_image_for_diff is not None
             and page_index < len(self.base_transform_data)
             and page_index < len(self.comp_transform_data)
         ):
-            try:
-                computed = self._compute_diff_emphasis_overlay_fullres(
-                    page_index, base_path, comp_path
-                )
-                if computed is not None:
-                    ov_full, ox, oy, _ref_wh = computed
-                    self._diff_emphasis_photo_image = ImageTk.PhotoImage(ov_full)
-                    self._diff_emphasis_canvas_image_id = self.canvas.create_image(
-                        int(ox),
-                        int(oy),
-                        anchor="nw",
-                        image=self._diff_emphasis_photo_image,
-                        tags=("diff_emphasis", "pdf_image"),
-                    )
-            except Exception as exc:
-                logger.debug("Diff emphasis overlay skipped: %s", exc)
+            self._display_diff_overlay_from_cache(
+                page_index, base_path, comp_path, fast_resize=preview_fast_resize
+            )
 
         reference_bbox = self.canvas.bbox("pdf_image")
         self._draw_reference_grid(reference_bbox, raise_above_images=True)
@@ -5730,6 +5958,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 self._base_selected_color_hex = self._base_image_color_change_btn.get_selected_color_hex()
             except Exception:
                 self._base_selected_color_hex = None
+        with self._diff_overlay_cache_lock:
+            self._diff_src_overlay_cache.clear()
+            self._diff_overlay_bg_key = None
         self._refresh_preview_after_color_change()
 
     def _on_comparison_image_color_change(self) -> None:
@@ -5739,6 +5970,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 self._comparison_selected_color_hex = self._comparison_image_color_change_btn.get_selected_color_hex()
             except Exception:
                 self._comparison_selected_color_hex = None
+        with self._diff_overlay_cache_lock:
+            self._diff_src_overlay_cache.clear()
+            self._diff_overlay_bg_key = None
         self._refresh_preview_after_color_change()
 
     def _on_base_file_select(self) -> None:
