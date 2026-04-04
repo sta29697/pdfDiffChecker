@@ -55,8 +55,8 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                         "body": "ベースファイルパス右の青系ボタン、比較ファイルパス右の赤系ボタンは、各レイヤーの表示色を決めるためのボタンです。中央の画像ボタン2つは比較開始方法の切替用で、左は自動寄せ、右は手動寄せの入口として使います。"
                     },
                     {
-                        "title": "8. 色処理・DPI設定・表示切替",
-                        "body": "「色処理」コンボボックスでは指定色濃淡などの表示方式を選びます。「DPI設定」はプレビュー解像度の基準です。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。両方表示中は「差分を強調表示（半透明）」で、色処理後の画像同士の違いを半透明の色で重ねて強調できます。"
+                        "title": "8. 色処理・DPI設定・表示切替・差分強調",
+                        "body": "「色処理」コンボボックスでは、二色化（線・形状の増減を検出）と指定色濃淡（色変化も含めて検出）から表示方式を選びます。「DPI設定」はプレビュー解像度の基準で、値を上げると差分検出の精度も向上します。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。両方表示中は「差分を強調表示（半透明）」で、ソース画質のまま検出した差分を半透明のハイライトで重ねて表示します。差分計算はバックグラウンドで非同期に実行されるため、初回表示時は「差分計算中…」のインジケーターが表示されます。計算完了後はキャッシュが利用されるため、ホイール拡大縮小やページ移動後のオーバーレイ再表示は遅延なく行われます。"
                     },
                     {
                         "title": "9. カスタム回転ガイドと中央Canvas",
@@ -207,7 +207,7 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     {"title": "5. Analysis buttons", "body": "Use the base and comparison analysis buttons first. They load the selected PDFs and prepare the preview and page information used by later steps."},
                     {"title": "6. Threshold fields and Apply button", "body": "These fields control how strongly each side is emphasized by the current color-processing mode. Press Apply after changing the numbers."},
                     {"title": "7. Color buttons and image buttons", "body": "The color buttons next to the base and comparison paths define the visible color of each layer. The two large image buttons are the entry points for automatic alignment and manual alignment workflows."},
-                    {"title": "8. Color mode, DPI, and layer toggles", "body": "Choose the processing mode, set the preview DPI, and turn the base layer, comparison layer, and reference grid on or off as needed. When both layers are visible, use Highlight differences (semi-transparent) to tint regions where the processed pixels differ."},
+                    {"title": "8. Color mode, DPI, layer toggles and diff highlight", "body": "Choose the processing mode — Binarization detects added or removed lines and shapes, while Color Shading also catches color-only changes. Higher DPI improves detection accuracy. Toggle the base layer, comparison layer, and reference grid as needed. When both layers are visible, Highlight differences (semi-transparent) marks detected changes using full-resolution source images. Diff computation runs in a background thread; a 'computing…' indicator appears on the first display and disappears when ready. After that, zooming and panning reuse the cached overlay instantly without any lag."},
                     {"title": "9. Rotation guide and preview canvas", "body": "The custom rotation guide explains the rotation workflow. The large canvas below is the main inspection area, where you can zoom, pan, rotate, and inspect the overlaid result."},
                     {"title": "10. Right-side page controls", "body": "Move between pages, insert blank pages, delete pages, save, and enter X/Y, angle, and scale values. Batch Edit applies the current transform settings to other pages as well."},
                     {"title": "11. Footer status information", "body": "The footer below the canvas shows pixel size, DPI, and paper-size information for the current page so you can confirm the current state quickly."}
