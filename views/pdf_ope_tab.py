@@ -179,22 +179,76 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
         self._preferred_preview_scale: float = self._get_saved_preview_scale()
         self._loaded_pdf_source_path: Optional[str] = None
         self._preview_keyboard_rotation_delta: float = 0.0
+        self._pdf_entry_autoload_after_id: Optional[str] = None
 
         # Setup UI
         self._setup_ui()
         self._setup_drag_and_drop()
         self.canvas.bind("<Configure>", self._on_pdf_canvas_configure, add="+")
 
+        try:
+            self._base_file_path_entry.path_var.trace_add(
+                "write", self._on_pdf_base_path_entry_write
+            )
+        except Exception:
+            pass
+
         # Main processing: refresh shared paths when the tab becomes visible.
         self.bind("<Visibility>", self._sync_shared_paths_from_settings)
         self.after_idle(self._sync_shared_paths_from_settings)
 
+    def _on_pdf_base_path_entry_write(self, *_args: Any) -> None:
+        """Debounce autoload when the base path entry text changes (e.g. late UI refresh)."""
+        self._schedule_pdf_entry_autoload()
+
+    def _schedule_pdf_entry_autoload(self) -> None:
+        """Schedule :meth:`_try_autoload_pdf_from_entry_if_needed` after a short idle."""
+        aid = getattr(self, "_pdf_entry_autoload_after_id", None)
+        if aid is not None:
+            try:
+                self.after_cancel(aid)
+            except Exception:
+                pass
+        try:
+            self._pdf_entry_autoload_after_id = self.after(
+                80, self._try_autoload_pdf_from_entry_if_needed
+            )
+        except Exception:
+            self._pdf_entry_autoload_after_id = None
+
+    def _try_autoload_pdf_from_entry_if_needed(self) -> None:
+        """Load the PDF only when the path entry shows an existing file.
+
+        Previously, a ``<Visibility>`` handler used the persisted settings path even
+        when the entry showed only the parent folder, which triggered
+        ``process_with_progress_window`` on startup. Autoload now follows the entry text
+        so folder placeholders and empty fields do not start conversion.
+        """
+        self._pdf_entry_autoload_after_id = None
+        try:
+            placeholder_base = message_manager.get_ui_message("U053")
+            raw = self._base_file_path_entry.path_var.get().strip()
+            if not raw or raw == placeholder_base:
+                return
+            ep = Path(normalize_host_path(raw))
+            if not ep.is_file():
+                return
+            if ep.suffix.lower() not in MAIN_PDF_OPE_INPUT_EXTENSIONS:
+                return
+            key = normalize_host_path(str(ep))
+            loaded = normalize_host_path(str(self._loaded_pdf_source_path or ""))
+            if key == loaded:
+                return
+            self._load_and_display_pdf(str(ep))
+        except Exception:
+            pass
+
     def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
         """Synchronize shared base/output paths from persisted settings.
 
-        On idle (startup), if base points to an existing file, the PDF tab shows the
-        parent folder locally only so startup does not auto-load a preview; shared
-        settings are not rewritten (main tab keeps full PDF paths).
+        When the saved base path is an existing file, the entry always shows that file's
+        parent folder so autoload (which requires a file path in the entry) does not run
+        during the initial visibility storm. Shared settings are not rewritten.
 
         Args:
             event: Tkinter visibility event (unused).
@@ -205,32 +259,26 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
 
         try:
             saved_base = UserSettingManager().get_setting("base_file_path")
-            use_startup_normalization = event is None
             if (
                 isinstance(saved_base, str)
                 and saved_base
                 and saved_base != placeholder_base
             ):
                 saved_norm = normalize_host_path(saved_base)
-                base_value_to_apply = saved_norm
                 base_path_obj = Path(saved_norm)
-                if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
-                    # Main processing: avoid startup-time preview load; do not persist folder to settings.
+                # When settings store a real file, always show its parent folder in this tab's
+                # entry (same UX as the main tab before commit). Early <Visibility> often runs
+                # before the after_idle pass: if we only normalized on event is None, the first
+                # sync could leave the full .pdf path in path_var, autoload would run, and
+                # process_with_progress_window would convert every page at startup.
+                if base_path_obj.exists() and base_path_obj.is_file():
                     base_value_to_apply = str(base_path_obj.parent)
+                else:
+                    base_value_to_apply = saved_norm
 
                 if self._base_file_path_entry.path_var.get() != base_value_to_apply:
                     self._base_file_path_entry.path_var.set(base_value_to_apply)
                     self.base_path.set(base_value_to_apply)
-
-                loaded_norm = normalize_host_path(str(self._loaded_pdf_source_path or ""))
-                if (
-                    not use_startup_normalization
-                    and base_path_obj.exists()
-                    and base_path_obj.is_file()
-                    and base_path_obj.suffix.lower() in MAIN_PDF_OPE_INPUT_EXTENSIONS
-                    and str(base_path_obj) != loaded_norm
-                ):
-                    self._load_and_display_pdf(saved_norm)
 
             saved_output = UserSettingManager().get_setting("output_folder_path")
             if (
@@ -242,6 +290,8 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
                 if self._output_folder_path_entry.path_var.get() != out_norm:
                     self._output_folder_path_entry.path_var.set(out_norm)
                     self.output_path.set(out_norm)
+
+            self._schedule_pdf_entry_autoload()
         except Exception as exc:
             logger.warning(f"Shared path sync failed in pdf tab: {exc}")
 

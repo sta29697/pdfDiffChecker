@@ -10,6 +10,10 @@ from typing import Dict, Any
 # Base project root directory path
 BASE_DIR: Path = Path(__file__).resolve().parent.parent
 
+# Pillow ``Image.MAX_IMAGE_PIXELS``: refuse decoding above this total pixel count (DOS guard).
+# ~2e9 allows large high-DPI pages while capping worst-case memory vs. ``None`` (unlimited).
+PIL_MAX_IMAGE_PIXELS: int = 2_000_000_000
+
 # Settings file
 THEME_COLOR_FILE: Path = BASE_DIR / "themes" / "dark.json"
 
