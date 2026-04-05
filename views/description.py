@@ -162,36 +162,6 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     }
                 ]
             },
-            {
-                "heading": "説明 タブ",
-                "items": [
-                    {
-                        "title": "1. 説明本文エリア",
-                        "body": "このタブは各タブの使い方を順番に読むための場所です。上から順に読むと、どの欄を先に触ればよいかが分かるように並べています。"
-                    },
-                    {
-                        "title": "2. スクロールバー",
-                        "body": "右端のスクロールバー、またはマウスホイールで上下移動できます。説明量が多いときは、見たいタブの見出しまでスクロールして読んでください。"
-                    },
-                    {
-                        "title": "3. 一時保存フォルダパスを表示",
-                        "body": "下部左のボタンは、一時保存先フォルダを確認したいときに使います。製品版では Windows 標準の一時保存先フォルダを表示します。"
-                    },
-                    {
-                        "title": "4. ログファイルパスを表示",
-                        "body": "下部右のボタンは、ログ保存先を確認したいときに使います。不具合調査や動作確認時に、どのログファイルを見ればよいかを確認するためのボタンです。"
-                    }
-                ]
-            },
-            {
-                "heading": "配布形態（製品ビルド）",
-                "items": [
-                    {
-                        "title": "1. フォルダ一式と単一 exe",
-                        "body": "既定の Nuitka ビルド（build_nuitka.ps1、--standalone）は build\\\\nuitka\\\\main.dist フォルダ内の pdfDiffChecker.exe と同梱の DLL 等がすべて必要です。exe ファイルだけを配布しても起動しません。単一の exe だけで渡したい場合は同スクリプトに -OneFile を付けてビルドし（Nuitka の --onefile）、出力フォルダに生成された pdfDiffChecker.exe 1 本を配布してください。初回起動時に一時フォルダへ展開するため、起動がやや遅くなることがあります。"
-                    }
-                ]
-            },
         ],
     },
     "en": {
@@ -241,24 +211,6 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     {"title": "8. Size conversion block: messages and action", "body": "Read the hint and warning messages before pressing the Size Conversion button, especially for PDF inputs or unusual resize settings."},
                     {"title": "9. Multi-page guidance", "body": "Representative values and edit restrictions are shown when the input contains multiple pages or frames, so always follow the on-screen guidance in those cases."},
                     {"title": "10. Bottom status area", "body": "The bottom status line reports success, warnings, and failure reasons after each conversion."}
-                ]
-            },
-            {
-                "heading": "Description Tab",
-                "items": [
-                    {"title": "1. Description body area", "body": "This tab explains how to use each screen in a practical order so users can read from top to bottom and follow the workflow."},
-                    {"title": "2. Scroll bar", "body": "Use the vertical scroll bar or the mouse wheel to move through the full explanation."},
-                    {"title": "3. Show temp folder path", "body": "This button shows the active temporary-working folder. In the packaged app, it points to the standard Windows temporary app folder."},
-                    {"title": "4. Show log file path", "body": "This button shows the current log file path used for troubleshooting and runtime checks."}
-                ]
-            },
-            {
-                "heading": "Distribution (packaged build)",
-                "items": [
-                    {
-                        "title": "1. Folder bundle vs single executable",
-                        "body": "The default Nuitka build from build_nuitka.ps1 uses --standalone: you must ship the entire build\\\\nuitka\\\\main.dist folder (pdfDiffChecker.exe plus bundled DLLs and data). The exe alone is not sufficient. To ship a single file, rebuild with -OneFile (adds --onefile) and distribute only the generated pdfDiffChecker.exe in the output folder. One-file apps extract on first launch, which can make startup slightly slower."
-                    }
                 ]
             },
         ],

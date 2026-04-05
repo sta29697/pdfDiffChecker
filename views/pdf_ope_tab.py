@@ -246,14 +246,16 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
     def _sync_shared_paths_from_settings(self, event: Any = None) -> None:
         """Synchronize shared base/output paths from persisted settings.
 
-        When the saved base path is an existing file, the entry always shows that file's
-        parent folder so autoload (which requires a file path in the entry) does not run
-        during the initial visibility storm. Shared settings are not rewritten.
+        On startup (``event is None`` via ``after_idle``), if the saved base path is an
+        existing file the entry shows only the parent folder so the autoload debounce does
+        not trigger ``process_with_progress_window`` at launch.  On every subsequent tab
+        switch (``<Visibility>``, ``event`` is not ``None``) the full file path including
+        the filename is shown, matching the behaviour of the ファイル拡張子とサイズ tab.
 
         Args:
-            event: Tkinter visibility event (unused).
+            event: Tkinter visibility event or ``None`` when called via ``after_idle``.
         """
-        _ = event
+        use_startup_normalization = event is None
         placeholder_base = message_manager.get_ui_message("U053")
         placeholder_output = message_manager.get_ui_message("U054")
 
@@ -266,15 +268,11 @@ class PDFOperationApp(ttk.Frame, ColoringThemeIF):
             ):
                 saved_norm = normalize_host_path(saved_base)
                 base_path_obj = Path(saved_norm)
-                # When settings store a real file, always show its parent folder in this tab's
-                # entry (same UX as the main tab before commit). Early <Visibility> often runs
-                # before the after_idle pass: if we only normalized on event is None, the first
-                # sync could leave the full .pdf path in path_var, autoload would run, and
-                # process_with_progress_window would convert every page at startup.
-                if base_path_obj.exists() and base_path_obj.is_file():
+                base_value_to_apply = saved_norm
+                # On startup only: show parent folder so the autoload debounce does not
+                # immediately open a progress window before the user has touched anything.
+                if use_startup_normalization and base_path_obj.exists() and base_path_obj.is_file():
                     base_value_to_apply = str(base_path_obj.parent)
-                else:
-                    base_value_to_apply = saved_norm
 
                 if self._base_file_path_entry.path_var.get() != base_value_to_apply:
                     self._base_file_path_entry.path_var.set(base_value_to_apply)

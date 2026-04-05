@@ -4135,12 +4135,12 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                     ink_match_dilate_size=_odd(3 * dpi_factor),
                     edge_suppress_px=2 * dpi_factor,
                     open_size=_odd(3 * dpi_factor),
-                    dilate_size=_odd(30 * dpi_factor),
+                    dilate_size=_odd(60 * dpi_factor),
                     ink_speckle_open_size=0,
                     same_cell_pixel_diff=False, same_cell_sq_diff_threshold=200,
                     same_cell_luma_delta_min=0,
                     same_cell_supplement_open=0,
-                    same_cell_supplement_dilate=_odd(10 * dpi_factor),
+                    same_cell_supplement_dilate=_odd(20 * dpi_factor),
                 )
             else:
                 ov, _ = build_diff_highlight_overlay_rgba(
@@ -4150,11 +4150,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                     luma_threshold=248, alpha_threshold=18,
                     ink_match_dilate_size=_odd(3 * dpi_factor),
                     edge_suppress_px=4 * dpi_factor,
-                    open_size=0,
+                    open_size=_odd(3 * dpi_factor),
                     dilate_size=_odd(30 * dpi_factor),
                     ink_speckle_open_size=0,
-                    same_cell_pixel_diff=True, same_cell_sq_diff_threshold=52,
-                    same_cell_luma_delta_min=5,
+                    same_cell_pixel_diff=True, same_cell_sq_diff_threshold=800,
+                    same_cell_luma_delta_min=30,
                     same_cell_supplement_open=0,
                     same_cell_supplement_dilate=_odd(10 * dpi_factor),
                 )
