@@ -16,6 +16,9 @@ from PIL import Image, ImageTk
 
 # Core utilities and configuration
 from configurations import tool_settings
+
+# Raise Pillow's decompression-bomb ceiling for trusted local PDF render outputs (see tool_settings).
+Image.MAX_IMAGE_PIXELS = tool_settings.PIL_MAX_IMAGE_PIXELS
 from configurations.message_manager import get_message_manager
 from controllers.event_bus import EventBus, EventNames
 from configurations.user_setting_manager import get_user_setting_manager as usm

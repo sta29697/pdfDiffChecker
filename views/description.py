@@ -55,8 +55,8 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                         "body": "ベースファイルパス右の青系ボタン、比較ファイルパス右の赤系ボタンは、各レイヤーの表示色を決めるためのボタンです。中央の画像ボタン2つは比較開始方法の切替用で、左は自動寄せ、右は手動寄せの入口として使います。"
                     },
                     {
-                        "title": "8. 色処理・DPI設定・表示切替",
-                        "body": "「色処理」コンボボックスでは指定色濃淡などの表示方式を選びます。「DPI設定」はプレビュー解像度の基準です。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。両方表示中は「差分を強調表示（半透明）」で、色処理後の画像同士の違いを半透明の色で重ねて強調できます。"
+                        "title": "8. 色処理・DPI設定・表示切替・差分強調",
+                        "body": "「色処理」コンボボックスでは、二色化（線・形状の増減を検出）と指定色濃淡（色変化も含めて検出）から表示方式を選びます。「DPI設定」はプレビュー解像度の基準で、値を上げると差分検出の精度も向上します。ベースファイル表示、比較ファイル表示、基準罫線を表示のチェックで、必要なレイヤーだけを見ながら確認できます。両方表示中は「差分を強調表示（半透明）」で、ソース画質のまま検出した差分を半透明のハイライトで重ねて表示します。差分計算はバックグラウンドで非同期に実行されるため、初回表示時は「差分計算中…」のインジケーターが表示されます。計算完了後はキャッシュが利用されるため、ホイール拡大縮小やページ移動後のオーバーレイ再表示は遅延なく行われます。"
                     },
                     {
                         "title": "9. カスタム回転ガイドと中央Canvas",
@@ -162,36 +162,6 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     }
                 ]
             },
-            {
-                "heading": "説明 タブ",
-                "items": [
-                    {
-                        "title": "1. 説明本文エリア",
-                        "body": "このタブは各タブの使い方を順番に読むための場所です。上から順に読むと、どの欄を先に触ればよいかが分かるように並べています。"
-                    },
-                    {
-                        "title": "2. スクロールバー",
-                        "body": "右端のスクロールバー、またはマウスホイールで上下移動できます。説明量が多いときは、見たいタブの見出しまでスクロールして読んでください。"
-                    },
-                    {
-                        "title": "3. 一時保存フォルダパスを表示",
-                        "body": "下部左のボタンは、一時保存先フォルダを確認したいときに使います。製品版では Windows 標準の一時保存先フォルダを表示します。"
-                    },
-                    {
-                        "title": "4. ログファイルパスを表示",
-                        "body": "下部右のボタンは、ログ保存先を確認したいときに使います。不具合調査や動作確認時に、どのログファイルを見ればよいかを確認するためのボタンです。"
-                    }
-                ]
-            },
-            {
-                "heading": "配布形態（製品ビルド）",
-                "items": [
-                    {
-                        "title": "1. フォルダ一式と単一 exe",
-                        "body": "既定の Nuitka ビルド（build_nuitka.ps1、--standalone）は build\\\\nuitka\\\\main.dist フォルダ内の pdfDiffChecker.exe と同梱の DLL 等がすべて必要です。exe ファイルだけを配布しても起動しません。単一の exe だけで渡したい場合は同スクリプトに -OneFile を付けてビルドし（Nuitka の --onefile）、出力フォルダに生成された pdfDiffChecker.exe 1 本を配布してください。初回起動時に一時フォルダへ展開するため、起動がやや遅くなることがあります。"
-                    }
-                ]
-            },
         ],
     },
     "en": {
@@ -207,7 +177,7 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     {"title": "5. Analysis buttons", "body": "Use the base and comparison analysis buttons first. They load the selected PDFs and prepare the preview and page information used by later steps."},
                     {"title": "6. Threshold fields and Apply button", "body": "These fields control how strongly each side is emphasized by the current color-processing mode. Press Apply after changing the numbers."},
                     {"title": "7. Color buttons and image buttons", "body": "The color buttons next to the base and comparison paths define the visible color of each layer. The two large image buttons are the entry points for automatic alignment and manual alignment workflows."},
-                    {"title": "8. Color mode, DPI, and layer toggles", "body": "Choose the processing mode, set the preview DPI, and turn the base layer, comparison layer, and reference grid on or off as needed. When both layers are visible, use Highlight differences (semi-transparent) to tint regions where the processed pixels differ."},
+                    {"title": "8. Color mode, DPI, layer toggles and diff highlight", "body": "Choose the processing mode — Binarization detects added or removed lines and shapes, while Color Shading also catches color-only changes. Higher DPI improves detection accuracy. Toggle the base layer, comparison layer, and reference grid as needed. When both layers are visible, Highlight differences (semi-transparent) marks detected changes using full-resolution source images. Diff computation runs in a background thread; a 'computing…' indicator appears on the first display and disappears when ready. After that, zooming and panning reuse the cached overlay instantly without any lag."},
                     {"title": "9. Rotation guide and preview canvas", "body": "The custom rotation guide explains the rotation workflow. The large canvas below is the main inspection area, where you can zoom, pan, rotate, and inspect the overlaid result."},
                     {"title": "10. Right-side page controls", "body": "Move between pages, insert blank pages, delete pages, save, and enter X/Y, angle, and scale values. Batch Edit applies the current transform settings to other pages as well."},
                     {"title": "11. Footer status information", "body": "The footer below the canvas shows pixel size, DPI, and paper-size information for the current page so you can confirm the current state quickly."}
@@ -241,24 +211,6 @@ DESCRIPTION_TEXTS: Dict[str, Dict[str, Any]] = {
                     {"title": "8. Size conversion block: messages and action", "body": "Read the hint and warning messages before pressing the Size Conversion button, especially for PDF inputs or unusual resize settings."},
                     {"title": "9. Multi-page guidance", "body": "Representative values and edit restrictions are shown when the input contains multiple pages or frames, so always follow the on-screen guidance in those cases."},
                     {"title": "10. Bottom status area", "body": "The bottom status line reports success, warnings, and failure reasons after each conversion."}
-                ]
-            },
-            {
-                "heading": "Description Tab",
-                "items": [
-                    {"title": "1. Description body area", "body": "This tab explains how to use each screen in a practical order so users can read from top to bottom and follow the workflow."},
-                    {"title": "2. Scroll bar", "body": "Use the vertical scroll bar or the mouse wheel to move through the full explanation."},
-                    {"title": "3. Show temp folder path", "body": "This button shows the active temporary-working folder. In the packaged app, it points to the standard Windows temporary app folder."},
-                    {"title": "4. Show log file path", "body": "This button shows the current log file path used for troubleshooting and runtime checks."}
-                ]
-            },
-            {
-                "heading": "Distribution (packaged build)",
-                "items": [
-                    {
-                        "title": "1. Folder bundle vs single executable",
-                        "body": "The default Nuitka build from build_nuitka.ps1 uses --standalone: you must ship the entire build\\\\nuitka\\\\main.dist folder (pdfDiffChecker.exe plus bundled DLLs and data). The exe alone is not sufficient. To ship a single file, rebuild with -OneFile (adds --onefile) and distribute only the generated pdfDiffChecker.exe in the output folder. One-file apps extract on first launch, which can make startup slightly slower."
-                    }
                 ]
             },
         ],

@@ -34,9 +34,17 @@ Use this list for each tagged release so steps stay reproducible. Adjust version
 
 ## 6. GitHub Release with asset
 
-- [ ] Create the release and attach the exe in one step, for example:
+**Important:** `.gitignore` exceptions only affect Git tracking. **GitHub Releases never attach the exe automatically.** You must pass the file path to `gh release create` (or upload it in the browser). If you omit the path, the release tag exists but **no .exe asset** appears.
+
+- [ ] Create the release and attach the exe in one step, for example (from repo root, after the build step):
+
+  `gh release create v1.0.8 --title "v1.0.8" --generate-notes build\nuitka\pdfDiffChecker.exe`
+
+  Or with a notes file:
 
   `gh release create v1.0.8 --title "v1.0.8" --notes-file path\to\notes.md build\nuitka\pdfDiffChecker.exe`
+
+- [ ] Optional helper (same idea): `powershell -ExecutionPolicy Bypass -File .\scripts\gh_release_with_exe.ps1 -Tag v1.0.8`
 
 - [ ] Confirm assets on GitHub:
 

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@github/github-mcp-server", "--toolsets", "all"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN_pdfDiffChecker}"
+      }
+    }
+  }
+}

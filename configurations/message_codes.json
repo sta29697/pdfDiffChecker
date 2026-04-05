@@ -1433,6 +1433,10 @@
         "L346": {
             "en": "[FILE] Looking for PNG file at path: {0}",
             "ja": "[ファイル] PNGファイルを探しています: {0}"
+        },
+        "L347": {
+            "en": "[PREVIEW] Workspace raster exceeds safe pixel limit; DPI reverted to {0}: {1}",
+            "ja": "[プレビュー] ワークスペース画像が画素数上限を超えました。DPI を {0} に戻しました: {1}"
         }
     },
     "message_codes": {
@@ -2401,6 +2405,38 @@
         "U178": {
             "en": "Highlight differences (semi-transparent)",
             "ja": "差分を強調表示（半透明）"
+        },
+        "U179": {
+            "en": "Workspace image too large",
+            "ja": "ワークスペース画像が大きすぎます"
+        },
+        "U180": {
+            "en": "The rendered page exceeds the safe pixel limit (max {0} pixels). DPI has been restored to {1}. Run conversion again at this or a lower DPI to refresh the preview.\n\nDetail: {2}",
+            "ja": "変換画像がアプリの安全な画素数上限（最大 {0} 画素）を超えています。DPI を {1} に戻しました。プレビューを表示するには、この DPI 以下で再度「変身」から変換してください。\n\n詳細: {2}"
+        },
+        "U181": {
+            "en": "Preview is suspended: page images exceed the safe pixel limit. Lower DPI and run conversion again.",
+            "ja": "画素数上限を超えたためプレビューを表示できません。DPI を下げて再度「変身」から変換してください。"
+        },
+        "U182": {
+            "en": "Loading page preview…",
+            "ja": "ページを読み込んでいます…"
+        },
+        "U183": {
+            "en": "Rendering preview after conversion…",
+            "ja": "変換後のプレビューを描画しています…"
+        },
+        "U184": {
+            "en": "Applying color processing mode…",
+            "ja": "色処理モードを反映しています…"
+        },
+        "U185": {
+            "en": "Updating diff highlight…",
+            "ja": "差分強調を更新しています…"
+        },
+        "U186": {
+            "en": "Done.",
+            "ja": "完了しました。"
         }
     }
 }
