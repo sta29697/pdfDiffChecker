@@ -56,6 +56,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         on_rotation_guide: Optional[Callable[[], None]] = None,
         reference_grid_var: Optional[tk.BooleanVar] = None,
         on_reference_grid_toggle: Optional[Callable[[], None]] = None,
+        on_base_transform_value_change: Optional[Callable[[float, float, float, float, set[str]], None]] = None,
+        on_comp_transform_value_change: Optional[Callable[[float, float, float, float, set[str]], None]] = None,
+        on_auto_align_frames: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Initialize the page control frame.
@@ -80,6 +83,9 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_rotation_guide: Optional callback to show the custom rotation guide (PDF tab).
             reference_grid_var: When set, show a reference-grid visibility checkbox (PDF tab).
             on_reference_grid_toggle: Optional callback after the reference-grid checkbox changes.
+            on_base_transform_value_change: When provided, enables dual-layer mode; callback for base transform.
+            on_comp_transform_value_change: Callback for comp transform; triggers dual-layer UI when set.
+            on_auto_align_frames: Optional callback for the "Auto-align Frames" button (dual-layer mode only).
         """
         try:
             super().__init__(parent)
@@ -273,8 +279,16 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.__batch_edit_cb.grid(row=layout_row, column=0, padx=5, pady=(5, 0), sticky="ew")
         layout_row += 1
 
-        # Store transform value change callback
+        # Store transform value change callbacks
         self.__on_transform_value_change = on_transform_value_change
+        # Dual-layer mode: when on_comp_transform_value_change is provided, show separate
+        # Base / Comp transform entry sections.
+        self.__dual_mode: bool = on_comp_transform_value_change is not None
+        self.__on_base_transform_value_change: Optional[Callable] = (
+            on_base_transform_value_change or on_transform_value_change
+        )
+        self.__on_comp_transform_value_change: Optional[Callable] = on_comp_transform_value_change
+        self.__on_auto_align_frames: Optional[Callable] = on_auto_align_frames
 
         # --- Transform info section (M1-008) ---
         # Separator line
@@ -299,35 +313,42 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         entry_width = 8
         label_width = 5
 
-        # Lists to hold sub-frame and label references for theme updates
+        # Lists to hold sub-frame and label references for theme updates (base and comp)
         self.__transform_sub_frames: List[tk.Frame] = []
         self.__transform_labels: List[tk.Label] = []
+        self.__comp_transform_sub_frames: List[tk.Frame] = []
+        self.__comp_transform_labels: List[tk.Label] = []
 
-        # Helper to create a label+entry row
-        def _make_transform_row(parent_frame: tk.Frame, row: int,
-                                label_text: str) -> tk.Entry:
+        def _make_transform_row(
+            parent_frame: tk.Frame,
+            row: int,
+            label_text: str,
+            sub_frames: List[tk.Frame],
+            labels: List[tk.Label],
+        ) -> tk.Entry:
             """Create a labeled entry row for transform info.
 
             Args:
                 parent_frame: Parent frame to place widgets in.
                 row: Grid row number.
                 label_text: Label text for the entry.
+                sub_frames: List to append the container frame to.
+                labels: List to append the label widget to.
 
             Returns:
                 The created Entry widget.
             """
             sub = tk.Frame(parent_frame, bg=self.__base_bg)
-            # Keep label and entry adjacent; do not allocate a wide stretch column between them.
             sub.grid(row=row, column=0, padx=2, pady=1, sticky="w")
             sub.grid_columnconfigure(0, weight=0)
             sub.grid_columnconfigure(1, weight=0)
-            self.__transform_sub_frames.append(sub)
+            sub_frames.append(sub)
             lbl = tk.Label(
                 sub, text=label_text, font=entry_font, width=label_width,
                 bg=self.__base_bg, fg=self.__swfg, anchor="e",
             )
             lbl.grid(row=0, column=0, sticky="e")
-            self.__transform_labels.append(lbl)
+            labels.append(lbl)
             ent = tk.Entry(
                 sub, font=entry_font, width=entry_width, justify="right",
                 bg=self.__entry_theme_dict.get("bg", self.__acbg),
@@ -338,29 +359,46 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             ent.grid(row=0, column=1, sticky="w", padx=(2, 0))
             return ent
 
-        # Create transform entry fields
+        # --- Base transform section ---
+        self.__base_subheader: Optional[tk.Label] = None
+        if self.__dual_mode:
+            self.__base_subheader = tk.Label(
+                self,
+                text=message_manager.get_ui_message("U187"),  # "ベース" / "Base"
+                font=("", 7),
+                bg=self.__base_bg,
+                fg=self.__swfg,
+                anchor="w",
+            )
+            self.__base_subheader.grid(row=layout_row, column=0, padx=4, pady=(4, 0), sticky="ew")
+            layout_row += 1
+
         self.__transform_x_entry = _make_transform_row(
-            self, layout_row, message_manager.get_ui_message("U065")
+            self, layout_row, message_manager.get_ui_message("U065"),
+            sub_frames=self.__transform_sub_frames, labels=self.__transform_labels,
         )
         layout_row += 1
         self.__transform_y_entry = _make_transform_row(
-            self, layout_row, message_manager.get_ui_message("U066")
+            self, layout_row, message_manager.get_ui_message("U066"),
+            sub_frames=self.__transform_sub_frames, labels=self.__transform_labels,
         )
         layout_row += 1
         self.__transform_angle_entry = _make_transform_row(
-            self, layout_row, message_manager.get_ui_message("U067")
+            self, layout_row, message_manager.get_ui_message("U067"),
+            sub_frames=self.__transform_sub_frames, labels=self.__transform_labels,
         )
         layout_row += 1
         self.__transform_scale_entry = _make_transform_row(
-            self, layout_row, message_manager.get_ui_message("U068")
+            self, layout_row, message_manager.get_ui_message("U068"),
+            sub_frames=self.__transform_sub_frames, labels=self.__transform_labels,
         )
         layout_row += 1
 
-        # Bind Enter key to apply transform values
+        # Bind Enter key to base transform entries
         for ent in (self.__transform_x_entry, self.__transform_y_entry,
                     self.__transform_angle_entry, self.__transform_scale_entry):
-            ent.bind("<Return>", self._on_transform_entry_submit)
-            ent.bind("<KP_Enter>", self._on_transform_entry_submit)
+            ent.bind("<Return>", self._on_base_transform_entry_submit)
+            ent.bind("<KP_Enter>", self._on_base_transform_entry_submit)
 
         self.__rotation_guide_btn: Optional[BaseButton] = None
         if on_rotation_guide is not None:
@@ -375,6 +413,65 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 row=layout_row, column=0, padx=5, pady=(10, 6), sticky="ew"
             )
             layout_row += 1
+
+        # --- Auto-align button (dual mode only) ---
+        self.__auto_align_btn: Optional[BaseButton] = None
+        if self.__dual_mode and self.__on_auto_align_frames is not None:
+            self.__auto_align_btn = BaseButton(
+                fr=self,
+                color_key="process_button",
+                text=message_manager.get_ui_message("U189"),  # "図枠合わせ" / "Auto-align Frames"
+                command=self.__on_auto_align_frames,
+                font=btw.base_font,
+            )
+            self.__auto_align_btn.grid(
+                row=layout_row, column=0, padx=5, pady=(6, 4), sticky="ew"
+            )
+            layout_row += 1
+
+        # --- Comp transform section (dual mode only) ---
+        self.__comp_subheader: Optional[tk.Label] = None
+        self.__comp_transform_x_entry: Optional[tk.Entry] = None
+        self.__comp_transform_y_entry: Optional[tk.Entry] = None
+        self.__comp_transform_angle_entry: Optional[tk.Entry] = None
+        self.__comp_transform_scale_entry: Optional[tk.Entry] = None
+        if self.__dual_mode:
+            self.__comp_subheader = tk.Label(
+                self,
+                text=message_manager.get_ui_message("U188"),  # "比較" / "Comp"
+                font=("", 7),
+                bg=self.__base_bg,
+                fg=self.__swfg,
+                anchor="w",
+            )
+            self.__comp_subheader.grid(row=layout_row, column=0, padx=4, pady=(6, 0), sticky="ew")
+            layout_row += 1
+
+            self.__comp_transform_x_entry = _make_transform_row(
+                self, layout_row, message_manager.get_ui_message("U065"),
+                sub_frames=self.__comp_transform_sub_frames, labels=self.__comp_transform_labels,
+            )
+            layout_row += 1
+            self.__comp_transform_y_entry = _make_transform_row(
+                self, layout_row, message_manager.get_ui_message("U066"),
+                sub_frames=self.__comp_transform_sub_frames, labels=self.__comp_transform_labels,
+            )
+            layout_row += 1
+            self.__comp_transform_angle_entry = _make_transform_row(
+                self, layout_row, message_manager.get_ui_message("U067"),
+                sub_frames=self.__comp_transform_sub_frames, labels=self.__comp_transform_labels,
+            )
+            layout_row += 1
+            self.__comp_transform_scale_entry = _make_transform_row(
+                self, layout_row, message_manager.get_ui_message("U068"),
+                sub_frames=self.__comp_transform_sub_frames, labels=self.__comp_transform_labels,
+            )
+            layout_row += 1
+
+            for ent in (self.__comp_transform_x_entry, self.__comp_transform_y_entry,
+                        self.__comp_transform_angle_entry, self.__comp_transform_scale_entry):
+                ent.bind("<Return>", self._on_comp_transform_entry_submit)
+                ent.bind("<KP_Enter>", self._on_comp_transform_entry_submit)
 
         self.grid_rowconfigure(layout_row, weight=1, minsize=0)
         self.__vertical_tail_spacer = tk.Frame(self, bg=self.__base_bg)
@@ -399,9 +496,17 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             "rotation": 0.0,
             "scale": 1.0,
         }
+        self.__last_comp_transform_values: Dict[str, float] = {
+            "tx": 0.0,
+            "ty": 0.0,
+            "rotation": 0.0,
+            "scale": 1.0,
+        }
 
         # Initialize entries with default values
         self._set_transform_entries(0.0, 0.0, 0.0, 1.0)
+        if self.__dual_mode:
+            self._set_comp_transform_entries(0.0, 0.0, 0.0, 1.0)
 
         # Register for theme updates
         WidgetsTracker().add_widgets(self)
@@ -435,6 +540,17 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         )
         if self.__rotation_guide_btn is not None:
             ordered.append(self.__rotation_guide_btn)
+        if self.__auto_align_btn is not None:
+            ordered.append(self.__auto_align_btn)
+        if self.__dual_mode and self.__comp_transform_x_entry is not None:
+            ordered.extend(
+                [
+                    self.__comp_transform_x_entry,
+                    self.__comp_transform_y_entry,
+                    self.__comp_transform_angle_entry,
+                    self.__comp_transform_scale_entry,
+                ]
+            )
         ordered.append(self.export_btn)
         return ordered
 
@@ -528,12 +644,17 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         except Exception:
             pass
 
-        for ent in (
+        all_transform_entries = [
             getattr(self, "_PageControlFrame__transform_x_entry", None),
             getattr(self, "_PageControlFrame__transform_y_entry", None),
             getattr(self, "_PageControlFrame__transform_angle_entry", None),
             getattr(self, "_PageControlFrame__transform_scale_entry", None),
-        ):
+            getattr(self, "_PageControlFrame__comp_transform_x_entry", None),
+            getattr(self, "_PageControlFrame__comp_transform_y_entry", None),
+            getattr(self, "_PageControlFrame__comp_transform_angle_entry", None),
+            getattr(self, "_PageControlFrame__comp_transform_scale_entry", None),
+        ]
+        for ent in all_transform_entries:
             if ent is None:
                 continue
             try:
@@ -822,6 +943,26 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                         fg=entry_theme.get("fg", self.__acfg),
                         insertbackground=entry_theme.get("insertbackground", self.__acfg),
                     )
+                # Dual-layer: apply theme to sub-headers and comp entries
+                if self.__dual_mode:
+                    if self.__base_subheader is not None:
+                        self.__base_subheader.configure(bg=self.__base_bg, fg=self.__swfg)
+                    if self.__comp_subheader is not None:
+                        self.__comp_subheader.configure(bg=self.__base_bg, fg=self.__swfg)
+                    for sub in self.__comp_transform_sub_frames:
+                        sub.configure(bg=self.__base_bg)
+                    for lbl in self.__comp_transform_labels:
+                        lbl.configure(bg=self.__base_bg, fg=self.__swfg)
+                    for ent in (
+                        self.__comp_transform_x_entry, self.__comp_transform_y_entry,
+                        self.__comp_transform_angle_entry, self.__comp_transform_scale_entry,
+                    ):
+                        if ent is not None:
+                            ent.configure(
+                                bg=entry_theme.get("bg", self.__acbg),
+                                fg=entry_theme.get("fg", self.__acfg),
+                                insertbackground=entry_theme.get("insertbackground", self.__acfg),
+                            )
 
             if self.__rotation_guide_btn is not None:
                 try:
@@ -883,7 +1024,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
 
     def _set_transform_entries(self, tx: float, ty: float,
                                angle: float, scale: float) -> None:
-        """Set the text content of all transform entry fields.
+        """Set the text content of the base transform entry fields.
 
         Args:
             tx: X translation offset.
@@ -906,12 +1047,43 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             "scale": float(scale),
         }
 
+    def _set_comp_transform_entries(self, tx: float, ty: float,
+                                    angle: float, scale: float) -> None:
+        """Set the text content of the comp transform entry fields (dual mode only).
+
+        Args:
+            tx: X translation offset.
+            ty: Y translation offset.
+            angle: Rotation angle in degrees.
+            scale: Scale factor.
+        """
+        if not self.__dual_mode:
+            return
+        for ent, val, fmt in (
+            (self.__comp_transform_x_entry, tx, "{:.1f}"),
+            (self.__comp_transform_y_entry, ty, "{:.1f}"),
+            (self.__comp_transform_angle_entry, angle, "{:.1f}"),
+            (self.__comp_transform_scale_entry, scale, "{:.3f}"),
+        ):
+            if ent is None:
+                continue
+            ent.delete(0, tk.END)
+            ent.insert(0, fmt.format(val))
+        self.__last_comp_transform_values = {
+            "tx": float(tx),
+            "ty": float(ty),
+            "rotation": float(angle),
+            "scale": float(scale),
+        }
+
     def update_transform_info(self, rotation: float, tx: float,
                               ty: float, scale: float) -> None:
-        """Update the transform info display with current values.
+        """Update the base transform info display with current values.
 
         Called externally (e.g. from pdf_ope_tab) whenever the transform
-        data for the active page changes.
+        data for the active page changes.  In dual-layer mode prefer the
+        dedicated ``update_base_transform_info`` / ``update_comp_transform_info``
+        methods instead.
 
         Args:
             rotation: Rotation angle in degrees.
@@ -919,8 +1091,6 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             ty: Y translation offset.
             scale: Scale factor.
         """
-        # Only update if the entry does not currently have keyboard focus
-        # (to avoid overwriting user input in progress).
         focused = self.focus_get()
         transform_entries = (
             self.__transform_x_entry, self.__transform_y_entry,
@@ -930,13 +1100,61 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             return
         self._set_transform_entries(tx, ty, rotation, scale)
 
+    def update_base_transform_info(self, rotation: float, tx: float,
+                                   ty: float, scale: float) -> None:
+        """Update the base-layer transform entry fields.
+
+        Skips the update when a base entry currently has keyboard focus to
+        avoid overwriting in-progress user input.
+
+        Args:
+            rotation: Rotation angle in degrees.
+            tx: X translation offset.
+            ty: Y translation offset.
+            scale: Scale factor.
+        """
+        focused = self.focus_get()
+        base_entries = (
+            self.__transform_x_entry, self.__transform_y_entry,
+            self.__transform_angle_entry, self.__transform_scale_entry,
+        )
+        if focused in base_entries:
+            return
+        self._set_transform_entries(tx, ty, rotation, scale)
+
+    def update_comp_transform_info(self, rotation: float, tx: float,
+                                   ty: float, scale: float) -> None:
+        """Update the comp-layer transform entry fields (dual mode only).
+
+        Skips the update when a comp entry currently has keyboard focus to
+        avoid overwriting in-progress user input.
+
+        Args:
+            rotation: Rotation angle in degrees.
+            tx: X translation offset.
+            ty: Y translation offset.
+            scale: Scale factor.
+        """
+        if not self.__dual_mode:
+            return
+        focused = self.focus_get()
+        comp_entries = (
+            self.__comp_transform_x_entry, self.__comp_transform_y_entry,
+            self.__comp_transform_angle_entry, self.__comp_transform_scale_entry,
+        )
+        if focused in comp_entries:
+            return
+        self._set_comp_transform_entries(tx, ty, rotation, scale)
+
     def commit_transform_entries(self) -> None:
         """Apply the current transform entry values without requiring Enter.
 
         This is used before export so pending text edits in the transform fields
         are reflected in the saved output.
         """
-        self._on_transform_entry_submit(cast(tk.Event, None))
+        self._on_base_transform_entry_submit(cast(tk.Event, None))
+        if self.__dual_mode:
+            self._on_comp_transform_entry_submit(cast(tk.Event, None))
 
     @staticmethod
     def _normalize_fullwidth(text: str) -> str:
@@ -958,41 +1176,41 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         return normalized.strip()
 
     def _on_transform_entry_submit(self, event: tk.Event) -> None:
-        """Handle Enter key press in any transform entry field.
+        """Backward-compatible alias for ``_on_base_transform_entry_submit``."""
+        self._on_base_transform_entry_submit(event)
 
-        Reads the current values from all four entries, validates them,
-        and invokes the on_transform_value_change callback.
-        Full-width characters are automatically converted to half-width.
+    def _on_base_transform_entry_submit(self, event: tk.Event) -> None:
+        """Handle Enter key press in a base transform entry field.
+
+        Reads the base entry values, validates them, and invokes the base
+        transform change callback.  Full-width characters are converted to
+        half-width automatically.
 
         Args:
-            event: Key event from the Entry widget.
+            event: Key event from the Entry widget (may be None when called
+                from ``commit_transform_entries``).
         """
         try:
             from utils.input_normalization import parse_strict_float
 
-            # Main processing: NFKC + strict decimal pattern (digits and one optional dot).
             tx = parse_strict_float(self._normalize_fullwidth(self.__transform_x_entry.get()))
             ty = parse_strict_float(self._normalize_fullwidth(self.__transform_y_entry.get()))
             angle = parse_strict_float(self._normalize_fullwidth(self.__transform_angle_entry.get()))
             scale = parse_strict_float(self._normalize_fullwidth(self.__transform_scale_entry.get()))
         except ValueError:
-            # Invalid input; restore previous display values
-            logger.warning("Transform entry: invalid numeric input ignored")
+            logger.warning("Base transform entry: invalid numeric input ignored")
             return
 
-        # Clamp scale to a reasonable range
         if scale < 0.01:
             scale = 0.01
         elif scale > 10.0:
             scale = 10.0
 
         previous_values = dict(self.__last_transform_values)
-
-        # Update display with validated values
         self._set_transform_entries(tx, ty, angle, scale)
 
-        # Invoke callback to apply the new transform
-        if self.__on_transform_value_change is not None:
+        cb = self.__on_base_transform_value_change
+        if cb is not None:
             changed_fields: set[str] = set()
             if abs(tx - float(previous_values.get("tx", 0.0))) > 1e-6:
                 changed_fields.add("tx")
@@ -1002,7 +1220,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 changed_fields.add("rotation")
             if abs(scale - float(previous_values.get("scale", 1.0))) > 1e-6:
                 changed_fields.add("scale")
-            self.__on_transform_value_change(angle, tx, ty, scale, changed_fields)
+            cb(angle, tx, ty, scale, changed_fields)
             self.__last_transform_values = {
                 "tx": float(tx),
                 "ty": float(ty),
@@ -1010,5 +1228,56 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 "scale": float(scale),
             }
 
-        # Move focus away from entry so subsequent updates are not blocked
+        self.focus_set()
+
+    def _on_comp_transform_entry_submit(self, event: tk.Event) -> None:
+        """Handle Enter key press in a comp transform entry field (dual mode only).
+
+        Reads the comp entry values, validates them, and invokes the comp
+        transform change callback.
+
+        Args:
+            event: Key event from the Entry widget (may be None when called
+                from ``commit_transform_entries``).
+        """
+        if not self.__dual_mode:
+            return
+        try:
+            from utils.input_normalization import parse_strict_float
+
+            tx = parse_strict_float(self._normalize_fullwidth(self.__comp_transform_x_entry.get()))
+            ty = parse_strict_float(self._normalize_fullwidth(self.__comp_transform_y_entry.get()))
+            angle = parse_strict_float(self._normalize_fullwidth(self.__comp_transform_angle_entry.get()))
+            scale = parse_strict_float(self._normalize_fullwidth(self.__comp_transform_scale_entry.get()))
+        except ValueError:
+            logger.warning("Comp transform entry: invalid numeric input ignored")
+            return
+
+        if scale < 0.01:
+            scale = 0.01
+        elif scale > 10.0:
+            scale = 10.0
+
+        previous_values = dict(self.__last_comp_transform_values)
+        self._set_comp_transform_entries(tx, ty, angle, scale)
+
+        cb = self.__on_comp_transform_value_change
+        if cb is not None:
+            changed_fields: set[str] = set()
+            if abs(tx - float(previous_values.get("tx", 0.0))) > 1e-6:
+                changed_fields.add("tx")
+            if abs(ty - float(previous_values.get("ty", 0.0))) > 1e-6:
+                changed_fields.add("ty")
+            if abs(angle - float(previous_values.get("rotation", 0.0))) > 1e-6:
+                changed_fields.add("rotation")
+            if abs(scale - float(previous_values.get("scale", 1.0))) > 1e-6:
+                changed_fields.add("scale")
+            cb(angle, tx, ty, scale, changed_fields)
+            self.__last_comp_transform_values = {
+                "tx": float(tx),
+                "ty": float(ty),
+                "rotation": float(angle),
+                "scale": float(scale),
+            }
+
         self.focus_set()
