@@ -1031,10 +1031,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             and self.current_page_index < len(self.base_transform_data)
             and self.current_page_index < len(self.comp_transform_data)
         ):
-            _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[self.current_page_index])
-            _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[self.current_page_index])
-            ox = int(min(btx, ctx))
-            oy = int(min(bty, cty))
+            ox, oy = self._diff_overlay_canvas_origin(self.current_page_index)
             try:
                 self.canvas.coords(self._diff_emphasis_canvas_image_id, ox, oy)
             except Exception:
@@ -4162,14 +4159,15 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
     ) -> Optional[tuple]:
         """Return a cache key that captures everything affecting the diff pixel content.
 
-        Translation (btx/bty) is intentionally excluded — it only affects canvas
-        position, not the diff pixels themselves.
+        Includes scale and relative X/Y offsets so the cache is invalidated
+        when either layer is moved or resized independently.
         """
         if page_index >= len(self.base_transform_data) or page_index >= len(
             self.comp_transform_data
         ):
             return None
-        r, _, _, _, fh, fv = as_transform6(self.base_transform_data[page_index])
+        b_r, b_tx, b_ty, b_s, b_fh, b_fv = as_transform6(self.base_transform_data[page_index])
+        c_r, c_tx, c_ty, c_s, c_fh, c_fv = as_transform6(self.comp_transform_data[page_index])
         base_c = self._diff_emphasis_palette_rgba("base", alpha=130)
         comp_c = self._diff_emphasis_palette_rgba("comp", alpha=130)
         return (
@@ -4179,18 +4177,32 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._selected_color_processing_mode,
             base_c,
             comp_c,
-            round(float(r), 2),
-            int(fh),
-            int(fv),
+            round(float(b_r), 2),
+            int(b_fh),
+            int(b_fv),
+            round(float(b_s), 4),
+            round(float(b_tx), 1),
+            round(float(b_ty), 1),
+            round(float(c_r), 2),
+            int(c_fh),
+            int(c_fv),
+            round(float(c_s), 4),
+            round(float(c_tx), 1),
+            round(float(c_ty), 1),
         )
 
     def _compute_diff_overlay_at_origin(
         self, page_index: int, base_path: Path, comp_path: Path
     ) -> Optional[Image.Image]:
-        """Compute diff overlay at source DPI with rotation/flip only (no scale).
+        """Compute diff overlay in base-image pixel space, applying scale and X/Y offset.
 
-        Both source images are placed at canvas origin (0, 0).  The result is an
-        RGBA image in source-pixel space; the caller scales it for display.
+        The base image is placed at (0, 0) in "base pixel space".  The comp image
+        is scaled by ``c_s / b_s`` and offset by ``((c_tx - b_tx)/b_s, (c_ty - b_ty)/b_s)``
+        so that both are aligned as they appear on the canvas.
+
+        The result is an RGBA image whose top-left corner in canvas coordinates is
+        ``(b_tx + min(0, rel_x) * b_s * dpi_norm, b_ty + min(0, rel_y) * b_s * dpi_norm)``.
+        The caller must use :meth:`_diff_overlay_canvas_origin` to find that position.
 
         Returns:
             RGBA :class:`PIL.Image.Image` overlay, or ``None`` on failure.
@@ -4205,8 +4217,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         except Exception:
             return None
 
-        r_base, _, _, _, fh_base, fv_base = as_transform6(self.base_transform_data[page_index])
-        r_comp, _, _, _, fh_comp, fv_comp = as_transform6(self.comp_transform_data[page_index])
+        r_base, b_tx, b_ty, b_s, fh_base, fv_base = as_transform6(self.base_transform_data[page_index])
+        r_comp, c_tx, c_ty, c_s, fh_comp, fv_comp = as_transform6(self.comp_transform_data[page_index])
 
         def _apply_rot_flip(img: Image.Image, r: float, fh: int, fv: int) -> Image.Image:
             if fv:
@@ -4219,6 +4231,17 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
         sbi = _apply_rot_flip(sbi_raw, r_base, int(fh_base), int(fv_base))
         sci = _apply_rot_flip(sci_raw, r_comp, int(fh_comp), int(fv_comp))
+
+        # Scale comp image to match base's scale (relative scale adjustment)
+        rel_scale = float(c_s) / max(float(b_s), 1e-6)
+        if abs(rel_scale - 1.0) > 0.001:
+            new_cw = max(1, round(sci.width * rel_scale))
+            new_ch = max(1, round(sci.height * rel_scale))
+            sci = sci.resize((new_cw, new_ch), Resampling.LANCZOS)
+
+        # Relative offset of comp image in base pixel space
+        comp_rel_x = int(round((float(c_tx) - float(b_tx)) / max(float(b_s), 1e-6)))
+        comp_rel_y = int(round((float(c_ty) - float(b_ty)) / max(float(b_s), 1e-6)))
 
         is_bin = self._selected_color_processing_mode == "二色化"
         base_c = self._diff_emphasis_palette_rgba("base", alpha=130)
@@ -4235,10 +4258,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             n = max(3, int(n))
             return n if n % 2 == 1 else n + 1
 
+        comp_pos = (comp_rel_x, comp_rel_y)
         try:
             if is_bin:
                 ov, _ = build_diff_highlight_overlay_rgba(
-                    sbi, (0, 0), sci, (0, 0),
+                    sbi, (0, 0), sci, comp_pos,
                     base_highlight_rgba=base_c,
                     comp_highlight_rgba=comp_c,
                     luma_threshold=248, alpha_threshold=18,
@@ -4254,7 +4278,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 )
             else:
                 ov, _ = build_diff_highlight_overlay_rgba(
-                    sbi, (0, 0), sci, (0, 0),
+                    sbi, (0, 0), sci, comp_pos,
                     base_highlight_rgba=base_c,
                     comp_highlight_rgba=comp_c,
                     luma_threshold=248, alpha_threshold=18,
@@ -4311,6 +4335,36 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                     page_index, base_path, comp_path, fast_resize=False
                 )
 
+    def _diff_overlay_canvas_origin(self, page_index: int) -> tuple[int, int]:
+        """Return the canvas (x, y) where the diff overlay top-left should be placed.
+
+        The overlay is in base-image pixel space; its top-left is at
+        ``min(0, comp_rel_x)`` in that space.  Multiplying by the effective
+        display scale gives the canvas offset to add to the base image position.
+
+        Args:
+            page_index: Current page index.
+
+        Returns:
+            ``(ox, oy)`` canvas coordinates (integers).
+        """
+        if page_index >= len(self.base_transform_data) or page_index >= len(
+            self.comp_transform_data
+        ):
+            return (0, 0)
+        _br, b_tx, b_ty, b_s, _bfh, _bfv = as_transform6(self.base_transform_data[page_index])
+        _cr, c_tx, c_ty, c_s, _cfh, _cfv = as_transform6(self.comp_transform_data[page_index])
+        dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
+            max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
+        )
+        effective_scale = max(0.01, float(b_s) * dpi_norm)
+        b_s_safe = max(float(b_s), 1e-6)
+        comp_rel_x = (float(c_tx) - float(b_tx)) / b_s_safe
+        comp_rel_y = (float(c_ty) - float(b_ty)) / b_s_safe
+        ox = int(float(b_tx) + min(0.0, comp_rel_x) * effective_scale)
+        oy = int(float(b_ty) + min(0.0, comp_rel_y) * effective_scale)
+        return (ox, oy)
+
     def _display_diff_overlay_from_cache(
         self,
         page_index: int,
@@ -4354,11 +4408,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         if cached is None:
             return  # Computation failed — skip silently
 
-        # Scale the cached source-resolution overlay to match the current display transform
-        _, btx, bty, _, _, _ = as_transform6(self.base_transform_data[page_index])
-        _, ctx, cty, _, _, _ = as_transform6(self.comp_transform_data[page_index])
-        ox = int(min(btx, ctx))
-        oy = int(min(bty, cty))
+        # Determine canvas placement: overlay is in base-image pixel space
+        ox, oy = self._diff_overlay_canvas_origin(page_index)
 
         r, _, _, s, _, _ = as_transform6(self.base_transform_data[page_index])
         dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
