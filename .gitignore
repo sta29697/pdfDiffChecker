@@ -2,13 +2,8 @@
 .env
 .mypy_cache
 .cursor
-# Build outputs: ignore the whole build/ tree except the shipped Nuitka onefile exe.
-# Order matters for git: un-ignore the directory, then re-ignore its contents, then
-# un-ignore the single tracked binary (so `git add build/nuitka/pdfDiffChecker.exe` works).
-/build/**
-!/build/nuitka/
-/build/nuitka/**
-!/build/nuitka/pdfDiffChecker.exe
+# Build outputs: ignore entire build/ tree (exe is attached to GitHub releases, not committed)
+/build/
 dist
 temp
 tmp_m2_*_verify/
