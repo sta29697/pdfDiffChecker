@@ -183,6 +183,83 @@ def _detect_figure_frame_rect(
         return (cx, cy, float(fw), float(fh), angle_deg)
     except Exception:
         return None
+
+
+def _detect_content_centroid(
+    image_path: Path,
+    frame_rect: tuple[float, float, float, float, float],
+    *,
+    inset_fraction: float = 0.03,
+) -> Optional[tuple[float, float]]:
+    """Detect the ink-mass centroid inside a detected figure frame.
+
+    Crops the interior of *frame_rect* (with a small inset to exclude the
+    border lines), then computes weighted-average row/column indices over
+    dark pixels to find the centre of gravity of drawing content.
+
+    Args:
+        image_path: Path to a greyscale-convertible image.
+        frame_rect: ``(center_x, center_y, fw, fh, angle_deg)`` as returned
+            by :func:`_detect_figure_frame_rect`.
+        inset_fraction: Fraction of frame width/height to inset from each
+            edge before computing the centroid (removes frame border pixels).
+
+    Returns:
+        ``(cx, cy)`` centroid in original image pixel coordinates, or
+        ``None`` when the interior contains no dark pixels.
+    """
+    try:
+        import numpy as np
+        from PIL import Image as _Image
+
+        cx_f, cy_f, fw, fh, _angle = frame_rect
+        img_left = cx_f - fw / 2.0
+        img_top = cy_f - fh / 2.0
+
+        # Inset to exclude the frame border lines
+        inset_x = fw * inset_fraction
+        inset_y = fh * inset_fraction
+        crop_left = int(img_left + inset_x)
+        crop_top = int(img_top + inset_y)
+        crop_right = int(img_left + fw - inset_x)
+        crop_bottom = int(img_top + fh - inset_y)
+
+        if crop_right <= crop_left or crop_bottom <= crop_top:
+            return None
+
+        img = _Image.open(image_path).convert("L")
+        img_w, img_h = img.size
+        crop_left = max(0, crop_left)
+        crop_top = max(0, crop_top)
+        crop_right = min(img_w, crop_right)
+        crop_bottom = min(img_h, crop_bottom)
+
+        crop = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+        arr = np.array(crop, dtype=np.float32)
+
+        # Binary: 1 where pixel is dark (ink), 0 otherwise
+        binary = (arr < 200).astype(np.float32)
+
+        total = binary.sum()
+        if total < 1.0:
+            return None
+
+        h_arr, w_arr = binary.shape
+        col_weights = binary.sum(axis=0)   # (w_arr,)
+        row_weights = binary.sum(axis=1)   # (h_arr,)
+
+        col_idx = np.arange(w_arr, dtype=np.float32)
+        row_idx = np.arange(h_arr, dtype=np.float32)
+
+        cx_in_crop = float(np.dot(col_idx, col_weights) / col_weights.sum())
+        cy_in_crop = float(np.dot(row_idx, row_weights) / row_weights.sum())
+
+        # Convert back to original image pixel coordinates
+        return (crop_left + cx_in_crop, crop_top + cy_in_crop)
+    except Exception:
+        return None
+
+
 _MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
 # Interactive zoom: redraw quickly with bilinear scale, then sharpen with Lanczos after idle.
 # (Source PNG is always full-res so canvas geometry matches the stored scale; downsampling
@@ -370,6 +447,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._setup_frames()
         self._setup_widgets()
         self._setup_drag_and_drop()
+        self._restore_analysis_panel_state()
         self.bind("<Visibility>", self._sync_shared_paths_from_settings)
         self.after_idle(self._sync_shared_paths_from_settings)
         self.after_idle(self._apply_current_theme_after_build)
@@ -460,6 +538,20 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
 
         self._apply_path_entry_activity_style(theme_data)
         self._apply_layer_toggle_theme(theme_data)
+
+        # Apply theme to analysis panel collapse button
+        collapse_btn = getattr(self, "_collapse_btn", None)
+        if collapse_btn is not None:
+            try:
+                btn_theme = theme_data.get("Button", {})
+                collapse_btn.configure(
+                    bg=btn_theme.get("bg", frame_bg),
+                    fg=btn_theme.get("fg", frame_fg),
+                    activebackground=btn_theme.get("activebackground", frame_bg),
+                    activeforeground=btn_theme.get("activeforeground", frame_fg),
+                )
+            except Exception:
+                pass
 
         comment_panel_theme = dict(theme_data.get("create_fb_threshold_set_label", {}))
         comment_panel_bg = str(comment_panel_theme.get("bg", frame_bg))
@@ -5096,6 +5188,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             on_base_transform_value_change=self._on_base_transform_value_input,
             on_comp_transform_value_change=self._on_comp_transform_value_input,
             on_auto_align_frames=self._on_auto_align_frames,
+            on_auto_align_content=self._on_auto_align_content,
         )
         self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
@@ -5504,6 +5597,72 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self._refresh_current_page_view()
             self._sync_transform_display_to_panel()
 
+    def _on_auto_align_content(self) -> None:
+        """Align the comp layer's drawing content to match the base layer's content.
+
+        Detects the ink-mass centroid inside the figure frame for both images
+        using projection profiles and adjusts comp tx/ty so the centroids
+        coincide on canvas.  Requires frame detection to succeed on both sides.
+        """
+        idx = self.current_page_index
+        base_path = self._get_display_page_path(self.base_page_paths, idx)
+        comp_path = self._get_display_page_path(self.comp_page_paths, idx)
+
+        if base_path is None or comp_path is None:
+            self._show_status_feedback(
+                message_manager.get_ui_message("U190") + ": ファイルが読み込まれていません", False
+            )
+            return
+
+        base_frame = _detect_figure_frame_rect(base_path)
+        comp_frame = _detect_figure_frame_rect(comp_path)
+
+        if base_frame is None:
+            self._show_status_feedback("内容合わせ: ベースの図枠を検出できませんでした", False)
+            return
+        if comp_frame is None:
+            self._show_status_feedback("内容合わせ: 比較の図枠を検出できませんでした", False)
+            return
+
+        base_centroid = _detect_content_centroid(base_path, base_frame)
+        comp_centroid = _detect_content_centroid(comp_path, comp_frame)
+
+        if base_centroid is None:
+            self._show_status_feedback("内容合わせ: ベースの内容を検出できませんでした", False)
+            return
+        if comp_centroid is None:
+            self._show_status_feedback("内容合わせ: 比較の内容を検出できませんでした", False)
+            return
+
+        _c_r, c_tx, c_ty, c_s, c_fh_flip, c_fv_flip = as_transform6(
+            self.comp_transform_data[idx]
+            if self.comp_transform_data and idx < len(self.comp_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+        b_r, b_tx, b_ty, b_s, _bfh, _bfv = as_transform6(
+            self.base_transform_data[idx]
+            if self.base_transform_data and idx < len(self.base_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+
+        # Convert centroids to canvas coordinates
+        base_cx_canvas = b_tx + base_centroid[0] * b_s
+        base_cy_canvas = b_ty + base_centroid[1] * b_s
+        comp_cx_canvas = c_tx + comp_centroid[0] * c_s
+        comp_cy_canvas = c_ty + comp_centroid[1] * c_s
+
+        # Shift comp so its content centroid lands on the base content centroid
+        new_c_tx = c_tx + (base_cx_canvas - comp_cx_canvas)
+        new_c_ty = c_ty + (base_cy_canvas - comp_cy_canvas)
+
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            self.comp_transform_data[idx] = pack_transform6(
+                _c_r, new_c_tx, new_c_ty, c_s, c_fh_flip, c_fv_flip
+            )
+            self._propagate_layer_to_all_pages(self.comp_transform_data)
+            self._refresh_current_page_view()
+            self._sync_transform_display_to_panel()
+
     def _on_transform_update_skip_batch_propagate(self) -> None:
         """Redraw after Ctrl+Alt sheet rotation without copying the current page to all."""
         self._update_preferred_preview_scale_from_current_page()
@@ -5710,9 +5869,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             # Main processing: keep the header compact without forcing an undersized fixed height.
             self.frame_main0 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
             self.frame_main0.grid(row=0, column=0, padx=2, pady=(2, 1), sticky="ew", ipady=3)
-            # Configure frame_main0 to right-align its contents
-            self.frame_main0.columnconfigure(0, weight=1)  # Make first column expandable
-            self.frame_main0.columnconfigure(1, weight=0)  # Keep second column fixed size
+            # col 0: collapse toggle (left); col 1: expands; col 2: lang combo; col 3: theme btn
+            self.frame_main0.columnconfigure(0, weight=0)
+            self.frame_main0.columnconfigure(1, weight=1)
+            self.frame_main0.columnconfigure(2, weight=0)
+            self.frame_main0.columnconfigure(3, weight=0)
             self.frame_main0.grid_rowconfigure(0, minsize=40)
 
             self.frame_main1 = tk.Frame(self, relief=tk.FLAT, borderwidth=0, highlightthickness=0)
@@ -5760,6 +5921,36 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             logger.error(message_manager.get_log_message("L066", str(e)))
             raise
 
+    def _toggle_analysis_controls(self) -> None:
+        """Collapse or expand the analysis controls panel (frame_main2)."""
+        if self._analysis_panel_collapsed:
+            self.frame_main2.grid()
+            self._analysis_panel_collapsed = False
+            self._collapse_btn.configure(text=message_manager.get_ui_message("U191"))
+        else:
+            self.frame_main2.grid_remove()
+            self._analysis_panel_collapsed = True
+            self._collapse_btn.configure(text=message_manager.get_ui_message("U192"))
+        # Persist state
+        try:
+            from configurations.user_setting_manager import UserSettingManager
+            UserSettingManager.update_setting("analysis_panel_collapsed", self._analysis_panel_collapsed)
+            UserSettingManager.save_settings()
+        except Exception:
+            pass
+
+    def _restore_analysis_panel_state(self) -> None:
+        """Restore the collapsed/expanded state of frame_main2 from saved settings."""
+        try:
+            from configurations.user_setting_manager import UserSettingManager
+            collapsed = UserSettingManager.get_setting("analysis_panel_collapsed")
+            if collapsed:
+                self.frame_main2.grid_remove()
+                self._analysis_panel_collapsed = True
+                self._collapse_btn.configure(text=message_manager.get_ui_message("U192"))
+        except Exception:
+            pass
+
     def _setup_widgets(self) -> None:
         """Setup all widgets in the application.
 
@@ -5781,10 +5972,24 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         # Start setting up widgets
         logger.debug(message_manager.get_log_message("L247"))
         try:
+            # Collapse/expand analysis controls toggle button (col 0, left-aligned)
+            self._analysis_panel_collapsed: bool = False
+            self._collapse_btn = tk.Button(
+                self.frame_main0,
+                text=message_manager.get_ui_message("U191"),  # "▼ 操作"
+                font=("", 8),
+                relief=tk.FLAT,
+                bd=0,
+                padx=4,
+                command=self._toggle_analysis_controls,
+                cursor="hand2",
+            )
+            self._collapse_btn.grid(row=0, column=0, padx=(4, 2), pady=3, sticky="w")
+
             # Create language selection combobox
             lang_combo = LanguageSelectCombo(self.frame_main0)
             self._lang_select_combo = lang_combo
-            lang_combo.grid(row=0, column=0, padx=3, pady=3, sticky="e")
+            lang_combo.grid(row=0, column=2, padx=3, pady=3, sticky="e")
 
             # Create theme change button
             # UI text for Change Theme button
@@ -5794,7 +5999,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 text=message_manager.get_ui_message("U025"),
             )
             self._color_theme_change_btn.grid(
-                row=0, column=1, padx=3, pady=2, sticky="e"
+                row=0, column=3, padx=3, pady=2, sticky="e"
             )
 
             # Base file path label and entry

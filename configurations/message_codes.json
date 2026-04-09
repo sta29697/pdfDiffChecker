@@ -2449,6 +2449,18 @@
         "U189": {
             "en": "Auto-align Frames",
             "ja": "図枠合わせ"
+        },
+        "U190": {
+            "en": "Align Content",
+            "ja": "内容合わせ"
+        },
+        "U191": {
+            "en": "▼ Controls",
+            "ja": "▼ 操作"
+        },
+        "U192": {
+            "en": "▲ Controls",
+            "ja": "▲ 操作"
         }
     }
 }

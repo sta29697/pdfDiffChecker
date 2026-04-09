@@ -113,6 +113,23 @@ def _restore_main_window_geometry(root: tk.Tk) -> None:
         )
 
         geometry_to_apply = saved_geometry if same_display else default_geometry
+
+        # Clamp window to screen if it would overflow (e.g. smaller display)
+        try:
+            import re as _re
+            _m = _re.match(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", geometry_to_apply)
+            if _m and current_display_width > 0 and current_display_height > 0:
+                _gw, _gh = int(_m.group(1)), int(_m.group(2))
+                _gx, _gy = int(_m.group(3)), int(_m.group(4))
+                _margin = 40  # px kept on-screen
+                _gw = min(_gw, current_display_width)
+                _gh = min(_gh, current_display_height - _margin)
+                _gx = max(0, min(_gx, current_display_width - _margin))
+                _gy = max(0, min(_gy, current_display_height - _margin))
+                geometry_to_apply = f"{_gw}x{_gh}{_gx:+d}{_gy:+d}"
+        except Exception:
+            pass
+
         root.geometry(geometry_to_apply)
         root.update_idletasks()
         if same_display and saved_state == "zoomed":
