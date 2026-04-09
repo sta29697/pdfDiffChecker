@@ -51,6 +51,7 @@ $nuitkaArgs = @(
 
 if (-not $Standalone) {
     $nuitkaArgs += "--onefile"
+    $nuitkaArgs += "--onefile-no-compression"
 }
 
 if ($Jobs -gt 0) {
