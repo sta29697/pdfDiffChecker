@@ -71,6 +71,118 @@ class WorkspaceRasterTooLarge(Exception):
 logger = getLogger(__name__)
 message_manager = get_message_manager()
 _MAIN_TAB_DEFAULT_DPI = 300
+
+
+# ---------------------------------------------------------------------------
+# 図枠 (drawing-frame) detection utilities
+# Uses only numpy + PIL so no OpenCV dependency is required.
+# ---------------------------------------------------------------------------
+
+def _detect_top_line_angle(binary: "np.ndarray", top_row: int, search_range: int = 10) -> float:  # type: ignore[name-defined]
+    """Detect the tilt angle of a near-horizontal frame line.
+
+    For each column, find the topmost dark pixel inside ``[top_row ± search_range]``
+    and fit a line through the (column, row) pairs.  The slope gives the tilt.
+
+    Args:
+        binary: 2-D float array where 1.0 = dark (ink) pixel.
+        top_row: Approximate row index of the horizontal frame line.
+        search_range: ±row window to search around ``top_row``.
+
+    Returns:
+        Tilt angle in degrees (positive = right side lower in image coords).
+    """
+    try:
+        import numpy as np
+
+        h, w = binary.shape
+        row_start = max(0, top_row - search_range)
+        row_end = min(h, top_row + search_range + 1)
+
+        col_positions: list[tuple[float, float]] = []
+        for c in range(w):
+            col_strip = binary[row_start:row_end, c]
+            dark_indices = np.where(col_strip > 0.5)[0]
+            if len(dark_indices) > 0:
+                col_positions.append((float(c), float(row_start + dark_indices[0])))
+
+        if len(col_positions) < max(10, w * 0.3):
+            return 0.0
+
+        cols_arr = np.array([p[0] for p in col_positions], dtype=float)
+        rows_arr = np.array([p[1] for p in col_positions], dtype=float)
+
+        median_r = float(np.median(rows_arr))
+        mask = np.abs(rows_arr - median_r) < search_range
+        if mask.sum() < 10:
+            return 0.0
+
+        A = np.column_stack([cols_arr[mask], np.ones(mask.sum())])
+        result = np.linalg.lstsq(A, rows_arr[mask], rcond=None)
+        m = float(result[0][0])  # drow / dcol
+        return math.degrees(math.atan(m))
+    except Exception:
+        return 0.0
+
+
+def _detect_figure_frame_rect(
+    image_path: Path,
+) -> Optional[tuple[float, float, float, float, float]]:
+    """Detect the 図枠 (drawing frame) bounding rectangle in an image file.
+
+    Uses row/column projection profiles to find the outermost rectangular
+    frame whose lines span a significant fraction of the image.
+
+    Args:
+        image_path: Path to a greyscale-convertible image (PNG, JPEG, …).
+
+    Returns:
+        ``(center_x, center_y, frame_width, frame_height, angle_deg)`` in
+        image pixels, or ``None`` when no frame is detected.
+    """
+    try:
+        import numpy as np
+        from PIL import Image as _Image
+
+        img = _Image.open(image_path).convert("L")
+        arr = np.array(img, dtype=np.float32)
+        h, w = arr.shape
+
+        # Pixels darker than 200 are treated as ink (frame lines)
+        binary = (arr < 200).astype(np.float32)
+
+        row_sum = binary.sum(axis=1)  # dark pixels per row
+        col_sum = binary.sum(axis=0)  # dark pixels per column
+
+        # A frame line must span at least 30 % of the perpendicular dimension
+        h_threshold = w * 0.30
+        v_threshold = h * 0.30
+
+        h_rows = np.where(row_sum > h_threshold)[0]
+        v_cols = np.where(col_sum > v_threshold)[0]
+
+        if len(h_rows) < 2 or len(v_cols) < 2:
+            return None
+
+        top = int(h_rows[0])
+        bottom = int(h_rows[-1])
+        left = int(v_cols[0])
+        right = int(v_cols[-1])
+
+        fw = right - left
+        fh = bottom - top
+
+        # Reject trivially small frames
+        if fw < w * 0.1 or fh < h * 0.1:
+            return None
+
+        cx = (left + right) / 2.0
+        cy = (top + bottom) / 2.0
+
+        angle_deg = _detect_top_line_angle(binary, top)
+        return (cx, cy, float(fw), float(fh), angle_deg)
+    except Exception:
+        return None
 _MAIN_TAB_FALLBACK_DPI_CHOICES = [72, 96, 144, 150, 300, 600, 720, 1200, 2400, 3600, 4000]
 # Interactive zoom: redraw quickly with bilinear scale, then sharpen with Lanczos after idle.
 # (Source PNG is always full-res so canvas geometry matches the stored scale; downsampling
@@ -857,8 +969,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
                 self.page_count - 1 if self.page_count == 0 else self.current_page_index,
                 self.page_count,
             )
-            rotation, tx, ty, scale = self._get_active_transform()
-            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+            self._sync_transform_display_to_panel()
         self._render_comparison_placeholder()
 
     def _main_canvas_viewport_center_canvas_coords(self) -> Optional[tuple[float, float]]:
@@ -949,8 +1060,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             self.mouse_handler.refresh_overlay_positions()
 
         if self.page_control_frame is not None:
-            rotation, tx, ty, scale = self._get_active_transform()
-            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+            self._sync_transform_display_to_panel()
 
     def _on_batch_edit_toggle(self, checked: bool) -> None:
         """Store the user's batch edit preference.
@@ -4558,8 +4668,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             # _display_page (e.g. next/prev/page entry), so comparing "previous" here
             # skipped updates and left "1 / N" stuck.
             self.page_control_frame.update_page_label(page_index, self.page_count)
-            rotation, tx, ty, scale = self._get_active_transform()
-            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
+            self._sync_transform_display_to_panel()
 
         if not preview_fast_resize:
             try:
@@ -4590,6 +4699,57 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             r, tx, ty, s, _fh, _fv = as_transform6(self.comp_transform_data[idx])
             return (r, tx, ty, s)
         return (0.0, 0.0, 0.0, 1.0)
+
+    def _get_single_layer_transform(
+        self,
+        transform_data: list,
+        *,
+        add_keyboard_delta: bool = True,
+    ) -> tuple[float, float, float, float]:
+        """Return ``(rotation, tx, ty, scale)`` for the current page of one layer.
+
+        Args:
+            transform_data: Either ``self.base_transform_data`` or
+                ``self.comp_transform_data``.
+            add_keyboard_delta: When True include any pending Ctrl+Shift
+                preview rotation delta.
+
+        Returns:
+            4-tuple ``(rotation, tx, ty, scale)`` for the UI.
+        """
+        idx = self.current_page_index
+        d = (
+            float(self._preview_keyboard_rotation_delta)
+            if add_keyboard_delta and abs(self._preview_keyboard_rotation_delta) > 1e-9
+            else 0.0
+        )
+        if transform_data and idx < len(transform_data):
+            r, tx, ty, s, _fh, _fv = as_transform6(transform_data[idx])
+            return (r + d, tx, ty, s)
+        return (0.0, 0.0, 0.0, 1.0)
+
+    def _sync_transform_display_to_panel(self) -> None:
+        """Push the current base and comp transform values to the page-control panel.
+
+        In dual-layer mode the base and comp sections are updated individually.
+        Falls back to the legacy single ``update_transform_info`` call otherwise.
+        """
+        if self.page_control_frame is None:
+            return
+        if hasattr(self.page_control_frame, "update_base_transform_info"):
+            b_r, b_tx, b_ty, b_s = self._get_single_layer_transform(
+                self.base_transform_data,
+                add_keyboard_delta=bool(self._show_base_layer_var.get()),
+            )
+            c_r, c_tx, c_ty, c_s = self._get_single_layer_transform(
+                self.comp_transform_data,
+                add_keyboard_delta=bool(self._show_comp_layer_var.get()),
+            )
+            self.page_control_frame.update_base_transform_info(b_r, b_tx, b_ty, b_s)
+            self.page_control_frame.update_comp_transform_info(c_r, c_tx, c_ty, c_s)
+        else:
+            rotation, tx, ty, scale = self._get_active_transform()
+            self.page_control_frame.update_transform_info(rotation, tx, ty, scale)
 
     def _transform_tuple_for_preview_render(
         self,
@@ -4882,6 +5042,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             on_transform_value_change=self._on_transform_value_input,
             initial_batch_edit_checked=self._batch_edit_selected,
             on_batch_edit_toggle=self._on_batch_edit_toggle,
+            on_base_transform_value_change=self._on_base_transform_value_input,
+            on_comp_transform_value_change=self._on_comp_transform_value_input,
+            on_auto_align_frames=self._on_auto_align_frames,
         )
         self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
@@ -5101,6 +5264,194 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         self._propagate_current_transform_to_all_pages(visible_only=False)
         self._propagate_export_overrides_to_all_pages(explicit_fields)
         self._refresh_current_page_view()
+
+    def _propagate_layer_to_all_pages(self, transform_data: list) -> None:
+        """Copy the current page transform of one layer to all pages when batch edit is active.
+
+        Args:
+            transform_data: The layer's transform list (base or comp).
+        """
+        if self.page_control_frame is None or not self.page_control_frame.is_batch_edit_checked():
+            return
+        if not transform_data or self.current_page_index >= len(transform_data):
+            return
+        current_transform = transform_data[self.current_page_index]
+        for index in range(len(transform_data)):
+            if index != self.current_page_index:
+                transform_data[index] = current_transform
+
+    def _on_base_transform_value_input(
+        self,
+        rotation: float,
+        tx: float,
+        ty: float,
+        scale: float,
+        changed_fields: Optional[set[str]] = None,
+    ) -> None:
+        """Apply transform values entered in the base transform entry fields.
+
+        Updates only ``base_transform_data``; the comp layer is not touched.
+
+        Args:
+            rotation: Rotation angle.
+            tx: X translation.
+            ty: Y translation.
+            scale: Scale factor.
+            changed_fields: Entry fields explicitly confirmed by the user.
+        """
+        self._commit_preview_keyboard_rotation()
+        explicit_fields = set(changed_fields or ())
+        idx = self.current_page_index
+        old_base: Optional[tuple[float, ...]] = None
+        if self.base_transform_data and idx < len(self.base_transform_data):
+            old_base = as_transform6(self.base_transform_data[idx])
+        adj_tx, adj_ty = float(tx), float(ty)
+        if (
+            old_base is not None
+            and explicit_fields == {"scale"}
+            and abs(float(rotation)) < 1e-6
+        ):
+            _, old_x, old_y, old_s, _fh, _fv = old_base
+            pivot = self._main_canvas_viewport_center_canvas_coords()
+            if pivot is not None:
+                ax, ay = pivot
+                dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
+                    max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
+                )
+                old_eff = max(0.01, float(old_s) * dpi_norm)
+                new_eff = max(0.01, float(scale) * dpi_norm)
+                ix = (ax - float(old_x)) / old_eff
+                iy = (ay - float(old_y)) / old_eff
+                adj_tx = ax - ix * new_eff
+                adj_ty = ay - iy * new_eff
+        if self.base_transform_data and idx < len(self.base_transform_data):
+            _r, _x, _y, _s, fh, fv = as_transform6(self.base_transform_data[idx])
+            self.base_transform_data[idx] = pack_transform6(
+                rotation, adj_tx, adj_ty, scale, fh, fv
+            )
+        self._persist_preview_scale(scale)
+        self._apply_export_transform_overrides_for_current_page(adj_tx, adj_ty, scale, explicit_fields)
+        self._propagate_layer_to_all_pages(self.base_transform_data)
+        self._propagate_export_overrides_to_all_pages(explicit_fields)
+        self._refresh_current_page_view()
+
+    def _on_comp_transform_value_input(
+        self,
+        rotation: float,
+        tx: float,
+        ty: float,
+        scale: float,
+        changed_fields: Optional[set[str]] = None,
+    ) -> None:
+        """Apply transform values entered in the comp transform entry fields.
+
+        Updates only ``comp_transform_data``; the base layer is not touched.
+
+        Args:
+            rotation: Rotation angle.
+            tx: X translation.
+            ty: Y translation.
+            scale: Scale factor.
+            changed_fields: Entry fields explicitly confirmed by the user.
+        """
+        self._commit_preview_keyboard_rotation()
+        explicit_fields = set(changed_fields or ())
+        idx = self.current_page_index
+        old_comp: Optional[tuple[float, ...]] = None
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            old_comp = as_transform6(self.comp_transform_data[idx])
+        adj_tx, adj_ty = float(tx), float(ty)
+        if (
+            old_comp is not None
+            and explicit_fields == {"scale"}
+            and abs(float(rotation)) < 1e-6
+        ):
+            _, old_x, old_y, old_s, _fh, _fv = old_comp
+            pivot = self._main_canvas_viewport_center_canvas_coords()
+            if pivot is not None:
+                ax, ay = pivot
+                dpi_norm = float(_MAIN_TAB_DEFAULT_DPI) / float(
+                    max(1, int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI))
+                )
+                old_eff = max(0.01, float(old_s) * dpi_norm)
+                new_eff = max(0.01, float(scale) * dpi_norm)
+                ix = (ax - float(old_x)) / old_eff
+                iy = (ay - float(old_y)) / old_eff
+                adj_tx = ax - ix * new_eff
+                adj_ty = ay - iy * new_eff
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            _r, _x, _y, _s, fh, fv = as_transform6(self.comp_transform_data[idx])
+            self.comp_transform_data[idx] = pack_transform6(
+                rotation, adj_tx, adj_ty, scale, fh, fv
+            )
+        self._propagate_layer_to_all_pages(self.comp_transform_data)
+        self._refresh_current_page_view()
+
+    def _on_auto_align_frames(self) -> None:
+        """Align the comp layer's 図枠 to match the base layer's 図枠.
+
+        Detects the outermost rectangular frame in both images using projection
+        profiles (numpy/PIL, no OpenCV required) and adjusts the comp transform
+        (X, Y, scale, rotation) so the frames coincide on canvas.
+        """
+        idx = self.current_page_index
+        base_path = self._get_display_page_path(self.base_page_paths, idx)
+        comp_path = self._get_display_page_path(self.comp_page_paths, idx)
+
+        if base_path is None or comp_path is None:
+            self._show_status_feedback(
+                message_manager.get_ui_message("U188") + ": ファイルが読み込まれていません", False
+            )
+            return
+
+        base_frame = _detect_figure_frame_rect(base_path)
+        comp_frame = _detect_figure_frame_rect(comp_path)
+
+        if base_frame is None:
+            self._show_status_feedback("図枠合わせ: ベースの図枠を検出できませんでした", False)
+            return
+        if comp_frame is None:
+            self._show_status_feedback("図枠合わせ: 比較の図枠を検出できませんでした", False)
+            return
+
+        bcx, bcy, bfw, _bfh, b_frame_angle = base_frame
+        ccx, ccy, cfw, _cfh, c_frame_angle = comp_frame
+
+        b_r, b_tx, b_ty, b_s, _bfh_flip, _bfv_flip = as_transform6(
+            self.base_transform_data[idx]
+            if self.base_transform_data and idx < len(self.base_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+        _c_r, _c_tx, _c_ty, _c_s, c_fh_flip, c_fv_flip = as_transform6(
+            self.comp_transform_data[idx]
+            if self.comp_transform_data and idx < len(self.comp_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+
+        # Scale: make comp frame width equal to base frame canvas width
+        base_frame_canvas_w = bfw * b_s
+        new_c_s = base_frame_canvas_w / cfw if cfw > 0 else b_s
+
+        # Base frame center in canvas coords (approximation for small rotation)
+        base_frame_canvas_cx = b_tx + bcx * b_s
+        base_frame_canvas_cy = b_ty + bcy * b_s
+
+        # Position: comp frame center → base frame center
+        new_c_tx = base_frame_canvas_cx - ccx * new_c_s
+        new_c_ty = base_frame_canvas_cy - ccy * new_c_s
+
+        # Rotation: match base's effective frame angle
+        # effective_angle = transform_rotation + raw_frame_tilt
+        new_c_r = b_r + (b_frame_angle - c_frame_angle)
+
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            self.comp_transform_data[idx] = pack_transform6(
+                new_c_r, new_c_tx, new_c_ty, new_c_s, c_fh_flip, c_fv_flip
+            )
+            self._persist_preview_scale(new_c_s)
+            self._propagate_layer_to_all_pages(self.comp_transform_data)
+            self._refresh_current_page_view()
+            self._sync_transform_display_to_panel()
 
     def _on_transform_update_skip_batch_propagate(self) -> None:
         """Redraw after Ctrl+Alt sheet rotation without copying the current page to all."""
