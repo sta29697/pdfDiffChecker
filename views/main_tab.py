@@ -185,24 +185,129 @@ def _detect_figure_frame_rect(
         return None
 
 
+def _detect_priority_anchor(
+    image_path: Path,
+    frame_rect: tuple[float, float, float, float, float],
+    *,
+    inset_fraction: float = 0.03,
+    strip_fraction: float = 0.30,
+    min_ink_fraction: float = 0.005,
+) -> Optional[tuple[float, float]]:
+    """Detect a priority-based anchor point inside a detected figure frame.
+
+    Examines four strips of the interior region in priority order
+    (left → top → bottom → right) and returns the ink-cluster centroid of
+    the first strip that contains a meaningful amount of ink.
+
+    Within each strip the centroid is computed with **squared** ink-density
+    weights so that large, dense components dominate over sparse labels or
+    fine lines — closely matching the intuition "align where the big part is".
+
+    Rationale for the priority order:
+    - **Left**: In single-line diagrams the power source (stable reference)
+      is on the left; load names that change extend rightward.
+    - **Top**: In distribution diagrams the source busbar is at the top.
+    - **Bottom**: Secondary fallback for bottom-heavy layouts.
+    - **Right**: Last resort; most likely to contain changed elements.
+
+    Args:
+        image_path: Path to a greyscale-convertible image.
+        frame_rect: ``(center_x, center_y, fw, fh, angle_deg)`` as returned
+            by :func:`_detect_figure_frame_rect`.
+        inset_fraction: Fraction of frame size inset from each edge to skip
+            the border lines themselves.
+        strip_fraction: Width/height fraction used for each priority strip
+            (default 30 % of the interior dimension).
+        min_ink_fraction: Minimum ratio of dark pixels in a strip required
+            to treat it as a valid anchor candidate.
+
+    Returns:
+        ``(cx, cy)`` anchor in original image pixel coordinates for the
+        highest-priority strip with sufficient ink, or ``None``.
+    """
+    try:
+        import numpy as np
+        from PIL import Image as _Image
+
+        cx_f, cy_f, fw, fh, _angle = frame_rect
+        img_left = cx_f - fw / 2.0
+        img_top = cy_f - fh / 2.0
+
+        # Inset to skip border lines
+        inset_x = fw * inset_fraction
+        inset_y = fh * inset_fraction
+        crop_left = max(0, int(img_left + inset_x))
+        crop_top = max(0, int(img_top + inset_y))
+
+        img = _Image.open(image_path).convert("L")
+        img_w, img_h = img.size
+        crop_right = min(img_w, int(img_left + fw - inset_x))
+        crop_bottom = min(img_h, int(img_top + fh - inset_y))
+
+        if crop_right <= crop_left or crop_bottom <= crop_top:
+            return None
+
+        crop = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+        arr = np.array(crop, dtype=np.float32)
+        binary = (arr < 200).astype(np.float32)  # 1 = dark ink
+
+        h, w = binary.shape
+        sw = max(1, int(w * strip_fraction))  # strip column width
+        sh = max(1, int(h * strip_fraction))  # strip row height
+
+        # (strip_array, offset_x_in_crop, offset_y_in_crop)
+        strips: list[tuple["np.ndarray", int, int]] = [  # type: ignore[name-defined]
+            (binary[:, :sw],    0,      0),       # left
+            (binary[:sh, :],    0,      0),       # top
+            (binary[h - sh:, :], 0,   h - sh),   # bottom
+            (binary[:, w - sw:], w - sw, 0),      # right
+        ]
+
+        for strip_arr, off_x, off_y in strips:
+            s_h, s_w = strip_arr.shape
+            ink_fraction = strip_arr.mean()
+            if ink_fraction < min_ink_fraction:
+                continue
+
+            # Squared weights emphasise large dense components over fine lines
+            col_w = (strip_arr ** 2).sum(axis=0)   # (s_w,)
+            row_w = (strip_arr ** 2).sum(axis=1)   # (s_h,)
+
+            col_total = col_w.sum()
+            row_total = row_w.sum()
+            if col_total == 0 or row_total == 0:
+                continue
+
+            cx_in_strip = float(np.dot(np.arange(s_w, dtype=np.float32), col_w) / col_total)
+            cy_in_strip = float(np.dot(np.arange(s_h, dtype=np.float32), row_w) / row_total)
+
+            # Convert to original image coords
+            return (crop_left + off_x + cx_in_strip, crop_top + off_y + cy_in_strip)
+
+        return None  # No strip had enough ink
+
+    except Exception:
+        return None
+
+
 def _detect_content_centroid(
     image_path: Path,
     frame_rect: tuple[float, float, float, float, float],
     *,
     inset_fraction: float = 0.03,
 ) -> Optional[tuple[float, float]]:
-    """Detect the ink-mass centroid inside a detected figure frame.
+    """Detect the overall ink-mass centroid inside a detected figure frame.
 
-    Crops the interior of *frame_rect* (with a small inset to exclude the
-    border lines), then computes weighted-average row/column indices over
-    dark pixels to find the centre of gravity of drawing content.
+    Crops the interior of *frame_rect* and computes the weighted-average
+    position of all dark pixels (centre of gravity of all drawing content).
+    Use this when you want to align based on the overall bulk of the drawing.
 
     Args:
         image_path: Path to a greyscale-convertible image.
         frame_rect: ``(center_x, center_y, fw, fh, angle_deg)`` as returned
             by :func:`_detect_figure_frame_rect`.
-        inset_fraction: Fraction of frame width/height to inset from each
-            edge before computing the centroid (removes frame border pixels).
+        inset_fraction: Fraction of frame size inset from each edge to skip
+            the border lines.
 
     Returns:
         ``(cx, cy)`` centroid in original image pixel coordinates, or
@@ -216,37 +321,29 @@ def _detect_content_centroid(
         img_left = cx_f - fw / 2.0
         img_top = cy_f - fh / 2.0
 
-        # Inset to exclude the frame border lines
         inset_x = fw * inset_fraction
         inset_y = fh * inset_fraction
-        crop_left = int(img_left + inset_x)
-        crop_top = int(img_top + inset_y)
-        crop_right = int(img_left + fw - inset_x)
-        crop_bottom = int(img_top + fh - inset_y)
+        crop_left = max(0, int(img_left + inset_x))
+        crop_top = max(0, int(img_top + inset_y))
+
+        img = _Image.open(image_path).convert("L")
+        img_w, img_h = img.size
+        crop_right = min(img_w, int(img_left + fw - inset_x))
+        crop_bottom = min(img_h, int(img_top + fh - inset_y))
 
         if crop_right <= crop_left or crop_bottom <= crop_top:
             return None
 
-        img = _Image.open(image_path).convert("L")
-        img_w, img_h = img.size
-        crop_left = max(0, crop_left)
-        crop_top = max(0, crop_top)
-        crop_right = min(img_w, crop_right)
-        crop_bottom = min(img_h, crop_bottom)
-
         crop = img.crop((crop_left, crop_top, crop_right, crop_bottom))
         arr = np.array(crop, dtype=np.float32)
-
-        # Binary: 1 where pixel is dark (ink), 0 otherwise
         binary = (arr < 200).astype(np.float32)
 
-        total = binary.sum()
-        if total < 1.0:
+        if binary.sum() < 1.0:
             return None
 
         h_arr, w_arr = binary.shape
-        col_weights = binary.sum(axis=0)   # (w_arr,)
-        row_weights = binary.sum(axis=1)   # (h_arr,)
+        col_weights = binary.sum(axis=0)
+        row_weights = binary.sum(axis=1)
 
         col_idx = np.arange(w_arr, dtype=np.float32)
         row_idx = np.arange(h_arr, dtype=np.float32)
@@ -254,7 +351,6 @@ def _detect_content_centroid(
         cx_in_crop = float(np.dot(col_idx, col_weights) / col_weights.sum())
         cy_in_crop = float(np.dot(row_idx, row_weights) / row_weights.sum())
 
-        # Convert back to original image pixel coordinates
         return (crop_left + cx_in_crop, crop_top + cy_in_crop)
     except Exception:
         return None
@@ -5189,6 +5285,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
             on_comp_transform_value_change=self._on_comp_transform_value_input,
             on_auto_align_frames=self._on_auto_align_frames,
             on_auto_align_content=self._on_auto_align_content,
+            on_auto_align_priority=self._on_auto_align_priority,
         )
         self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
@@ -5654,6 +5751,74 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF):
         # Shift comp so its content centroid lands on the base content centroid
         new_c_tx = c_tx + (base_cx_canvas - comp_cx_canvas)
         new_c_ty = c_ty + (base_cy_canvas - comp_cy_canvas)
+
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            self.comp_transform_data[idx] = pack_transform6(
+                _c_r, new_c_tx, new_c_ty, c_s, c_fh_flip, c_fv_flip
+            )
+            self._propagate_layer_to_all_pages(self.comp_transform_data)
+            self._refresh_current_page_view()
+            self._sync_transform_display_to_panel()
+
+    def _on_auto_align_priority(self) -> None:
+        """Align the comp layer using priority-based anchor detection (左→上→下→右).
+
+        Examines strips of the figure-frame interior in priority order and
+        aligns comp so that the highest-priority ink cluster in comp coincides
+        with the corresponding cluster in base.  The priority order —
+        left → top → bottom → right — is designed for electrical diagrams where
+        the stable reference is usually the left (source) side.
+        """
+        idx = self.current_page_index
+        base_path = self._get_display_page_path(self.base_page_paths, idx)
+        comp_path = self._get_display_page_path(self.comp_page_paths, idx)
+
+        if base_path is None or comp_path is None:
+            self._show_status_feedback(
+                message_manager.get_ui_message("U193") + ": ファイルが読み込まれていません", False
+            )
+            return
+
+        base_frame = _detect_figure_frame_rect(base_path)
+        comp_frame = _detect_figure_frame_rect(comp_path)
+
+        if base_frame is None:
+            self._show_status_feedback("優先順位合わせ: ベースの図枠を検出できませんでした", False)
+            return
+        if comp_frame is None:
+            self._show_status_feedback("優先順位合わせ: 比較の図枠を検出できませんでした", False)
+            return
+
+        base_anchor = _detect_priority_anchor(base_path, base_frame)
+        comp_anchor = _detect_priority_anchor(comp_path, comp_frame)
+
+        if base_anchor is None:
+            self._show_status_feedback("優先順位合わせ: ベースの基準点を検出できませんでした", False)
+            return
+        if comp_anchor is None:
+            self._show_status_feedback("優先順位合わせ: 比較の基準点を検出できませんでした", False)
+            return
+
+        _c_r, c_tx, c_ty, c_s, c_fh_flip, c_fv_flip = as_transform6(
+            self.comp_transform_data[idx]
+            if self.comp_transform_data and idx < len(self.comp_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+        b_r, b_tx, b_ty, b_s, _bfh, _bfv = as_transform6(
+            self.base_transform_data[idx]
+            if self.base_transform_data and idx < len(self.base_transform_data)
+            else (0.0, 0.0, 0.0, 1.0, 0, 0)
+        )
+
+        # Convert priority anchors to canvas coordinates
+        base_ax_canvas = b_tx + base_anchor[0] * b_s
+        base_ay_canvas = b_ty + base_anchor[1] * b_s
+        comp_ax_canvas = c_tx + comp_anchor[0] * c_s
+        comp_ay_canvas = c_ty + comp_anchor[1] * c_s
+
+        # Shift comp so its anchor aligns with the base anchor
+        new_c_tx = c_tx + (base_ax_canvas - comp_ax_canvas)
+        new_c_ty = c_ty + (base_ay_canvas - comp_ay_canvas)
 
         if self.comp_transform_data and idx < len(self.comp_transform_data):
             self.comp_transform_data[idx] = pack_transform6(

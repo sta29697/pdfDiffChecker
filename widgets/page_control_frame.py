@@ -60,6 +60,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         on_comp_transform_value_change: Optional[Callable[[float, float, float, float, set[str]], None]] = None,
         on_auto_align_frames: Optional[Callable[[], None]] = None,
         on_auto_align_content: Optional[Callable[[], None]] = None,
+        on_auto_align_priority: Optional[Callable[[], None]] = None,
     ) -> None:
         """
         Initialize the page control frame.
@@ -88,6 +89,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             on_comp_transform_value_change: Callback for comp transform; triggers dual-layer UI when set.
             on_auto_align_frames: Optional callback for the "Auto-align Frames" button (dual-layer mode only).
             on_auto_align_content: Optional callback for the "Align Content" button (dual-layer mode only).
+            on_auto_align_priority: Optional callback for the "Priority Align" button (dual-layer mode only).
         """
         try:
             super().__init__(parent)
@@ -292,6 +294,7 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
         self.__on_comp_transform_value_change: Optional[Callable] = on_comp_transform_value_change
         self.__on_auto_align_frames: Optional[Callable] = on_auto_align_frames
         self.__on_auto_align_content: Optional[Callable] = on_auto_align_content
+        self.__on_auto_align_priority: Optional[Callable] = on_auto_align_priority
 
         # --- Transform info section (M1-008) ---
         # Separator line
@@ -442,6 +445,20 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
                 font=btw.base_font,
             )
             self.__auto_align_content_btn.grid(
+                row=layout_row, column=0, padx=5, pady=(2, 2), sticky="ew"
+            )
+            layout_row += 1
+
+        self.__auto_align_priority_btn: Optional[BaseButton] = None
+        if self.__dual_mode and self.__on_auto_align_priority is not None:
+            self.__auto_align_priority_btn = BaseButton(
+                fr=self,
+                color_key="process_button",
+                text=message_manager.get_ui_message("U193"),  # "優先順位合わせ" / "Priority Align"
+                command=self.__on_auto_align_priority,
+                font=btw.base_font,
+            )
+            self.__auto_align_priority_btn.grid(
                 row=layout_row, column=0, padx=5, pady=(2, 4), sticky="ew"
             )
             layout_row += 1
@@ -561,6 +578,8 @@ class PageControlFrame(tk.Frame, ThemeColorApplicable, ColoringThemeIF):
             ordered.append(self.__auto_align_btn)
         if self.__auto_align_content_btn is not None:
             ordered.append(self.__auto_align_content_btn)
+        if self.__auto_align_priority_btn is not None:
+            ordered.append(self.__auto_align_priority_btn)
         if self.__dual_mode and self.__comp_transform_x_entry is not None:
             ordered.extend(
                 [
