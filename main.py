@@ -646,7 +646,7 @@ def get_version_info() -> str:
         str: Version string for display in window title
     """
     # Hard-coded version for this application
-    return "v1.0.12"
+    return "v1.0.13"
 
 
 def set_args() -> dict:
