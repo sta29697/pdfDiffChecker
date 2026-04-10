@@ -162,7 +162,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         )
         self.visualized_image = tk.StringVar(value="base")
         self.current_page_index = 0
-        self._preferred_preview_scale = self._get_saved_preview_scale()
+        self._base_preferred_preview_scale = self._get_saved_preview_scale("base")
+        self._comp_preferred_preview_scale = self._get_saved_preview_scale("comp")
         self._show_base_layer_var = tk.BooleanVar(
             value=self._get_saved_boolean_setting("show_base_layer", True)
         )
@@ -180,6 +181,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         self._base_export_transform_overrides: List[Dict[str, float]] = []
         self._comp_export_transform_overrides: List[Dict[str, float]] = []
         self.page_control_frame: Optional[PageControlFrame] = None
+        self._page_ctrl_scroll_outer: Optional[tk.Frame] = None
+        self._page_ctrl_viewport: Optional[tk.Canvas] = None
+        self._page_ctrl_vbar: Optional[tk.Scrollbar] = None
+        self._page_ctrl_inner: Optional[tk.Frame] = None
+        self._page_ctrl_window_id: Optional[int] = None
         self.mouse_handler: Optional[MouseEventHandler] = None
         self.photo_image: Optional[tk.PhotoImage] = None
         self._base_photo_image: Optional[ImageTk.PhotoImage] = None
@@ -978,13 +984,17 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         """
         self._batch_edit_selected = bool(checked)
 
-    def _get_saved_preview_scale(self) -> float:
-        """Return the persisted preview scale used for new page displays.
+    def _get_saved_preview_scale(self, side: str = "base") -> float:
+        """Return the persisted preview scale for the given layer.
+
+        Args:
+            side: ``"base"`` or ``"comp"``.
 
         Returns:
             Preview scale factor.
         """
-        raw_scale = self.settings.get_setting("preview_scale", 1.0)
+        key = "base_preview_scale" if side == "base" else "comp_preview_scale"
+        raw_scale = self.settings.get_setting(key, self.settings.get_setting("preview_scale", 1.0))
         try:
             resolved_scale = float(raw_scale)
         except (TypeError, ValueError):
@@ -1017,34 +1027,58 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         except Exception:
             return bool(default_value)
 
-    def _persist_preview_scale(self, scale_value: float) -> None:
-        """Persist the preferred preview scale when it changes.
+    def _persist_base_preview_scale(self, scale_value: float) -> None:
+        """Persist the preferred base-layer preview scale when it changes.
 
         Args:
             scale_value: Preview scale factor to save.
         """
         resolved_scale = max(0.05, min(10.0, float(scale_value)))
-        if abs(resolved_scale - self._preferred_preview_scale) < 1e-6:
+        if abs(resolved_scale - self._base_preferred_preview_scale) < 1e-6:
             return
-        self._preferred_preview_scale = resolved_scale
-        self.settings.update_setting("preview_scale", resolved_scale)
+        self._base_preferred_preview_scale = resolved_scale
+        self.settings.update_setting("base_preview_scale", resolved_scale)
+
+    def _persist_comp_preview_scale(self, scale_value: float) -> None:
+        """Persist the preferred comp-layer preview scale when it changes.
+
+        Args:
+            scale_value: Preview scale factor to save.
+        """
+        resolved_scale = max(0.05, min(10.0, float(scale_value)))
+        if abs(resolved_scale - self._comp_preferred_preview_scale) < 1e-6:
+            return
+        self._comp_preferred_preview_scale = resolved_scale
+        self.settings.update_setting("comp_preview_scale", resolved_scale)
 
     def _apply_preferred_preview_scale_to_page(self, page_index: int) -> None:
         """Apply the persisted preview scale to the target page transforms.
 
+        Each layer uses its own preferred scale so base and comp can differ.
+
         Args:
             page_index: Zero-based page index.
         """
-        for transform_data in (self.base_transform_data, self.comp_transform_data):
-            if not transform_data or not (0 <= page_index < len(transform_data)):
-                continue
-            r, tx, ty, _scale, fh, fv = as_transform6(transform_data[page_index])
-            transform_data[page_index] = pack_transform6(r, tx, ty, self._preferred_preview_scale, fh, fv)
+        if self.base_transform_data and 0 <= page_index < len(self.base_transform_data):
+            r, tx, ty, _scale, fh, fv = as_transform6(self.base_transform_data[page_index])
+            self.base_transform_data[page_index] = pack_transform6(
+                r, tx, ty, self._base_preferred_preview_scale, fh, fv
+            )
+        if self.comp_transform_data and 0 <= page_index < len(self.comp_transform_data):
+            r, tx, ty, _scale, fh, fv = as_transform6(self.comp_transform_data[page_index])
+            self.comp_transform_data[page_index] = pack_transform6(
+                r, tx, ty, self._comp_preferred_preview_scale, fh, fv
+            )
 
     def _update_preferred_preview_scale_from_current_page(self) -> None:
-        """Refresh the persisted preview scale from the currently displayed page."""
-        _rotation, _tx, _ty, scale = self._get_active_transform()
-        self._persist_preview_scale(scale)
+        """Refresh the persisted preview scales from the currently displayed page."""
+        idx = self.current_page_index
+        if self.base_transform_data and idx < len(self.base_transform_data):
+            _r, _tx, _ty, base_scale, _fh, _fv = as_transform6(self.base_transform_data[idx])
+            self._persist_base_preview_scale(base_scale)
+        if self.comp_transform_data and idx < len(self.comp_transform_data):
+            _r, _tx, _ty, comp_scale, _fh, _fv = as_transform6(self.comp_transform_data[idx])
+            self._persist_comp_preview_scale(comp_scale)
 
     @staticmethod
     def _normalize_color_processing_mode(raw_mode: str) -> str:
@@ -2545,11 +2579,12 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         Args:
             target_length: Required transform list length.
         """
-        default_transform = pack_transform6(0.0, 0.0, 0.0, self._preferred_preview_scale, 0, 0)
+        base_default = pack_transform6(0.0, 0.0, 0.0, self._base_preferred_preview_scale, 0, 0)
+        comp_default = pack_transform6(0.0, 0.0, 0.0, self._comp_preferred_preview_scale, 0, 0)
         while len(self.base_transform_data) < len(self.base_pages):
-            self.base_transform_data.append(default_transform)
+            self.base_transform_data.append(base_default)
         while len(self.comp_transform_data) < len(self.comp_pages):
-            self.comp_transform_data.append(default_transform)
+            self.comp_transform_data.append(comp_default)
         while len(self._base_export_transform_overrides) < len(self.base_pages):
             self._base_export_transform_overrides.append({})
         while len(self._comp_export_transform_overrides) < len(self.comp_pages):
@@ -3686,8 +3721,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
                 pass
             self.page_control_frame = None
 
+        _pcf_parent = self._page_ctrl_inner if self._page_ctrl_inner is not None else self.frame_main3
         self.page_control_frame = PageControlFrame(
-            parent=self.frame_main3,
+            parent=_pcf_parent,
             color_key="page_control",
             base_pages=self.base_pages,
             comp_pages=self.comp_pages,
@@ -3710,7 +3746,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             on_auto_align_content=self._on_auto_align_content,
             on_auto_align_priority=self._on_auto_align_priority,
         )
-        self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
+        if self._page_ctrl_inner is not None:
+            self.page_control_frame.grid(row=0, column=0, padx=0, pady=0, sticky="nsew")
+        else:
+            self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
         self.page_control_frame.set_workspace_controls_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
         self.page_control_frame.set_edit_buttons_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
@@ -3923,7 +3962,8 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             self.comp_transform_data[self.current_page_index] = pack_transform6(
                 rotation, adj_tx, adj_ty, scale, fh, fv
             )
-        self._persist_preview_scale(scale)
+        self._persist_base_preview_scale(scale)
+        self._persist_comp_preview_scale(scale)
         self._apply_export_transform_overrides_for_current_page(adj_tx, adj_ty, scale, explicit_fields)
         self._propagate_current_transform_to_all_pages(visible_only=False)
         self._propagate_export_overrides_to_all_pages(explicit_fields)
@@ -3993,7 +4033,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             self.base_transform_data[idx] = pack_transform6(
                 rotation, adj_tx, adj_ty, scale, fh, fv
             )
-        self._persist_preview_scale(scale)
+        self._persist_base_preview_scale(scale)
         self._apply_export_transform_overrides_for_current_page(adj_tx, adj_ty, scale, explicit_fields)
         self._propagate_layer_to_all_pages(self.base_transform_data)
         self._propagate_export_overrides_to_all_pages(explicit_fields)
@@ -4048,8 +4088,40 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             self.comp_transform_data[idx] = pack_transform6(
                 rotation, adj_tx, adj_ty, scale, fh, fv
             )
+        self._persist_comp_preview_scale(scale)
         self._propagate_layer_to_all_pages(self.comp_transform_data)
         self._refresh_current_page_view()
+
+    # ------------------------------------------------------------------
+    # Right-sidebar scroll helpers
+    # ------------------------------------------------------------------
+
+    def _on_sidebar_scroll(self, event) -> None:
+        """Scroll the right-sidebar viewport on MouseWheel, guarded by cursor position."""
+        if self._page_ctrl_viewport is None or self._page_ctrl_scroll_outer is None:
+            return
+        try:
+            px, py = self.winfo_pointerx(), self.winfo_pointery()
+            rx = self._page_ctrl_scroll_outer.winfo_rootx()
+            ry = self._page_ctrl_scroll_outer.winfo_rooty()
+            rw = self._page_ctrl_scroll_outer.winfo_width()
+            rh = self._page_ctrl_scroll_outer.winfo_height()
+            if rx <= px <= rx + rw and ry <= py <= ry + rh:
+                self._page_ctrl_viewport.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except Exception:
+            pass
+
+    def _bind_sidebar_scroll(self) -> None:
+        """Capture global MouseWheel events to scroll the sidebar when cursor is over it."""
+        if self._page_ctrl_viewport is not None:
+            self._page_ctrl_viewport.bind_all("<MouseWheel>", self._on_sidebar_scroll)
+
+    def _unbind_sidebar_scroll(self) -> None:
+        """Release the global MouseWheel capture when cursor leaves the sidebar."""
+        if self._page_ctrl_viewport is not None:
+            self._page_ctrl_viewport.unbind_all("<MouseWheel>")
+
+    # ------------------------------------------------------------------
 
     def _on_auto_align_frames(self) -> None:
         """Align comp 図枠 to base 図枠 (scale + position + rotation)."""
@@ -4070,7 +4142,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         nr, ntx, nty, ns = _compute_frame_align(bf, cf, b6, c6)
         if self.comp_transform_data and idx < len(self.comp_transform_data):
             self.comp_transform_data[idx] = pack_transform6(nr, ntx, nty, ns, c6[4], c6[5])
-            self._persist_preview_scale(ns)
+            self._persist_comp_preview_scale(ns)
             self._propagate_layer_to_all_pages(self.comp_transform_data)
             self._refresh_current_page_view()
             self._sync_transform_display_to_panel()
@@ -4383,6 +4455,64 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             self.frame_main3.grid_columnconfigure(1, weight=0)
             # Make canvas area expand more
             self.grid_rowconfigure(3, weight=8)
+
+            # Right sidebar: scrollable container (Canvas + Scrollbar + inner Frame)
+            self._page_ctrl_scroll_outer = tk.Frame(
+                self.frame_main3, bd=0, highlightthickness=0,
+            )
+            self._page_ctrl_scroll_outer.grid(
+                row=0, column=1, padx=(4, 6), pady=0, sticky="nsew"
+            )
+            self._page_ctrl_scroll_outer.grid_rowconfigure(0, weight=1)
+            self._page_ctrl_scroll_outer.grid_columnconfigure(0, weight=1)
+
+            self._page_ctrl_vbar = tk.Scrollbar(
+                self._page_ctrl_scroll_outer, orient="vertical"
+            )
+            self._page_ctrl_vbar.grid(row=0, column=1, sticky="ns")
+
+            self._page_ctrl_viewport = tk.Canvas(
+                self._page_ctrl_scroll_outer,
+                yscrollcommand=self._page_ctrl_vbar.set,
+                highlightthickness=0,
+                bd=0,
+                width=1,  # start at 1; resized to inner frame's natural width on first Configure
+            )
+            self._page_ctrl_viewport.grid(row=0, column=0, sticky="nsew")
+            self._page_ctrl_vbar.config(command=self._page_ctrl_viewport.yview)
+
+            self._page_ctrl_inner = tk.Frame(
+                self._page_ctrl_viewport, bd=0, highlightthickness=0,
+            )
+            self._page_ctrl_window_id = self._page_ctrl_viewport.create_window(
+                (0, 0), window=self._page_ctrl_inner, anchor="nw"
+            )
+            self._page_ctrl_inner.grid_rowconfigure(0, weight=1)
+            self._page_ctrl_inner.grid_columnconfigure(0, weight=1)
+
+            def _on_inner_configure(e: tk.Event) -> None:
+                """Sync canvas width and scroll region to the inner frame's natural size."""
+                if self._page_ctrl_viewport is None:
+                    return
+                w = self._page_ctrl_inner.winfo_reqwidth()
+                self._page_ctrl_viewport.configure(
+                    width=w,
+                    scrollregion=self._page_ctrl_viewport.bbox("all"),
+                )
+
+            self._page_ctrl_inner.bind("<Configure>", _on_inner_configure)
+            self._page_ctrl_viewport.bind(
+                "<Enter>", lambda e: self._bind_sidebar_scroll()
+            )
+            self._page_ctrl_viewport.bind(
+                "<Leave>", lambda e: self._unbind_sidebar_scroll()
+            )
+            self._page_ctrl_inner.bind(
+                "<Enter>", lambda e: self._bind_sidebar_scroll()
+            )
+            self._page_ctrl_inner.bind(
+                "<Leave>", lambda e: self._unbind_sidebar_scroll()
+            )
 
             # Frames setup completed
             logger.debug(message_manager.get_log_message("L246"))
