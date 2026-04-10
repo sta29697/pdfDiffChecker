@@ -28,7 +28,6 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 $nuitkaArgs = @(
     "-m", "nuitka",
-    "--standalone",
     "--assume-yes-for-downloads",
     "--windows-console-mode=disable",
     "--windows-icon-from-ico=images/icon_multi.ico",
@@ -49,7 +48,9 @@ $nuitkaArgs = @(
     "main.py"
 )
 
-if (-not $Standalone) {
+if ($Standalone) {
+    $nuitkaArgs += "--standalone"
+} else {
     $nuitkaArgs += "--onefile"
     $nuitkaArgs += "--onefile-no-compression"
 }
