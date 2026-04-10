@@ -181,6 +181,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         self._base_export_transform_overrides: List[Dict[str, float]] = []
         self._comp_export_transform_overrides: List[Dict[str, float]] = []
         self.page_control_frame: Optional[PageControlFrame] = None
+        self._page_ctrl_scroll_outer: Optional[tk.Frame] = None
+        self._page_ctrl_viewport: Optional[tk.Canvas] = None
+        self._page_ctrl_vbar: Optional[tk.Scrollbar] = None
+        self._page_ctrl_inner: Optional[tk.Frame] = None
+        self._page_ctrl_window_id: Optional[int] = None
         self.mouse_handler: Optional[MouseEventHandler] = None
         self.photo_image: Optional[tk.PhotoImage] = None
         self._base_photo_image: Optional[ImageTk.PhotoImage] = None
@@ -3716,8 +3721,9 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
                 pass
             self.page_control_frame = None
 
+        _pcf_parent = self._page_ctrl_inner if self._page_ctrl_inner is not None else self.frame_main3
         self.page_control_frame = PageControlFrame(
-            parent=self.frame_main3,
+            parent=_pcf_parent,
             color_key="page_control",
             base_pages=self.base_pages,
             comp_pages=self.comp_pages,
@@ -3740,7 +3746,10 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             on_auto_align_content=self._on_auto_align_content,
             on_auto_align_priority=self._on_auto_align_priority,
         )
-        self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
+        if self._page_ctrl_inner is not None:
+            self.page_control_frame.grid(row=0, column=0, padx=0, pady=0, sticky="nsew")
+        else:
+            self.page_control_frame.grid(row=0, column=1, padx=(4, 6), pady=0, sticky="nsew")
         self.page_control_frame.update_page_label(page_count - 1 if page_count == 0 else self.current_page_index, page_count)
         self.page_control_frame.set_workspace_controls_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
         self.page_control_frame.set_edit_buttons_enabled(self._has_loaded_workspace_pages() and not self._copy_protected)
@@ -4083,6 +4092,37 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         self._propagate_layer_to_all_pages(self.comp_transform_data)
         self._refresh_current_page_view()
 
+    # ------------------------------------------------------------------
+    # Right-sidebar scroll helpers
+    # ------------------------------------------------------------------
+
+    def _on_sidebar_scroll(self, event) -> None:
+        """Scroll the right-sidebar viewport on MouseWheel, guarded by cursor position."""
+        if self._page_ctrl_viewport is None or self._page_ctrl_scroll_outer is None:
+            return
+        try:
+            px, py = self.winfo_pointerx(), self.winfo_pointery()
+            rx = self._page_ctrl_scroll_outer.winfo_rootx()
+            ry = self._page_ctrl_scroll_outer.winfo_rooty()
+            rw = self._page_ctrl_scroll_outer.winfo_width()
+            rh = self._page_ctrl_scroll_outer.winfo_height()
+            if rx <= px <= rx + rw and ry <= py <= ry + rh:
+                self._page_ctrl_viewport.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except Exception:
+            pass
+
+    def _bind_sidebar_scroll(self) -> None:
+        """Capture global MouseWheel events to scroll the sidebar when cursor is over it."""
+        if self._page_ctrl_viewport is not None:
+            self._page_ctrl_viewport.bind_all("<MouseWheel>", self._on_sidebar_scroll)
+
+    def _unbind_sidebar_scroll(self) -> None:
+        """Release the global MouseWheel capture when cursor leaves the sidebar."""
+        if self._page_ctrl_viewport is not None:
+            self._page_ctrl_viewport.unbind_all("<MouseWheel>")
+
+    # ------------------------------------------------------------------
+
     def _on_auto_align_frames(self) -> None:
         """Align comp 図枠 to base 図枠 (scale + position + rotation)."""
         idx = self.current_page_index
@@ -4415,6 +4455,64 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             self.frame_main3.grid_columnconfigure(1, weight=0)
             # Make canvas area expand more
             self.grid_rowconfigure(3, weight=8)
+
+            # Right sidebar: scrollable container (Canvas + Scrollbar + inner Frame)
+            self._page_ctrl_scroll_outer = tk.Frame(
+                self.frame_main3, bd=0, highlightthickness=0,
+            )
+            self._page_ctrl_scroll_outer.grid(
+                row=0, column=1, padx=(4, 6), pady=0, sticky="nsew"
+            )
+            self._page_ctrl_scroll_outer.grid_rowconfigure(0, weight=1)
+            self._page_ctrl_scroll_outer.grid_columnconfigure(0, weight=1)
+
+            self._page_ctrl_vbar = tk.Scrollbar(
+                self._page_ctrl_scroll_outer, orient="vertical"
+            )
+            self._page_ctrl_vbar.grid(row=0, column=1, sticky="ns")
+
+            self._page_ctrl_viewport = tk.Canvas(
+                self._page_ctrl_scroll_outer,
+                yscrollcommand=self._page_ctrl_vbar.set,
+                highlightthickness=0,
+                bd=0,
+                width=1,  # start at 1; resized to inner frame's natural width on first Configure
+            )
+            self._page_ctrl_viewport.grid(row=0, column=0, sticky="nsew")
+            self._page_ctrl_vbar.config(command=self._page_ctrl_viewport.yview)
+
+            self._page_ctrl_inner = tk.Frame(
+                self._page_ctrl_viewport, bd=0, highlightthickness=0,
+            )
+            self._page_ctrl_window_id = self._page_ctrl_viewport.create_window(
+                (0, 0), window=self._page_ctrl_inner, anchor="nw"
+            )
+            self._page_ctrl_inner.grid_rowconfigure(0, weight=1)
+            self._page_ctrl_inner.grid_columnconfigure(0, weight=1)
+
+            def _on_inner_configure(e: tk.Event) -> None:
+                """Sync canvas width and scroll region to the inner frame's natural size."""
+                if self._page_ctrl_viewport is None:
+                    return
+                w = self._page_ctrl_inner.winfo_reqwidth()
+                self._page_ctrl_viewport.configure(
+                    width=w,
+                    scrollregion=self._page_ctrl_viewport.bbox("all"),
+                )
+
+            self._page_ctrl_inner.bind("<Configure>", _on_inner_configure)
+            self._page_ctrl_viewport.bind(
+                "<Enter>", lambda e: self._bind_sidebar_scroll()
+            )
+            self._page_ctrl_viewport.bind(
+                "<Leave>", lambda e: self._unbind_sidebar_scroll()
+            )
+            self._page_ctrl_inner.bind(
+                "<Enter>", lambda e: self._bind_sidebar_scroll()
+            )
+            self._page_ctrl_inner.bind(
+                "<Leave>", lambda e: self._unbind_sidebar_scroll()
+            )
 
             # Frames setup completed
             logger.debug(message_manager.get_log_message("L246"))

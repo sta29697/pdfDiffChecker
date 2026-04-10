@@ -108,6 +108,9 @@
         "base_file_graph_subwindow_title": "base_file_graph",
         "comparison_file_graph_subwindow_title": "comparison_file_graph",
         "image_input_dialog_filetype": "PDF files",
-        "image_ext_target": "png"
+        "image_ext_target": "png",
+        "analysis_panel_collapsed": false,
+        "base_preview_scale": 0.108,
+        "comp_preview_scale": 0.15282226211849192
     }
 }
