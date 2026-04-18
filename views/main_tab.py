@@ -62,7 +62,7 @@ except Exception:
     PdfReader = None
 
 
-from views.main_tab_mixin import _MainTabMixin, WorkspaceRasterTooLarge
+from views.main_tab_mixin import _MainTabMixin, WorkspaceRasterTooLarge, _DIFF_CACHE_MISSING
 
 # ---------------------------------------------------------------------------
 # 図枠 (drawing-frame) detection utilities
@@ -232,8 +232,11 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         self._dpi_combo: Optional[BaseValueCombobox] = None
         self._dpi_choice_var = tk.StringVar(value=str(self.selected_dpi_value))
         self._detected_dpi_value: Optional[int] = None
-        self._preview_source_image_cache: Dict[tuple[str, str, int, int], Image.Image] = {}
-        self._preview_processed_image_cache: Dict[tuple[str, str, int, int, str, str, int], Image.Image] = {}
+        from collections import OrderedDict
+        self._preview_source_image_cache: OrderedDict = OrderedDict()
+        self._preview_processed_image_cache: OrderedDict = OrderedDict()
+        self._PREVIEW_SOURCE_CACHE_MAX = 8
+        self._PREVIEW_PROCESSED_CACHE_MAX = 8
         self._preview_render_generation = 0
         self._background_preview_render_thread: Optional[threading.Thread] = None
         self._base_preview_render_lock = threading.Lock()
@@ -4357,17 +4360,69 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
         self._commit_preview_keyboard_rotation()
         output_pdf_path = self._build_default_modified_pdf_path()
         pdf_metadata = self._build_export_metadata()
+
+        export_base_transforms = self._build_export_transform_data(
+            self.base_transform_data,
+            self._base_export_transform_overrides,
+        )
+        export_comp_transforms = self._build_export_transform_data(
+            self.comp_transform_data,
+            self._comp_export_transform_overrides,
+        )
+
+        diff_overlay_pages = None
+        _diff_enabled = bool(getattr(self, "_diff_emphasis_var", None) and self._diff_emphasis_var.get())
+        _base_vis = bool(self._show_base_layer_var.get())
+        _comp_vis = bool(self._show_comp_layer_var.get())
+        logger.debug(
+            "Export diff overlay check: diff_emphasis=%s base_visible=%s comp_visible=%s",
+            _diff_enabled, _base_vis, _comp_vis,
+        )
+        if _diff_enabled and _base_vis and _comp_vis:
+            diff_overlay_pages = []
+            for page_index in range(self.page_count):
+                base_path = self._get_display_page_path(self.base_page_paths, page_index)
+                comp_path = self._get_display_page_path(self.comp_page_paths, page_index)
+                if (
+                    base_path is not None and base_path.exists()
+                    and comp_path is not None and comp_path.exists()
+                    and page_index < len(export_base_transforms)
+                    and page_index < len(export_comp_transforms)
+                ):
+                    # Prefer cached preview overlay; recompute synchronously if missing
+                    key = self._diff_overlay_cache_key(page_index, base_path, comp_path)
+                    cached_ov = None
+                    if key is not None:
+                        with self._diff_overlay_cache_lock:
+                            cached_val = self._diff_src_overlay_cache.get(key, _DIFF_CACHE_MISSING)
+                        if cached_val is not _DIFF_CACHE_MISSING and cached_val is not None:
+                            cached_ov = cached_val
+                    if cached_ov is not None:
+                        # Cached overlay is in base pixel space (scale=preview_scale).
+                        # Re-use it only when preview scale is 1.0 (matches export scale).
+                        _, _, _, prev_s, _, _ = as_transform6(self.base_transform_data[page_index])
+                        if abs(float(prev_s) - 1.0) < 0.01:
+                            _, etx, ety, _, _, _ = as_transform6(export_base_transforms[page_index])
+                            _, ctx, cty, _, _, _ = as_transform6(export_comp_transforms[page_index])
+                            rel_ox = min(0, int(round(float(ctx) - float(etx))))
+                            rel_oy = min(0, int(round(float(cty) - float(ety))))
+                            diff_overlay_pages.append((cached_ov, rel_ox, rel_oy))
+                            continue
+                    entry = self._compute_diff_overlay_for_export_page(
+                        page_index,
+                        base_path, comp_path,
+                        export_base_transforms[page_index],
+                        export_comp_transforms[page_index],
+                    )
+                    diff_overlay_pages.append(entry)
+                else:
+                    diff_overlay_pages.append(None)
+
         handler = PDFExportHandler(
             base_pages=[str(path) for path in self.base_page_paths],
             comp_pages=[str(path) for path in self.comp_page_paths],
-            base_transform_data=self._build_export_transform_data(
-                self.base_transform_data,
-                self._base_export_transform_overrides,
-            ),
-            comp_transform_data=self._build_export_transform_data(
-                self.comp_transform_data,
-                self._comp_export_transform_overrides,
-            ),
+            base_transform_data=export_base_transforms,
+            comp_transform_data=export_comp_transforms,
             output_folder=str(output_pdf_path.parent),
             pdf_metadata=pdf_metadata,
             color_processing_mode=self._selected_color_processing_mode,
@@ -4377,6 +4432,7 @@ class CreateComparisonFileApp(tk.Frame, ColoringThemeIF, _MainTabMixin):
             comparison_threshold=self._get_threshold_for_side("comp"),
             show_base_layer=bool(self._show_base_layer_var.get()),
             show_comp_layer=bool(self._show_comp_layer_var.get()),
+            diff_overlay_pages=diff_overlay_pages,
         )
         handler.export_to_pdf(output_pdf_path.name, self)
         return output_pdf_path
