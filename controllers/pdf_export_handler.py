@@ -179,6 +179,7 @@ class PDFExportHandler:
         comparison_threshold: int = 700,
         show_base_layer: bool = True,
         show_comp_layer: bool = True,
+        diff_overlay_pages: Optional[List[Optional[Tuple[PILImage, int, int]]]] = None,
     ) -> None:
         """Initialize the PDF export handler.
 
@@ -196,6 +197,9 @@ class PDFExportHandler:
             comparison_threshold: Threshold for the comparison layer in binary mode.
             show_base_layer: Whether the base layer is currently visible.
             show_comp_layer: Whether the comparison layer is currently visible.
+            diff_overlay_pages: Per-page diff-emphasis overlays. Each entry is
+                ``(overlay_rgba, rel_ox, rel_oy)`` in source-pixel space
+                (``rel_ox/rel_oy`` = ``min(0, comp_rel_x/y)``), or ``None``.
 
         Raises:
             ValueError: If input lists have different lengths
@@ -224,6 +228,7 @@ class PDFExportHandler:
             self.__comparison_threshold = int(comparison_threshold)
             self.__show_base_layer = bool(show_base_layer)
             self.__show_comp_layer = bool(show_comp_layer)
+            self.__diff_overlay_pages = diff_overlay_pages
 
             logger.info("PDF export handler initialized")
         except Exception as e:
@@ -328,6 +333,29 @@ class PDFExportHandler:
         if comp_paste is not None:
             ci, cx, cy = comp_paste
             blank_img.paste(ci, (cx - min_x, cy - min_y), ci)
+
+        if self.__diff_overlay_pages and page_index < len(self.__diff_overlay_pages):
+            ov_entry = self.__diff_overlay_pages[page_index]
+            if ov_entry is not None:
+                ov_img, rel_ox, rel_oy = ov_entry
+                base_ox = int(round(base_paste[1])) if base_paste is not None else 0
+                base_oy = int(round(base_paste[2])) if base_paste is not None else 0
+                paste_x = base_ox - min_x + rel_ox
+                paste_y = base_oy - min_y + rel_oy
+                logger.info(
+                    "Export overlay paste: page=%d size=%s at (%d,%d) canvas=%s",
+                    page_index, ov_img.size, paste_x, paste_y, blank_img.size,
+                )
+                if ov_img.mode == "RGBA":
+                    blank_img.paste(ov_img, (paste_x, paste_y), ov_img)
+                else:
+                    blank_img.paste(ov_img.convert("RGBA"), (paste_x, paste_y))
+            else:
+                logger.warning("Export overlay page=%d: entry is None", page_index)
+        else:
+            logger.warning("Export overlay: no overlay pages list (pages=%s, index=%d)",
+                           self.__diff_overlay_pages is not None, page_index)
+
         return blank_img.convert("RGB")
 
     def export_to_pdf(self, filename: str, parent_widget: tk.Widget) -> None:

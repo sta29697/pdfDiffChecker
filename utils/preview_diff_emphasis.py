@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 from PIL.Image import Image as PILImage
 
 
@@ -87,17 +87,46 @@ def ink_mask_from_rgba(
     return (y < float(luma_threshold)) & (a > int(alpha_threshold))
 
 
+def _sliding_window_sum(u8: np.ndarray, size: int, axis: int) -> np.ndarray:
+    """Return sliding window sum along one axis using prepend-zero cumsum.
+
+    Output shape equals input shape.  Each output element is the sum of the
+    ``size`` input elements centred at that position (padded with zeros at
+    the boundary).  Requires odd ``size`` >= 3.
+    """
+    half = size // 2
+    n = u8.shape[axis]
+    pad_width = [(0, 0)] * u8.ndim
+    pad_width[axis] = (half, half)
+    padded = np.pad(u8, pad_width)  # length along axis: n + 2*half = n + size - 1
+    # Prepend-zero cumsum so that cs[j] = sum(padded[0..j-1])
+    cs_shape = list(padded.shape)
+    cs_shape[axis] += 1  # n + size
+    cs = np.zeros(cs_shape, dtype=np.int32)
+    slc_dst = [slice(None)] * u8.ndim
+    slc_dst[axis] = slice(1, None)
+    cs[tuple(slc_dst)] = np.cumsum(padded, axis=axis, dtype=np.int32)
+    # window sum at position p = cs[p + size] - cs[p]
+    slc_hi = [slice(None)] * u8.ndim
+    slc_lo = [slice(None)] * u8.ndim
+    slc_hi[axis] = slice(size, size + n)
+    slc_lo[axis] = slice(0, n)
+    return cs[tuple(slc_hi)] - cs[tuple(slc_lo)]
+
+
 def _mask_dilate_max(mask_bool: np.ndarray, size: int) -> np.ndarray:
-    """Dilate a boolean mask with a square MaxFilter (odd size >= 3)."""
+    """Dilate a boolean mask with a square sliding-window max (odd size >= 3).
+
+    Uses a two-pass cumulative-sum approach: O(H*W) instead of O(H*W*size).
+    """
     if size < 3:
         return mask_bool
     h, w = mask_bool.shape
     if h == 0 or w == 0:
         return mask_bool
-    u8 = (mask_bool.astype(np.uint8) * 255)
-    pil = Image.fromarray(u8, mode="L")
-    pil = pil.filter(ImageFilter.MaxFilter(size))
-    return np.asarray(pil, dtype=np.uint8) > 127
+    u8 = mask_bool.astype(np.uint8)
+    h_pass = (_sliding_window_sum(u8, size, axis=1) > 0).astype(np.uint8)
+    return _sliding_window_sum(h_pass, size, axis=0) > 0
 
 
 def _apply_edge_suppress(mask_bool: np.ndarray, px: int) -> np.ndarray:
@@ -115,18 +144,34 @@ def _apply_edge_suppress(mask_bool: np.ndarray, px: int) -> np.ndarray:
     return out
 
 
+def _mask_erode_min(mask_bool: np.ndarray, size: int) -> np.ndarray:
+    """Erode a boolean mask with a square sliding-window min (odd size >= 3).
+
+    A pixel is True only when every pixel in the ``size × size`` window is True.
+    Uses cumulative-sum: O(H*W).
+    """
+    if size < 3:
+        return mask_bool
+    h, w = mask_bool.shape
+    if h == 0 or w == 0:
+        return mask_bool
+    u8 = mask_bool.astype(np.uint8)
+    h_pass = (_sliding_window_sum(u8, size, axis=1) == size).astype(np.uint8)
+    return _sliding_window_sum(h_pass, size, axis=0) == size
+
+
 def refine_diff_mask_with_morphology(
     mask_bool: np.ndarray,
     *,
     open_size: int = 0,
     dilate_size: int = 5,
 ) -> np.ndarray:
-    """Optional opening then MaxFilter dilation on a boolean mask.
+    """Optional opening then dilation on a boolean mask.
 
     Args:
         mask_bool: Boolean mask ``(H, W)``.
-        open_size: Min/Max opening side length (odd, >= 3), or 0 to skip.
-        dilate_size: MaxFilter dilation side length (odd, >= 3), or 0 to skip.
+        open_size: Opening side length (odd, >= 3), or 0 to skip.
+        dilate_size: Dilation side length (odd, >= 3), or 0 to skip.
 
     Returns:
         Boolean mask after morphology.
@@ -134,15 +179,13 @@ def refine_diff_mask_with_morphology(
     h, w = mask_bool.shape
     if h == 0 or w == 0:
         return mask_bool
-    u8 = (mask_bool.astype(np.uint8) * 255)
-    pil = Image.fromarray(u8, mode="L")
+    result = mask_bool
     if open_size >= 3:
-        pil = pil.filter(ImageFilter.MinFilter(open_size))
-        pil = pil.filter(ImageFilter.MaxFilter(open_size))
+        result = _mask_erode_min(result, open_size)
+        result = _mask_dilate_max(result, open_size)
     if dilate_size >= 3:
-        pil = pil.filter(ImageFilter.MaxFilter(dilate_size))
-    arr = np.asarray(pil, dtype=np.uint8)
-    return arr > 127
+        result = _mask_dilate_max(result, dilate_size)
+    return result
 
 
 def rgba_pixel_diff_mask(

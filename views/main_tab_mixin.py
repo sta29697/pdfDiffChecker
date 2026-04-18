@@ -827,7 +827,7 @@ class _MainTabMixin:
         path_str, modified_time_ns, file_size = self._get_preview_image_signature(page_path)
         cache_key = (path_str, modified_time_ns, file_size, 0)
 
-        # Main processing: reuse the immutable source image for repeated redraws.
+        # Main processing: reuse the immutable source image for repeated redraws (LRU).
         cached_image = self._preview_source_image_cache.get(cache_key)
         if cached_image is None:
             try:
@@ -836,12 +836,12 @@ class _MainTabMixin:
             except DecompressionBombError as exc:
                 self._notify_workspace_raster_pixel_limit(exc, page_path)
                 raise WorkspaceRasterTooLarge(str(page_path)) from exc
-            self._preview_source_image_cache = {
-                key: value
-                for key, value in self._preview_source_image_cache.items()
-                if key[0] != path_str
-            }
+            max_size = int(getattr(self, "_PREVIEW_SOURCE_CACHE_MAX", 8))
+            while len(self._preview_source_image_cache) >= max_size:
+                self._preview_source_image_cache.popitem(last=False)
             self._preview_source_image_cache[cache_key] = cached_image
+        else:
+            self._preview_source_image_cache.move_to_end(cache_key)
         return cached_image.copy()
 
     def _get_cached_processed_preview_image(self, page_path: Path, name_flag: str) -> Image.Image:
@@ -867,17 +867,17 @@ class _MainTabMixin:
             threshold_value,
         )
 
-        # Main processing: cache the expensive color processing result separately.
+        # Main processing: cache the expensive color processing result separately (LRU).
         cached_image = self._preview_processed_image_cache.get(cache_key)
         if cached_image is None:
             source_image = self._get_cached_source_preview_image(page_path)
             cached_image = self._apply_color_processing_for_side(source_image, name_flag)
-            self._preview_processed_image_cache = {
-                key: value
-                for key, value in self._preview_processed_image_cache.items()
-                if not (key[0] == name_flag and key[1] == path_str)
-            }
+            max_size = int(getattr(self, "_PREVIEW_PROCESSED_CACHE_MAX", 8))
+            while len(self._preview_processed_image_cache) >= max_size:
+                self._preview_processed_image_cache.popitem(last=False)
             self._preview_processed_image_cache[cache_key] = cached_image
+        else:
+            self._preview_processed_image_cache.move_to_end(cache_key)
         return cached_image.copy()
 
     def _get_source_page_pixel_size(self, page_path: Path) -> tuple[int, int]:
@@ -1361,3 +1361,112 @@ class _MainTabMixin:
             )
         except Exception as exc:
             logger.debug("Diff overlay display failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Export diff overlay (full-resolution, no preview scale)
+    # ------------------------------------------------------------------
+
+    def _compute_diff_overlay_for_export_page(
+        self,
+        page_index: int,
+        base_path: Path,
+        comp_path: Path,
+        export_base_transform: tuple,
+        export_comp_transform: tuple,
+    ) -> Optional[tuple[Image.Image, int, int]]:
+        """Compute diff-emphasis overlay in full export resolution.
+
+        The overlay is built in source-pixel space (scale=1.0).  Rotation is
+        applied to match the export composite; flip flags are ignored here to
+        match the existing ``PDFExportHandler`` behaviour (4-tuple transforms
+        lose flip info).
+
+        Args:
+            page_index: Page index (used for palette colors only).
+            base_path: Workspace PNG for the base side.
+            comp_path: Workspace PNG for the comparison side.
+            export_base_transform: Export transform for base (rotation, tx, ty, 1.0).
+            export_comp_transform: Export transform for comp (rotation, tx, ty, 1.0).
+
+        Returns:
+            ``(overlay_rgba, rel_ox, rel_oy)`` where ``rel_ox/rel_oy`` are the
+            top-left offsets of the overlay in base-pixel space
+            (``min(0, comp_rel_x)``, ``min(0, comp_rel_y)``), or ``None`` on
+            failure.
+        """
+        try:
+            sbi = Image.open(base_path).convert("RGBA")
+            sci = Image.open(comp_path).convert("RGBA")
+        except Exception as exc:
+            logger.error("Export overlay: failed to open source images: %s", exc)
+            return None
+
+        r_base, b_tx, b_ty, _b_s, _, _ = as_transform6(export_base_transform)
+        r_comp, c_tx, c_ty, _c_s, _, _ = as_transform6(export_comp_transform)
+
+        if abs(r_base) > 1e-6:
+            sbi = sbi.rotate(float(r_base), resample=Resampling.BICUBIC, expand=True)
+        if abs(r_comp) > 1e-6:
+            sci = sci.rotate(float(r_comp), resample=Resampling.BICUBIC, expand=True)
+
+        comp_rel_x = int(round(float(c_tx) - float(b_tx)))
+        comp_rel_y = int(round(float(c_ty) - float(b_ty)))
+
+        is_bin = self._selected_color_processing_mode == "二色化"
+        base_c = self._diff_emphasis_palette_rgba("base", alpha=130)
+        comp_c = self._diff_emphasis_palette_rgba("comp", alpha=130)
+
+        dpi_factor = max(1, round(
+            int(self._conversion_dpi or _MAIN_TAB_DEFAULT_DPI) / _MAIN_TAB_DEFAULT_DPI
+        ))
+
+        def _odd(n: int) -> int:
+            n = max(3, int(n))
+            return n if n % 2 == 1 else n + 1
+
+        logger.debug(
+            "Export overlay page=%d mode=%s base=%s comp=%s comp_rel=(%d,%d) dpi_factor=%d",
+            page_index, self._selected_color_processing_mode,
+            base_path.name, comp_path.name, comp_rel_x, comp_rel_y, dpi_factor,
+        )
+        try:
+            if is_bin:
+                ov, _ = build_diff_highlight_overlay_rgba(
+                    sbi, (0, 0), sci, (comp_rel_x, comp_rel_y),
+                    base_highlight_rgba=base_c, comp_highlight_rgba=comp_c,
+                    luma_threshold=248, alpha_threshold=18,
+                    ink_match_dilate_size=_odd(3 * dpi_factor),
+                    edge_suppress_px=2 * dpi_factor,
+                    open_size=_odd(3 * dpi_factor),
+                    dilate_size=_odd(60 * dpi_factor),
+                    ink_speckle_open_size=0,
+                    same_cell_pixel_diff=False, same_cell_sq_diff_threshold=200,
+                    same_cell_luma_delta_min=0,
+                    same_cell_supplement_open=0,
+                    same_cell_supplement_dilate=_odd(20 * dpi_factor),
+                )
+            else:
+                ov, _ = build_diff_highlight_overlay_rgba(
+                    sbi, (0, 0), sci, (comp_rel_x, comp_rel_y),
+                    base_highlight_rgba=base_c, comp_highlight_rgba=comp_c,
+                    luma_threshold=248, alpha_threshold=18,
+                    ink_match_dilate_size=_odd(3 * dpi_factor),
+                    edge_suppress_px=4 * dpi_factor,
+                    open_size=_odd(3 * dpi_factor),
+                    dilate_size=_odd(30 * dpi_factor),
+                    ink_speckle_open_size=0,
+                    same_cell_pixel_diff=True, same_cell_sq_diff_threshold=800,
+                    same_cell_luma_delta_min=30,
+                    same_cell_supplement_open=0,
+                    same_cell_supplement_dilate=_odd(10 * dpi_factor),
+                )
+        except Exception as exc:
+            logger.error("Export overlay: build_diff_highlight_overlay_rgba failed: %s", exc)
+            return None
+
+        import numpy as _np
+        non_zero = int((_np.array(ov)[:, :, 3] > 0).sum())
+        logger.info("Export overlay page=%d: non-zero pixels=%d size=%s", page_index, non_zero, ov.size)
+        rel_ox = min(0, comp_rel_x)
+        rel_oy = min(0, comp_rel_y)
+        return (ov, rel_ox, rel_oy)
